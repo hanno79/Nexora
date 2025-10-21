@@ -23,7 +23,7 @@
 
   --sidebar: 45 25% 97%;
   --sidebar-foreground: 20 14% 17%;
-  --sidebar-border: 45 15% 90%;
+  --sidebar-border: 45 15% 80%;
   --sidebar-primary: 9 75% 61%;
   --sidebar-primary-foreground: 0 0% 100%;
   --sidebar-accent: 25 45% 80%;
@@ -31,7 +31,7 @@
   --sidebar-ring: 9 75% 61%;
 
   --popover: 45 25% 97%;
-  --popover-foreground: 0 0% 10.2%;
+  --popover-foreground: 0 0% 100%;
   --popover-border: 45 15% 92%;
 
   --primary: 342 85.11% 52.55%;
@@ -62,14 +62,14 @@
   --font-serif: 'Poppins', sans-serif;
   --font-mono: Menlo, monospace;
   --radius: 0.8rem;
-  --shadow-2xs: 0px 2px 0px 0px hsl(9 75% 61% / 0.00);
-  --shadow-xs: 0px 2px 0px 0px hsl(9 75% 61% / 0.00);
-  --shadow-sm: 0px 2px 0px 0px hsl(9 75% 61% / 0.00), 0px 1px 2px -1px hsl(9 75% 61% / 0.00);
-  --shadow: 0px 2px 0px 0px hsl(9 75% 61% / 0.00), 0px 1px 2px -1px hsl(9 75% 61% / 0.00);
-  --shadow-md: 0px 2px 0px 0px hsl(9 75% 61% / 0.00), 0px 2px 4px -1px hsl(9 75% 61% / 0.00);
-  --shadow-lg: 0px 2px 0px 0px hsl(9 75% 61% / 0.00), 0px 4px 6px -1px hsl(9 75% 61% / 0.00);
-  --shadow-xl: 0px 2px 0px 0px hsl(9 75% 61% / 0.00), 0px 8px 10px -1px hsl(9 75% 61% / 0.00);
-  --shadow-2xl: 0px 2px 0px 0px hsl(9 75% 61% / 0.00);
+  --shadow-2xs: 0px 2px 0px 0px hsl(9, 75%, 61% / 0.00);
+  --shadow-xs: 0px 2px 0px 0px hsl(9, 75%, 61% / 0.00);
+  --shadow-sm: 0px 2px 0px 0px hsl(9, 75%, 61% / 0.00), 0px 1px 2px -1px hsl(9, 75%, 61% / 0.00);
+  --shadow: 0px 2px 0px 0px hsl(9, 75%, 61% / 0.00), 0px 1px 2px -1px hsl(9, 75%, 61% / 0.00);
+  --shadow-md: 0px 2px 0px 0px hsl(9, 75%, 61% / 0.00), 0px 2px 4px -1px hsl(9, 75%, 61% / 0.00);
+  --shadow-lg: 0px 2px 0px 0px hsl(9, 75%, 61% / 0.00), 0px 4px 6px -1px hsl(9, 75%, 61% / 0.00);
+  --shadow-xl: 0px 2px 0px 0px hsl(9, 75%, 61% / 0.00), 0px 8px 10px -1px hsl(9, 75%, 61% / 0.00);
+  --shadow-2xl: 0px 2px 0px 0px hsl(9, 75%, 61% / 0.00);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 
