@@ -9,6 +9,7 @@ import NotFound from "@/pages/not-found";
 import Landing from "@/pages/Landing";
 import Dashboard from "@/pages/Dashboard";
 import Templates from "@/pages/Templates";
+import CreateTemplate from "@/pages/CreateTemplate";
 import Editor from "@/pages/Editor";
 import Settings from "@/pages/Settings";
 
@@ -31,6 +32,7 @@ function Router() {
         <>
           <Route path="/" component={Dashboard} />
           <Route path="/templates" component={Templates} />
+          <Route path="/templates/create" component={CreateTemplate} />
           <Route path="/editor/:id" component={Editor} />
           <Route path="/settings" component={Settings} />
         </>

@@ -42,9 +42,10 @@ export const templates = pgTable("templates", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: varchar("name").notNull(),
   description: text("description"),
-  category: varchar("category").notNull(), // 'feature', 'epic', 'technical', 'product-launch'
+  category: varchar("category").notNull(), // 'feature', 'epic', 'technical', 'product-launch', 'custom'
   content: text("content").notNull(), // JSON string with template structure
   isDefault: varchar("is_default").default('false'), // 'true' or 'false'
+  userId: varchar("user_id").references(() => users.id, { onDelete: 'cascade' }), // null for default templates
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

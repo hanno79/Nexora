@@ -121,7 +121,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Template routes
   app.get('/api/templates', isAuthenticated, async (req: any, res) => {
     try {
-      const templates = await storage.getTemplates();
+      const userId = req.user.claims.sub;
+      const templates = await storage.getTemplates(userId);
       res.json(templates);
     } catch (error) {
       console.error("Error fetching templates:", error);
@@ -142,6 +143,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching template:", error);
       res.status(500).json({ message: "Failed to fetch template" });
+    }
+  });
+
+  app.post('/api/templates', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { name, description, category, content } = req.body;
+      
+      if (!name || !content) {
+        return res.status(400).json({ message: "Name and content are required" });
+      }
+      
+      const template = await storage.createTemplate({
+        name,
+        description,
+        category: category || 'custom',
+        content,
+        userId,
+        isDefault: 'false',
+      });
+      
+      res.json(template);
+    } catch (error) {
+      console.error("Error creating template:", error);
+      res.status(500).json({ message: "Failed to create template" });
     }
   });
 

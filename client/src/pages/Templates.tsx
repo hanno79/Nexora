@@ -1,7 +1,8 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { FileText, Rocket, Code, Layers, ArrowLeft } from "lucide-react";
+import { FileText, Rocket, Code, Layers, ArrowLeft, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { TopBar } from "@/components/TopBar";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -15,6 +16,7 @@ const templateIcons: Record<string, any> = {
   epic: Layers,
   technical: Code,
   'product-launch': Rocket,
+  custom: FileText,
 };
 
 export default function Templates() {
@@ -76,10 +78,21 @@ export default function Templates() {
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Dashboard
           </Button>
-          <h1 className="text-3xl font-semibold mb-2">Choose a Template</h1>
-          <p className="text-muted-foreground">
-            Start with a pre-built template to accelerate your PRD creation
-          </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-semibold mb-2">Choose a Template</h1>
+              <p className="text-muted-foreground">
+                Start with a pre-built template or create your own
+              </p>
+            </div>
+            <Button
+              onClick={() => navigate("/templates/create")}
+              data-testid="button-create-template"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Create Template
+            </Button>
+          </div>
         </div>
 
         {/* Templates Grid */}
@@ -89,6 +102,7 @@ export default function Templates() {
           <div className="grid gap-6 md:grid-cols-2">
             {templates?.map((template) => {
               const Icon = templateIcons[template.category] || FileText;
+              const isCustom = template.category === 'custom' || template.userId;
               return (
                 <Card
                   key={template.id}
@@ -102,7 +116,14 @@ export default function Templates() {
                         <Icon className="w-6 h-6 text-primary" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <CardTitle className="text-xl mb-2">{template.name}</CardTitle>
+                        <div className="flex items-center gap-2 mb-2">
+                          <CardTitle className="text-xl">{template.name}</CardTitle>
+                          {isCustom && (
+                            <Badge variant="secondary" className="text-xs" data-testid={`badge-custom-${template.id}`}>
+                              Custom
+                            </Badge>
+                          )}
+                        </div>
                         <CardDescription className="line-clamp-3">
                           {template.description}
                         </CardDescription>

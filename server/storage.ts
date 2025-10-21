@@ -17,7 +17,7 @@ import {
   type InsertSharedPrd,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 
 export interface IStorage {
   // User operations (required for Replit Auth)
@@ -34,7 +34,7 @@ export interface IStorage {
   deletePrd(id: string): Promise<void>;
   
   // Template operations
-  getTemplates(): Promise<Template[]>;
+  getTemplates(userId?: string): Promise<Template[]>;
   getTemplate(id: string): Promise<Template | undefined>;
   createTemplate(template: InsertTemplate): Promise<Template>;
   
@@ -117,7 +117,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Template operations
-  async getTemplates(): Promise<Template[]> {
+  async getTemplates(userId?: string): Promise<Template[]> {
+    // Return default templates + user's custom templates
+    if (userId) {
+      return await db
+        .select()
+        .from(templates)
+        .where(
+          sql`${templates.isDefault} = 'true' OR ${templates.userId} = ${userId}`
+        )
+        .orderBy(templates.name);
+    }
     return await db.select().from(templates).orderBy(templates.name);
   }
 
