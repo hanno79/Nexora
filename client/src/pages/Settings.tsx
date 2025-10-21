@@ -30,7 +30,7 @@ export default function Settings() {
     }
   }, [user]);
 
-  const { data: linearStatus } = useQuery({
+  const { data: linearStatus } = useQuery<{ connected: boolean }>({
     queryKey: ["/api/linear/status"],
   });
 

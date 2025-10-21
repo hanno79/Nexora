@@ -9,7 +9,8 @@ import {
   Clock, 
   Sparkles,
   FileDown,
-  Send
+  Send,
+  History
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +18,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { TopBar } from "@/components/TopBar";
 import { StatusBadge } from "@/components/StatusBadge";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
+import { VersionHistoryDialog } from "@/components/VersionHistoryDialog";
+import { SharePRDDialog } from "@/components/SharePRDDialog";
 import {
   Select,
   SelectContent,
@@ -46,6 +49,8 @@ export default function Editor() {
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
   const [status, setStatus] = useState<string>("draft");
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [showShareDialog, setShowShareDialog] = useState(false);
 
   const { data: prd, isLoading } = useQuery<Prd>({
     queryKey: ["/api/prds", prdId],
@@ -247,6 +252,26 @@ export default function Editor() {
               <Button
                 variant="outline"
                 size="sm"
+                onClick={() => setShowVersionHistory(true)}
+                data-testid="button-version-history"
+              >
+                <History className="w-4 h-4 mr-2" />
+                History
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowShareDialog(true)}
+                data-testid="button-share"
+              >
+                <Share2 className="w-4 h-4 mr-2" />
+                Share
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => aiGenerateMutation.mutate()}
                 disabled={aiGenerateMutation.isPending}
                 data-testid="button-ai-generate"
@@ -343,6 +368,26 @@ export default function Editor() {
           </div>
         </div>
       </div>
+
+      {/* Dialogs */}
+      {prdId && (
+        <>
+          <VersionHistoryDialog
+            prdId={prdId}
+            open={showVersionHistory}
+            onOpenChange={setShowVersionHistory}
+            onRestore={(newContent, newTitle) => {
+              setContent(newContent);
+              setTitle(newTitle);
+            }}
+          />
+          <SharePRDDialog
+            prdId={prdId}
+            open={showShareDialog}
+            onOpenChange={setShowShareDialog}
+          />
+        </>
+      )}
     </div>
   );
 }

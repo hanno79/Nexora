@@ -7,6 +7,7 @@ import { TopBar } from "@/components/TopBar";
 import { EmptyState } from "@/components/EmptyState";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { StatusBadge } from "@/components/StatusBadge";
+import { OnboardingDialog } from "@/components/OnboardingDialog";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Prd } from "@shared/schema";
@@ -18,7 +19,16 @@ export default function Dashboard() {
   const [, navigate] = useLocation();
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const { toast } = useToast();
+
+  // Check if user has completed onboarding
+  useEffect(() => {
+    const onboardingCompleted = localStorage.getItem("onboarding_completed");
+    if (!onboardingCompleted) {
+      setShowOnboarding(true);
+    }
+  }, []);
 
   const { data: prds, isLoading, error } = useQuery<Prd[]>({
     queryKey: ["/api/prds"],
@@ -132,6 +142,8 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      <OnboardingDialog open={showOnboarding} onOpenChange={setShowOnboarding} />
     </div>
   );
 }

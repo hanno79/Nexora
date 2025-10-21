@@ -185,6 +185,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Share routes
+  app.post('/api/prds/:id/share', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { email, permission } = req.body;
+      
+      // Find user by email
+      const sharedUser = await storage.getUserByEmail(email);
+      if (!sharedUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      const shareData = {
+        prdId: id,
+        sharedWith: sharedUser.id,
+        permission: permission || 'view',
+      };
+      
+      const share = await storage.createSharedPrd(shareData);
+      res.json(share);
+    } catch (error) {
+      console.error("Error sharing PRD:", error);
+      res.status(500).json({ message: "Failed to share PRD" });
+    }
+  });
+
+  app.get('/api/prds/:id/shares', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const shares = await storage.getPrdShares(id);
+      res.json(shares);
+    } catch (error) {
+      console.error("Error fetching shares:", error);
+      res.status(500).json({ message: "Failed to fetch shares" });
+    }
+  });
+
   // AI generation route
   app.post('/api/ai/generate', isAuthenticated, async (req: any, res) => {
     try {
