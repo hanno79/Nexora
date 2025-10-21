@@ -30,13 +30,14 @@ export default function Templates() {
   const createPrdMutation = useMutation({
     mutationFn: async (templateId: string) => {
       const template = templates?.find(t => t.id === templateId);
-      return await apiRequest("POST", "/api/prds", {
+      const res = await apiRequest("POST", "/api/prds", {
         title: "Untitled PRD",
         description: "",
         content: template?.content || "{}",
         templateId,
         status: "draft",
       });
+      return await res.json();
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/prds"] });

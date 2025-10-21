@@ -61,7 +61,22 @@ export default function Editor() {
     if (prd) {
       setTitle(prd.title);
       setDescription(prd.description || "");
-      setContent(prd.content);
+      
+      // Parse template content if it's JSON
+      let contentToSet = prd.content;
+      try {
+        const parsed = JSON.parse(prd.content);
+        if (parsed.sections && Array.isArray(parsed.sections)) {
+          // Convert template sections to markdown
+          contentToSet = parsed.sections
+            .map((section: any) => `## ${section.title}\n\n${section.content}`)
+            .join('\n\n');
+        }
+      } catch (e) {
+        // Not JSON, use as-is
+      }
+      
+      setContent(contentToSet);
       setStatus(prd.status);
     }
   }, [prd]);
