@@ -498,10 +498,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Dual-AI generation routes (HRP-17)
   const { getDualAiService } = await import('./dualAiService');
+  const { logAiUsage } = await import('./aiUsageLogger');
   
   app.post('/api/ai/generate-dual', isAuthenticated, async (req: any, res) => {
     try {
-      const { userInput, existingContent, mode } = req.body;
+      const { userInput, existingContent, mode, prdId } = req.body;
+      const userId = req.user.claims.sub;
       
       if (!userInput && !existingContent) {
         return res.status(400).json({ message: "User input or existing content is required" });
@@ -514,6 +516,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         mode: mode || 'improve'
       });
       
+      // Log AI usage for both generator and reviewer
+      await logAiUsage(
+        userId,
+        'generator',
+        result.generatorResponse.model,
+        result.generatorResponse.tier as any,
+        result.generatorResponse.usage,
+        prdId
+      );
+      
+      await logAiUsage(
+        userId,
+        'reviewer',
+        result.reviewerResponse.model,
+        result.reviewerResponse.tier as any,
+        result.reviewerResponse.usage,
+        prdId
+      );
+      
       res.json(result);
     } catch (error: any) {
       console.error("Error in Dual-AI generation:", error);
@@ -523,7 +544,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/ai/review', isAuthenticated, async (req: any, res) => {
     try {
-      const { content } = req.body;
+      const { content, prdId } = req.body;
+      const userId = req.user.claims.sub;
       
       if (!content) {
         return res.status(400).json({ message: "Content is required for review" });
@@ -531,6 +553,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const service = getDualAiService();
       const review = await service.reviewOnly(content);
+      
+      // Log AI usage for reviewer
+      await logAiUsage(
+        userId,
+        'reviewer',
+        review.model,
+        review.tier as any,
+        review.usage,
+        prdId
+      );
       
       res.json(review);
     } catch (error: any) {
