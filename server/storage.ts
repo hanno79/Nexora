@@ -119,11 +119,34 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updatePrd(id: string, data: Partial<InsertPrd>): Promise<Prd> {
+    // Get current PRD before update to create version
+    const currentPrd = await this.getPrd(id);
+    
+    // Update the PRD
     const [prd] = await db
       .update(prds)
       .set({ ...data, updatedAt: new Date() })
       .where(eq(prds.id, id))
       .returning();
+    
+    // Auto-create version if content changed
+    if (currentPrd && data.content && data.content !== currentPrd.content) {
+      const versionCount = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(prdVersions)
+        .where(eq(prdVersions.prdId, id));
+      
+      const versionNumber = `v${(Number(versionCount[0]?.count) || 0) + 1}`;
+      
+      await this.createPrdVersion({
+        prdId: id,
+        versionNumber,
+        title: currentPrd.title,
+        content: currentPrd.content,
+        createdBy: currentPrd.userId,
+      });
+    }
+    
     return prd;
   }
 

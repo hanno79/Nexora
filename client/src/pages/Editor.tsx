@@ -5,13 +5,12 @@ import {
   ArrowLeft, 
   Save, 
   Download, 
-  Share2, 
   Clock, 
   Sparkles,
   FileDown,
   Send,
-  History,
-  CheckCircle2
+  CheckCircle2,
+  Share2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,10 +18,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { TopBar } from "@/components/TopBar";
 import { StatusBadge } from "@/components/StatusBadge";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
-import { VersionHistoryDialog } from "@/components/VersionHistoryDialog";
-import { SharePRDDialog } from "@/components/SharePRDDialog";
 import { CommentsPanel } from "@/components/CommentsPanel";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
+import { VersionHistory } from "@/components/VersionHistory";
+import { SharePRDDialog } from "@/components/SharePRDDialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -52,10 +52,9 @@ export default function Editor() {
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
   const [status, setStatus] = useState<string>("draft");
-  const [showVersionHistory, setShowVersionHistory] = useState(false);
-  const [showShareDialog, setShowShareDialog] = useState(false);
   const [showComments, setShowComments] = useState(true);
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
+  const [showShareDialog, setShowShareDialog] = useState(false);
 
   const { data: prd, isLoading } = useQuery<Prd>({
     queryKey: ["/api/prds", prdId],
@@ -321,16 +320,6 @@ export default function Editor() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setShowVersionHistory(true)}
-                data-testid="button-version-history"
-              >
-                <History className="w-4 h-4 mr-2" />
-                History
-              </Button>
-
-              <Button
-                variant="outline"
-                size="sm"
                 onClick={() => setShowShareDialog(true)}
                 data-testid="button-share"
               >
@@ -465,10 +454,25 @@ export default function Editor() {
           </div>
         </div>
 
-        {/* Comments Sidebar */}
+        {/* Comments & Version History Sidebar */}
         {prdId && showComments && (
-          <div className="w-80 flex-shrink-0">
-            <CommentsPanel prdId={prdId} />
+          <div className="w-80 flex-shrink-0 border-l bg-muted/10">
+            <Tabs defaultValue="comments" className="h-full flex flex-col">
+              <TabsList className="w-full rounded-none border-b">
+                <TabsTrigger value="comments" className="flex-1" data-testid="tab-comments">
+                  Comments
+                </TabsTrigger>
+                <TabsTrigger value="versions" className="flex-1" data-testid="tab-versions">
+                  Versions
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="comments" className="flex-1 overflow-hidden mt-0">
+                <CommentsPanel prdId={prdId} />
+              </TabsContent>
+              <TabsContent value="versions" className="flex-1 overflow-hidden mt-0">
+                <VersionHistory prdId={prdId} />
+              </TabsContent>
+            </Tabs>
           </div>
         )}
       </div>
@@ -476,15 +480,6 @@ export default function Editor() {
       {/* Dialogs */}
       {prdId && (
         <>
-          <VersionHistoryDialog
-            prdId={prdId}
-            open={showVersionHistory}
-            onOpenChange={setShowVersionHistory}
-            onRestore={(newContent, newTitle) => {
-              setContent(newContent);
-              setTitle(newTitle);
-            }}
-          />
           <SharePRDDialog
             prdId={prdId}
             open={showShareDialog}

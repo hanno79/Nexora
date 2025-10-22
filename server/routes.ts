@@ -546,6 +546,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Version history endpoints
+  app.get('/api/prds/:id/versions', isAuthenticated, async (req: any, res) => {
+    try {
+      const prdId = req.params.id;
+      
+      // Verify user has access to this PRD
+      const prd = await storage.getPrd(prdId);
+      if (!prd) {
+        return res.status(404).json({ message: "PRD not found" });
+      }
+      
+      if (prd.userId !== req.user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const versions = await storage.getPrdVersions(prdId);
+      res.json(versions);
+    } catch (error) {
+      console.error('Error fetching versions:', error);
+      res.status(500).json({ message: "Failed to fetch versions" });
+    }
+  });
+  
+  // Restore PRD to specific version
+  app.post('/api/prds/:id/restore/:versionId', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id: prdId, versionId } = req.params;
+      
+      // Verify user has access to this PRD
+      const prd = await storage.getPrd(prdId);
+      if (!prd) {
+        return res.status(404).json({ message: "PRD not found" });
+      }
+      
+      if (prd.userId !== req.user.id) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      // Get the version
+      const versions = await storage.getPrdVersions(prdId);
+      const version = versions.find(v => v.id === versionId);
+      
+      if (!version) {
+        return res.status(404).json({ message: "Version not found" });
+      }
+      
+      // Restore content from version
+      const updatedPrd = await storage.updatePrd(prdId, {
+        title: version.title,
+        content: version.content,
+      });
+      
+      res.json(updatedPrd);
+    } catch (error) {
+      console.error('Error restoring version:', error);
+      res.status(500).json({ message: "Failed to restore version" });
+    }
+  });
+
   // Error logging endpoint
   app.post('/api/errors', async (req: any, res) => {
     try {
