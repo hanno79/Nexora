@@ -597,7 +597,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title: version.title,
         description: version.description,
         content: version.content,
-        status: version.status,
+        status: version.status as 'draft' | 'in-progress' | 'review' | 'pending-approval' | 'approved' | 'completed',
       });
       
       res.json(updatedPrd);
