@@ -89,7 +89,9 @@ export const prdVersions = pgTable("prd_versions", {
   prdId: varchar("prd_id").notNull().references(() => prds.id, { onDelete: 'cascade' }),
   versionNumber: varchar("version_number").notNull(),
   title: varchar("title").notNull(),
+  description: text("description"),
   content: text("content").notNull(),
+  status: varchar("status").notNull().default('draft'),
   createdBy: varchar("created_by").notNull().references(() => users.id),
   createdAt: timestamp("created_at").defaultNow(),
 });

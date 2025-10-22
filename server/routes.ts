@@ -592,10 +592,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Version not found" });
       }
       
-      // Restore content from version
+      // Restore complete state from version
       const updatedPrd = await storage.updatePrd(prdId, {
         title: version.title,
+        description: version.description,
         content: version.content,
+        status: version.status,
       });
       
       res.json(updatedPrd);

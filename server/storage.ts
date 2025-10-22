@@ -129,8 +129,8 @@ export class DatabaseStorage implements IStorage {
       .where(eq(prds.id, id))
       .returning();
     
-    // Auto-create version if content changed
-    if (currentPrd && data.content && data.content !== currentPrd.content) {
+    // Auto-create version snapshot on every update
+    if (currentPrd) {
       const versionCount = await db
         .select({ count: sql<number>`count(*)` })
         .from(prdVersions)
@@ -138,11 +138,14 @@ export class DatabaseStorage implements IStorage {
       
       const versionNumber = `v${(Number(versionCount[0]?.count) || 0) + 1}`;
       
+      // Capture complete state: title, description, content, status
       await this.createPrdVersion({
         prdId: id,
         versionNumber,
         title: currentPrd.title,
+        description: currentPrd.description,
         content: currentPrd.content,
+        status: currentPrd.status,
         createdBy: currentPrd.userId,
       });
     }
