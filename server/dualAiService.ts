@@ -143,7 +143,7 @@ export class DualAiService {
     
     console.log('🔍 Reviewing existing PRD...');
     
-    const reviewerPrompt = `Bewerte folgendes PRD kritisch:\n\n${prdContent}`;
+    const reviewerPrompt = `Critically evaluate the following PRD:\n\n${prdContent}`;
 
     const reviewResult = await client.callWithFallback(
       'reviewer',
@@ -186,8 +186,8 @@ export class DualAiService {
       console.log(`🤖 AI #1: Generating PRD draft and identifying gaps...`);
       
       const generatorPrompt = i === 1
-        ? `INITIAL INPUT:\n${initialContent}\n\nErstelle einen ersten PRD-Entwurf und stelle Fragen zu offenen Punkten.`
-        : `CURRENT PRD:\n${currentPRD}\n\nVerbessere das PRD weiter und stelle Fragen zu verbleibenden Lücken.`;
+        ? `INITIAL INPUT:\n${initialContent}\n\nCreate an initial PRD draft and ask questions about open points.`
+        : `CURRENT PRD:\n${currentPRD}\n\nImprove the PRD further and ask questions about remaining gaps.`;
       
       const genResult = await client.callWithFallback(
         'generator',
@@ -206,7 +206,7 @@ export class DualAiService {
       // Step 2: AI #2 (Answerer) - Answers with best practices
       console.log(`🧠 AI #2: Answering questions with best practices...`);
       
-      const answererPrompt = `Folgendes PRD wird entwickelt:\n\n${genResult.content}\n\nBeantworte die gestellten Fragen mit Best Practices.`;
+      const answererPrompt = `The following PRD is being developed:\n\n${genResult.content}\n\nAnswer the questions with best practices.`;
       
       const answerResult = await client.callWithFallback(
         'reviewer',  // Using reviewer model for answerer role
@@ -238,7 +238,7 @@ export class DualAiService {
     if (useFinalReview) {
       console.log('\n🎯 AI #3: Final review and polish...');
       
-      const finalReviewerPrompt = `Reviewe folgendes PRD auf höchstem Niveau:\n\n${currentPRD}`;
+      const finalReviewerPrompt = `Review the following PRD at the highest level:\n\n${currentPRD}`;
       
       const reviewResult = await client.callWithFallback(
         'reviewer',

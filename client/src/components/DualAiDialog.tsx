@@ -125,7 +125,8 @@ export function DualAiDialog({
     setTotalIterations(iterationCount);
     setCurrentIteration(0);
     
-    const initialInput = currentContent || userInput.trim();
+    // Priority: userInput first, then currentContent as fallback
+    const initialInput = userInput.trim() || currentContent || '';
     
     const response = await fetch('/api/ai/generate-iterative', {
       method: 'POST',
