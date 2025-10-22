@@ -627,6 +627,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post('/api/ai/generate-iterative', isAuthenticated, async (req: any, res) => {
+    try {
+      // Check if OpenRouter is configured
+      if (!isOpenRouterConfigured()) {
+        return res.status(503).json({ 
+          message: getOpenRouterConfigError()
+        });
+      }
+      
+      const { initialContent, iterationCount, useFinalReview, prdId } = req.body;
+      const userId = req.user.claims.sub;
+      
+      if (!initialContent) {
+        return res.status(400).json({ message: "Initial content is required" });
+      }
+      
+      // Validate iteration count (2-5)
+      const iterations = iterationCount || 3;
+      if (iterations < 2 || iterations > 5) {
+        return res.status(400).json({ message: "Iteration count must be between 2 and 5" });
+      }
+      
+      const service = getDualAiService();
+      const result = await service.generateIterative(
+        initialContent,
+        iterations,
+        useFinalReview || false,
+        userId
+      );
+      
+      // Log AI usage for iterative workflow
+      // Log each iteration's generator and answerer usage
+      for (const iteration of result.iterations) {
+        // Generator usage
+        await logAiUsage(
+          userId,
+          'generator',
+          result.modelsUsed[0] || 'unknown',  // First model is typically generator
+          'development',  // Using development tier for tests
+          { 
+            prompt_tokens: 0,  // Approximation - would need actual values
+            completion_tokens: iteration.tokensUsed / 2,
+            total_tokens: iteration.tokensUsed / 2
+          },
+          prdId
+        );
+        
+        // Answerer usage
+        await logAiUsage(
+          userId,
+          'reviewer',  // Answerer uses reviewer model
+          result.modelsUsed[1] || result.modelsUsed[0] || 'unknown',
+          'development',
+          { 
+            prompt_tokens: 0,
+            completion_tokens: iteration.tokensUsed / 2,
+            total_tokens: iteration.tokensUsed / 2
+          },
+          prdId
+        );
+      }
+      
+      // Log final review if used
+      if (result.finalReview) {
+        await logAiUsage(
+          userId,
+          'reviewer',
+          result.finalReview.model,
+          result.finalReview.tier as any,
+          result.finalReview.usage,
+          prdId
+        );
+      }
+      
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error in iterative AI generation:", error);
+      res.status(500).json({ message: error.message || "Failed to generate with iterative AI" });
+    }
+  });
+
   // Export routes
   app.post('/api/prds/:id/export', isAuthenticated, async (req: any, res) => {
     try {
