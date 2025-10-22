@@ -41,7 +41,7 @@ export class DualAiService {
         'generator',
         GENERATOR_SYSTEM_PROMPT,
         generatorPrompt,
-        4000
+        8000  // Increased for comprehensive PRDs
       );
 
       generatorResponse = {
@@ -70,7 +70,7 @@ export class DualAiService {
       'reviewer',
       REVIEWER_SYSTEM_PROMPT,
       reviewerPrompt,
-      2000
+      3000  // Increased for detailed review with 5-10 questions
     );
 
     // Parse review response
@@ -97,7 +97,7 @@ export class DualAiService {
         'generator',
         IMPROVEMENT_SYSTEM_PROMPT,
         improvementPrompt,
-        4000
+        10000  // Increased significantly for complete PRD improvements (2-3x original length)
       );
 
       improvedVersion = {
@@ -144,7 +144,7 @@ export class DualAiService {
       'reviewer',
       REVIEWER_SYSTEM_PROMPT,
       reviewerPrompt,
-      2000
+      3000  // Increased for detailed review with 5-10 questions
     );
 
     const questions = this.extractQuestions(reviewResult.content);
