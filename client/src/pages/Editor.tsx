@@ -127,12 +127,26 @@ export default function Editor() {
   const handleDualAiContentGenerated = (newContent: string, response: any) => {
     setContent(newContent);
     
-    // Auto-save after AI generation
-    saveMutation.mutate();
-    
-    toast({
-      title: "Success",
-      description: `PRD ${content ? 'improved' : 'generated'} with Dual-AI (${response.generatorResponse.model.split('/')[1]} + ${response.reviewerResponse.model.split('/')[1]})`,
+    // Save the new content directly (not using state to avoid race condition)
+    apiRequest("PATCH", `/api/prds/${prdId}`, {
+      title,
+      description,
+      content: newContent,  // Use newContent directly, not state
+      status,
+    }).then(() => {
+      queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/prds"] });
+      toast({
+        title: "Success",
+        description: `PRD ${content ? 'improved' : 'generated'} with Dual-AI (${response.generatorResponse.model.split('/')[1]} + ${response.reviewerResponse.model.split('/')[1]})`,
+      });
+    }).catch((error) => {
+      toast({
+        title: "Error",
+        description: "Failed to save generated content",
+        variant: "destructive",
+      });
+      console.error('Failed to save Dual-AI content:', error);
     });
   };
 
