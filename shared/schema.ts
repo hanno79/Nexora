@@ -127,12 +127,39 @@ export const insertCommentSchema = createInsertSchema(comments, {
 
 export type InsertComment = z.infer<typeof insertCommentSchema>;
 
+// Approvals table for approval workflow
+export const approvals = pgTable("approvals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  prdId: varchar("prd_id").notNull().references(() => prds.id, { onDelete: 'cascade' }),
+  requestedBy: varchar("requested_by").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  reviewers: text("reviewers").array().notNull(), // Array of user IDs
+  status: varchar("status").notNull().default('pending'), // 'pending', 'approved', 'rejected'
+  requestedAt: timestamp("requested_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+  completedBy: varchar("completed_by").references(() => users.id),
+});
+
+export type Approval = typeof approvals.$inferSelect;
+
+export const insertApprovalSchema = createInsertSchema(approvals, {
+  reviewers: z.array(z.string()).min(1, "At least one reviewer is required"),
+  status: z.enum(['pending', 'approved', 'rejected']).default('pending'),
+}).omit({
+  id: true,
+  requestedAt: true,
+  completedAt: true,
+  completedBy: true,
+});
+
+export type InsertApproval = z.infer<typeof insertApprovalSchema>;
+
 // Define relations
 export const usersRelations = relations(users, ({ many }) => ({
   prds: many(prds),
   prdVersions: many(prdVersions),
   sharedPrds: many(sharedPrds),
   comments: many(comments),
+  requestedApprovals: many(approvals),
 }));
 
 export const prdsRelations = relations(prds, ({ one, many }) => ({
@@ -147,6 +174,7 @@ export const prdsRelations = relations(prds, ({ one, many }) => ({
   versions: many(prdVersions),
   shares: many(sharedPrds),
   comments: many(comments),
+  approvals: many(approvals),
 }));
 
 export const templatesRelations = relations(templates, ({ many }) => ({
@@ -182,6 +210,21 @@ export const commentsRelations = relations(comments, ({ one }) => ({
   }),
   user: one(users, {
     fields: [comments.userId],
+    references: [users.id],
+  }),
+}));
+
+export const approvalsRelations = relations(approvals, ({ one }) => ({
+  prd: one(prds, {
+    fields: [approvals.prdId],
+    references: [prds.id],
+  }),
+  requester: one(users, {
+    fields: [approvals.requestedBy],
+    references: [users.id],
+  }),
+  completer: one(users, {
+    fields: [approvals.completedBy],
     references: [users.id],
   }),
 }));
