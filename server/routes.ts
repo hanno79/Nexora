@@ -61,6 +61,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Dashboard routes
+  app.get('/api/dashboard/stats', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const prds = await storage.getPrds(userId);
+      
+      const stats = {
+        totalPrds: prds.length,
+        inProgress: prds.filter(p => p.status === 'in-progress').length,
+        completed: prds.filter(p => p.status === 'completed').length,
+        approved: prds.filter(p => p.status === 'approved').length,
+        pendingApproval: prds.filter(p => p.status === 'pending-approval').length,
+        draft: prds.filter(p => p.status === 'draft').length,
+      };
+      
+      res.json(stats);
+    } catch (error) {
+      console.error("Error fetching dashboard stats:", error);
+      res.status(500).json({ message: "Failed to fetch dashboard stats" });
+    }
+  });
+
   // PRD routes
   app.get('/api/prds', isAuthenticated, async (req: any, res) => {
     try {

@@ -1,19 +1,28 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Plus, FileText, Search as SearchIcon } from "lucide-react";
+import { Plus, FileText, Search as SearchIcon, Clock, CheckCircle2, AlertCircle, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TopBar } from "@/components/TopBar";
 import { EmptyState } from "@/components/EmptyState";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { StatusBadge } from "@/components/StatusBadge";
 import { OnboardingDialog } from "@/components/OnboardingDialog";
-import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Prd } from "@shared/schema";
 import { formatDistance } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
+
+interface DashboardStats {
+  totalPrds: number;
+  inProgress: number;
+  completed: number;
+  approved: number;
+  pendingApproval: number;
+  draft: number;
+}
 
 export default function Dashboard() {
   const [, navigate] = useLocation();
@@ -32,6 +41,10 @@ export default function Dashboard() {
 
   const { data: prds, isLoading, error } = useQuery<Prd[]>({
     queryKey: ["/api/prds"],
+  });
+
+  const { data: stats, isLoading: statsLoading } = useQuery<DashboardStats>({
+    queryKey: ["/api/dashboard/stats"],
   });
 
   // Handle unauthorized errors
@@ -63,9 +76,9 @@ export default function Dashboard() {
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-3xl font-semibold mb-2">My PRDs</h1>
+            <h1 className="text-3xl font-semibold mb-2">Dashboard</h1>
             <p className="text-muted-foreground">
-              Manage and create product requirement documents
+              Overview of your product requirement documents
             </p>
           </div>
           <Button 
@@ -77,6 +90,86 @@ export default function Dashboard() {
             New PRD
           </Button>
         </div>
+
+        {/* Stats Cards */}
+        {statsLoading ? (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-8">
+            {[1, 2, 3, 4].map((i) => (
+              <Card key={i}>
+                <CardHeader className="pb-2">
+                  <div className="h-4 bg-muted rounded animate-pulse w-24 mb-2" />
+                  <div className="h-8 bg-muted rounded animate-pulse w-16" />
+                </CardHeader>
+              </Card>
+            ))}
+          </div>
+        ) : stats && (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-8">
+            <Card data-testid="stat-total-prds">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    Total PRDs
+                  </CardTitle>
+                  <FileText className="w-4 h-4 text-muted-foreground" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-semibold" data-testid="value-total-prds">
+                  {stats.totalPrds}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card data-testid="stat-in-progress">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    In Progress
+                  </CardTitle>
+                  <Clock className="w-4 h-4 text-blue-600" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-semibold" data-testid="value-in-progress">
+                  {stats.inProgress}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card data-testid="stat-completed">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    Completed
+                  </CardTitle>
+                  <CheckCircle2 className="w-4 h-4 text-green-600" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-semibold" data-testid="value-completed">
+                  {stats.completed}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card data-testid="stat-approved">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    Approved
+                  </CardTitle>
+                  <TrendingUp className="w-4 h-4 text-purple-600" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-semibold" data-testid="value-approved">
+                  {stats.approved}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* Filters */}
         <Tabs value={statusFilter} onValueChange={setStatusFilter} className="mb-8">
