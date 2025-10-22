@@ -62,6 +62,8 @@ export const prds = pgTable("prds", {
   description: text("description"),
   content: text("content").notNull(), // JSON string with PRD sections
   status: varchar("status").notNull().default('draft'), // 'draft', 'in-progress', 'review', 'pending-approval', 'approved', 'completed'
+  linearIssueId: varchar("linear_issue_id"), // Linear issue ID if exported
+  linearIssueUrl: varchar("linear_issue_url"), // Linear issue URL if exported
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

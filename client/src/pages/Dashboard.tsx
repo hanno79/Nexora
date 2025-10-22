@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Plus, FileText, Search as SearchIcon, Clock, CheckCircle2, AlertCircle, TrendingUp } from "lucide-react";
+import { Plus, FileText, Search as SearchIcon, Clock, CheckCircle2, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TopBar } from "@/components/TopBar";
 import { EmptyState } from "@/components/EmptyState";
@@ -19,9 +19,7 @@ interface DashboardStats {
   totalPrds: number;
   inProgress: number;
   completed: number;
-  approved: number;
-  pendingApproval: number;
-  draft: number;
+  exportedToLinear: number;
 }
 
 export default function Dashboard() {
@@ -153,18 +151,18 @@ export default function Dashboard() {
               </CardContent>
             </Card>
 
-            <Card data-testid="stat-approved">
+            <Card data-testid="stat-exported">
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Approved
+                    Exported to Linear
                   </CardTitle>
-                  <TrendingUp className="w-4 h-4 text-purple-600" />
+                  <Send className="w-4 h-4 text-purple-600" />
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-semibold" data-testid="value-approved">
-                  {stats.approved}
+                <div className="text-2xl font-semibold" data-testid="value-exported">
+                  {stats.exportedToLinear}
                 </div>
               </CardContent>
             </Card>

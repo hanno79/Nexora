@@ -71,9 +71,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalPrds: prds.length,
         inProgress: prds.filter(p => p.status === 'in-progress').length,
         completed: prds.filter(p => p.status === 'completed').length,
-        approved: prds.filter(p => p.status === 'approved').length,
-        pendingApproval: prds.filter(p => p.status === 'pending-approval').length,
-        draft: prds.filter(p => p.status === 'draft').length,
+        exportedToLinear: prds.filter(p => p.linearIssueId).length,
       };
       
       res.json(stats);
@@ -524,11 +522,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { prdId, title, description } = req.body;
       
-      if (!title) {
-        return res.status(400).json({ message: "Title is required" });
+      if (!title || !prdId) {
+        return res.status(400).json({ message: "Title and PRD ID are required" });
       }
       
       const result = await exportToLinear(title, description || "");
+      
+      // Update PRD with Linear issue details
+      await storage.updatePrd(prdId, {
+        linearIssueId: result.issueId,
+        linearIssueUrl: result.url,
+      });
+      
       res.json(result);
     } catch (error: any) {
       console.error("Error exporting to Linear:", error);
