@@ -87,8 +87,8 @@ export class DualAiService {
 
     console.log(`✅ Review complete with ${reviewResult.usage.completion_tokens} tokens using ${reviewResult.model}`);
 
-    // Step 3: Improve based on review (if in improve mode)
-    if (mode === 'improve' && questions.length > 0) {
+    // Step 3: Improve based on review (always run in improve mode, regardless of question extraction)
+    if (mode === 'improve') {
       console.log('🔧 Step 3: Improving PRD based on review feedback...');
       
       const improvementPrompt = `ORIGINAL PRD:\n${generatorResponse.content}\n\nREVIEW FEEDBACK:\n${reviewContent}\n\nVerbessere das PRD und adressiere die kritischen Fragen.`;
