@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Save, Check, Link2, Sun, Moon, Monitor } from "lucide-react";
+import { Save, Check, Link2, Sun, Moon, Monitor, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,6 +8,7 @@ import { TopBar } from "@/components/TopBar";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
@@ -23,6 +24,9 @@ export default function Settings() {
   const [lastName, setLastName] = useState("");
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
+  const [generatorModel, setGeneratorModel] = useState("openai/gpt-4o");
+  const [reviewerModel, setReviewerModel] = useState("anthropic/claude-3.5-sonnet");
+  const [aiTier, setAiTier] = useState<"development" | "production" | "premium">("production");
 
   useEffect(() => {
     if (user) {
@@ -36,6 +40,22 @@ export default function Settings() {
   const { data: linearStatus } = useQuery<{ connected: boolean }>({
     queryKey: ["/api/linear/status"],
   });
+
+  const { data: aiPreferences } = useQuery<{
+    generatorModel?: string;
+    reviewerModel?: string;
+    tier?: "development" | "production" | "premium";
+  }>({
+    queryKey: ["/api/settings/ai"],
+  });
+
+  useEffect(() => {
+    if (aiPreferences) {
+      setGeneratorModel(aiPreferences.generatorModel || "openai/gpt-4o");
+      setReviewerModel(aiPreferences.reviewerModel || "anthropic/claude-3.5-sonnet");
+      setAiTier(aiPreferences.tier || "production");
+    }
+  }, [aiPreferences]);
 
   const updateProfileMutation = useMutation({
     mutationFn: async () => {
@@ -68,6 +88,41 @@ export default function Settings() {
       toast({
         title: "Error",
         description: "Failed to update profile",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateAiSettingsMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("PATCH", "/api/settings/ai", {
+        generatorModel,
+        reviewerModel,
+        tier: aiTier,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/ai"] });
+      toast({
+        title: "Success",
+        description: "AI preferences saved successfully",
+      });
+    },
+    onError: (error: Error) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/api/login";
+        }, 500);
+        return;
+      }
+      toast({
+        title: "Error",
+        description: "Failed to update AI preferences",
         variant: "destructive",
       });
     },
@@ -225,6 +280,84 @@ export default function Settings() {
                   </div>
                 </RadioGroup>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* AI Model Preferences */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Brain className="w-5 h-5" />
+                AI Model Preferences
+              </CardTitle>
+              <CardDescription>
+                Configure which AI models are used for PRD generation
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="generator-model">Generator Model</Label>
+                  <Select value={generatorModel} onValueChange={setGeneratorModel}>
+                    <SelectTrigger id="generator-model" data-testid="select-generator-model">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="openai/gpt-4o">GPT-4o (Recommended)</SelectItem>
+                      <SelectItem value="openai/gpt-5">GPT-5 (Latest)</SelectItem>
+                      <SelectItem value="google/gemini-flash-1.5">Gemini Flash 1.5</SelectItem>
+                      <SelectItem value="mistralai/mistral-7b-instruct">Mistral 7B (Free)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    The model that generates initial PRD content
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="reviewer-model">Reviewer Model</Label>
+                  <Select value={reviewerModel} onValueChange={setReviewerModel}>
+                    <SelectTrigger id="reviewer-model" data-testid="select-reviewer-model">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet (Recommended)</SelectItem>
+                      <SelectItem value="anthropic/claude-opus-4.1">Claude Opus 4.1 (Best Quality)</SelectItem>
+                      <SelectItem value="openai/gpt-4o">GPT-4o</SelectItem>
+                      <SelectItem value="google/gemini-flash-1.5">Gemini Flash 1.5 (Free)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    The model that critically reviews and improves content
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="ai-tier">Quality Tier</Label>
+                  <Select value={aiTier} onValueChange={(value: any) => setAiTier(value)}>
+                    <SelectTrigger id="ai-tier" data-testid="select-ai-tier">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="development">Development (Free/Low-cost)</SelectItem>
+                      <SelectItem value="production">Production (Balanced)</SelectItem>
+                      <SelectItem value="premium">Premium (Highest Quality)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Fallback tier if preferred models fail
+                  </p>
+                </div>
+              </div>
+
+              <Button
+                onClick={() => updateAiSettingsMutation.mutate()}
+                disabled={updateAiSettingsMutation.isPending}
+                data-testid="button-save-ai-settings"
+              >
+                <Save className="w-4 h-4 mr-2" />
+                {updateAiSettingsMutation.isPending ? "Saving..." : "Save AI Preferences"}
+              </Button>
             </CardContent>
           </Card>
 
