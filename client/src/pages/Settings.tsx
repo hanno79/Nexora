@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Save, Check, Link2, Sun, Moon, Monitor, Brain } from "lucide-react";
+import { Save, Check, Link2, Sun, Moon, Monitor, Brain, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,6 +9,8 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Separator } from "@/components/ui/separator";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
@@ -27,6 +29,9 @@ export default function Settings() {
   const [generatorModel, setGeneratorModel] = useState("openai/gpt-4o");
   const [reviewerModel, setReviewerModel] = useState("anthropic/claude-3.5-sonnet");
   const [aiTier, setAiTier] = useState<"development" | "production" | "premium">("production");
+  const [iterativeMode, setIterativeMode] = useState(false);
+  const [iterationCount, setIterationCount] = useState(3);
+  const [useFinalReview, setUseFinalReview] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -45,6 +50,9 @@ export default function Settings() {
     generatorModel?: string;
     reviewerModel?: string;
     tier?: "development" | "production" | "premium";
+    iterativeMode?: boolean;
+    iterationCount?: number;
+    useFinalReview?: boolean;
   }>({
     queryKey: ["/api/settings/ai"],
   });
@@ -54,6 +62,9 @@ export default function Settings() {
       setGeneratorModel(aiPreferences.generatorModel || "openai/gpt-4o");
       setReviewerModel(aiPreferences.reviewerModel || "anthropic/claude-3.5-sonnet");
       setAiTier(aiPreferences.tier || "production");
+      setIterativeMode(aiPreferences.iterativeMode || false);
+      setIterationCount(aiPreferences.iterationCount || 3);
+      setUseFinalReview(aiPreferences.useFinalReview || false);
     }
   }, [aiPreferences]);
 
@@ -99,6 +110,9 @@ export default function Settings() {
         generatorModel,
         reviewerModel,
         tier: aiTier,
+        iterativeMode,
+        iterationCount,
+        useFinalReview,
       });
     },
     onSuccess: () => {
@@ -348,6 +362,72 @@ export default function Settings() {
                     Fallback tier if preferred models fail
                   </p>
                 </div>
+              </div>
+
+              <Separator className="my-6" />
+
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-2">
+                      <RefreshCw className="w-4 h-4" />
+                      <Label htmlFor="iterative-mode" className="text-base cursor-pointer">
+                        Iterative Workflow Mode
+                      </Label>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      AI #1 asks questions, AI #2 answers with best practices
+                    </p>
+                  </div>
+                  <Switch
+                    id="iterative-mode"
+                    checked={iterativeMode}
+                    onCheckedChange={setIterativeMode}
+                    data-testid="switch-iterative-mode"
+                  />
+                </div>
+
+                {iterativeMode && (
+                  <div className="space-y-4 pl-6 border-l-2 border-primary/20">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="iteration-count">
+                          Iteration Count: {iterationCount}
+                        </Label>
+                      </div>
+                      <Slider
+                        id="iteration-count"
+                        min={2}
+                        max={5}
+                        step={1}
+                        value={[iterationCount]}
+                        onValueChange={(value) => setIterationCount(value[0])}
+                        className="w-full"
+                        data-testid="slider-iteration-count"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Number of Q&A cycles between AI #1 and AI #2 (2-5 iterations)
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="final-review" className="cursor-pointer">
+                          Final Review (AI #3)
+                        </Label>
+                        <p className="text-sm text-muted-foreground">
+                          Optional final quality check and polish
+                        </p>
+                      </div>
+                      <Switch
+                        id="final-review"
+                        checked={useFinalReview}
+                        onCheckedChange={setUseFinalReview}
+                        data-testid="switch-final-review"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <Button

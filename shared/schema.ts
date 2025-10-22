@@ -43,6 +43,9 @@ export const aiPreferencesSchema = z.object({
   generatorModel: z.string().optional(),
   reviewerModel: z.string().optional(),
   tier: z.enum(['development', 'production', 'premium']).optional(),
+  iterativeMode: z.boolean().optional(), // Toggle between Simple and Iterative workflow
+  iterationCount: z.number().min(2).max(5).optional().default(3), // Number of Q&A iterations (2-5)
+  useFinalReview: z.boolean().optional(), // Enable AI #3 final review in iterative mode
 });
 
 export type AiPreferences = z.infer<typeof aiPreferencesSchema>;
