@@ -159,21 +159,57 @@ export default function Editor() {
 
   const exportMutation = useMutation({
     mutationFn: async (format: string) => {
-      const response = await apiRequest("POST", `/api/prds/${prdId}/export`, { format });
-      return response;
+      if (format === 'pdf' || format === 'word') {
+        // For PDF and Word, we need to handle binary response
+        const response = await fetch(`/api/prds/${prdId}/export`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({ format }),
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Export failed: ${response.statusText}`);
+        }
+        
+        return { blob: await response.blob(), format };
+      } else {
+        const response = await apiRequest("POST", `/api/prds/${prdId}/export`, { format });
+        return { data: response, format };
+      }
     },
-    onSuccess: (data: any, format: string) => {
+    onSuccess: (result: any) => {
+      const format = result.format;
+      
       if (format === 'markdown') {
-        const blob = new Blob([data.content], { type: 'text/markdown' });
+        const blob = new Blob([result.data.content], { type: 'text/markdown' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         a.download = `${title.replace(/\s+/g, '-')}.md`;
         a.click();
+        URL.revokeObjectURL(url);
+      } else if (format === 'pdf') {
+        const url = URL.createObjectURL(result.blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${title.replace(/\s+/g, '-')}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else if (format === 'word') {
+        const url = URL.createObjectURL(result.blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${title.replace(/\s+/g, '-')}.docx`;
+        a.click();
+        URL.revokeObjectURL(url);
       }
+      
       toast({
         title: "Success",
-        description: `Exported as ${format.toUpperCase()}`,
+        description: `Exported as ${format === 'word' ? 'Word' : format.toUpperCase()}`,
       });
     },
     onError: (error: Error) => {
@@ -318,6 +354,14 @@ export default function Editor() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => exportMutation.mutate("pdf")} data-testid="menu-export-pdf">
+                    <FileDown className="w-4 h-4 mr-2" />
+                    PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => exportMutation.mutate("word")} data-testid="menu-export-word">
+                    <FileDown className="w-4 h-4 mr-2" />
+                    Word (.docx)
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => exportMutation.mutate("markdown")} data-testid="menu-export-markdown">
                     <FileDown className="w-4 h-4 mr-2" />
                     Markdown

@@ -5,6 +5,7 @@ import { setupAuth, isAuthenticated } from "./replitAuth";
 import { insertPrdSchema, users } from "@shared/schema";
 import { generatePRDContent } from "./anthropic";
 import { exportToLinear, checkLinearConnection } from "./linearHelper";
+import { generatePDF, generateWord } from "./exportUtils";
 import { initializeTemplates } from "./initTemplates";
 import { db } from "./db";
 
@@ -508,6 +509,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (format === 'markdown') {
         const markdown = `# ${prd.title}\n\n${prd.description || ''}\n\n---\n\n${prd.content}`;
         res.json({ content: markdown });
+      } else if (format === 'pdf') {
+        const pdfBuffer = await generatePDF({
+          title: prd.title,
+          description: prd.description || undefined,
+          content: prd.content,
+        });
+        
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${prd.title.replace(/\s+/g, '-')}.pdf"`);
+        res.send(pdfBuffer);
+      } else if (format === 'word') {
+        const wordBuffer = await generateWord({
+          title: prd.title,
+          description: prd.description || undefined,
+          content: prd.content,
+        });
+        
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        res.setHeader('Content-Disposition', `attachment; filename="${prd.title.replace(/\s+/g, '-')}.docx"`);
+        res.send(wordBuffer);
       } else {
         res.status(400).json({ message: "Unsupported export format" });
       }
