@@ -158,6 +158,35 @@ export const insertApprovalSchema = createInsertSchema(approvals, {
 
 export type InsertApproval = z.infer<typeof insertApprovalSchema>;
 
+// AI Usage table for cost tracking and analytics
+export const aiUsage = pgTable("ai_usage", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  prdId: varchar("prd_id").references(() => prds.id, { onDelete: 'cascade' }), // Optional - can be null for standalone AI calls
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  modelType: varchar("model_type").notNull(), // 'generator' | 'reviewer'
+  model: varchar("model").notNull(), // Full model name (e.g., 'openai/gpt-4o')
+  tier: varchar("tier").notNull(), // 'development' | 'production' | 'premium'
+  inputTokens: varchar("input_tokens").notNull(), // Stored as string to handle large numbers
+  outputTokens: varchar("output_tokens").notNull(),
+  totalCost: varchar("total_cost").notNull(), // Stored as string for precision (e.g., '0.00234')
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type AiUsage = typeof aiUsage.$inferSelect;
+
+export const insertAiUsageSchema = createInsertSchema(aiUsage, {
+  modelType: z.enum(['generator', 'reviewer']),
+  tier: z.enum(['development', 'production', 'premium']),
+  inputTokens: z.string(),
+  outputTokens: z.string(),
+  totalCost: z.string(),
+}).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertAiUsage = z.infer<typeof insertAiUsageSchema>;
+
 // Define relations
 export const usersRelations = relations(users, ({ many }) => ({
   prds: many(prds),
@@ -230,6 +259,17 @@ export const approvalsRelations = relations(approvals, ({ one }) => ({
   }),
   completer: one(users, {
     fields: [approvals.completedBy],
+    references: [users.id],
+  }),
+}));
+
+export const aiUsageRelations = relations(aiUsage, ({ one }) => ({
+  prd: one(prds, {
+    fields: [aiUsage.prdId],
+    references: [prds.id],
+  }),
+  user: one(users, {
+    fields: [aiUsage.userId],
     references: [users.id],
   }),
 }));
