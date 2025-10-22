@@ -5,6 +5,7 @@ import {
   templates,
   prdVersions,
   sharedPrds,
+  comments,
   type User,
   type UpsertUser,
   type Prd,
@@ -15,6 +16,8 @@ import {
   type InsertPrdVersion,
   type SharedPrd,
   type InsertSharedPrd,
+  type Comment,
+  type InsertComment,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, sql } from "drizzle-orm";
@@ -46,6 +49,10 @@ export interface IStorage {
   getSharedPrds(userId: string): Promise<SharedPrd[]>;
   getPrdShares(prdId: string): Promise<SharedPrd[]>;
   createSharedPrd(share: InsertSharedPrd): Promise<SharedPrd>;
+  
+  // Comment operations
+  getComments(prdId: string): Promise<Comment[]>;
+  createComment(comment: InsertComment): Promise<Comment>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -173,6 +180,20 @@ export class DatabaseStorage implements IStorage {
   async createSharedPrd(shareData: InsertSharedPrd): Promise<SharedPrd> {
     const [share] = await db.insert(sharedPrds).values(shareData).returning();
     return share;
+  }
+
+  // Comment operations
+  async getComments(prdId: string): Promise<Comment[]> {
+    return await db
+      .select()
+      .from(comments)
+      .where(eq(comments.prdId, prdId))
+      .orderBy(comments.createdAt);
+  }
+
+  async createComment(commentData: InsertComment): Promise<Comment> {
+    const [comment] = await db.insert(comments).values(commentData).returning();
+    return comment;
   }
 }
 

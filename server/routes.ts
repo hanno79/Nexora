@@ -248,6 +248,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Comment routes
+  app.get('/api/prds/:id/comments', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const commentsData = await storage.getComments(id);
+      
+      // Enrich comments with user information
+      const commentsWithUsers = await Promise.all(
+        commentsData.map(async (comment) => {
+          const user = await storage.getUser(comment.userId);
+          return {
+            ...comment,
+            user: user ? {
+              id: user.id,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              email: user.email,
+              profileImageUrl: user.profileImageUrl,
+            } : null,
+          };
+        })
+      );
+      
+      res.json(commentsWithUsers);
+    } catch (error) {
+      console.error("Error fetching comments:", error);
+      res.status(500).json({ message: "Failed to fetch comments" });
+    }
+  });
+
+  app.post('/api/prds/:id/comments', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const { content, sectionId } = req.body;
+      
+      if (!content || content.trim() === '') {
+        return res.status(400).json({ message: "Comment content is required" });
+      }
+      
+      const comment = await storage.createComment({
+        prdId: id,
+        userId,
+        content,
+        sectionId: sectionId || null,
+      });
+      
+      // Return comment with user info
+      const user = await storage.getUser(userId);
+      res.json({
+        ...comment,
+        user: user ? {
+          id: user.id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          profileImageUrl: user.profileImageUrl,
+        } : null,
+      });
+    } catch (error) {
+      console.error("Error creating comment:", error);
+      res.status(500).json({ message: "Failed to create comment" });
+    }
+  });
+
   // AI generation route
   app.post('/api/ai/generate', isAuthenticated, async (req: any, res) => {
     try {

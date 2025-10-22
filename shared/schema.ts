@@ -61,7 +61,7 @@ export const prds = pgTable("prds", {
   title: varchar("title").notNull(),
   description: text("description"),
   content: text("content").notNull(), // JSON string with PRD sections
-  status: varchar("status").notNull().default('draft'), // 'draft', 'in-progress', 'review', 'completed'
+  status: varchar("status").notNull().default('draft'), // 'draft', 'in-progress', 'review', 'pending-approval', 'approved', 'completed'
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -71,7 +71,7 @@ export type Prd = typeof prds.$inferSelect;
 export const insertPrdSchema = createInsertSchema(prds, {
   title: z.string().min(1, "Title is required"),
   content: z.string(),
-  status: z.enum(['draft', 'in-progress', 'review', 'completed']).default('draft'),
+  status: z.enum(['draft', 'in-progress', 'review', 'pending-approval', 'approved', 'completed']).default('draft'),
 }).omit({
   id: true,
   createdAt: true,
@@ -106,11 +106,33 @@ export const sharedPrds = pgTable("shared_prds", {
 export type SharedPrd = typeof sharedPrds.$inferSelect;
 export type InsertSharedPrd = typeof sharedPrds.$inferInsert;
 
+// Comments table for PRD discussions
+export const comments = pgTable("comments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  prdId: varchar("prd_id").notNull().references(() => prds.id, { onDelete: 'cascade' }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  content: text("content").notNull(),
+  sectionId: varchar("section_id"), // Optional: for inline comments on specific sections
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type Comment = typeof comments.$inferSelect;
+
+export const insertCommentSchema = createInsertSchema(comments, {
+  content: z.string().min(1, "Comment cannot be empty"),
+}).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertComment = z.infer<typeof insertCommentSchema>;
+
 // Define relations
 export const usersRelations = relations(users, ({ many }) => ({
   prds: many(prds),
   prdVersions: many(prdVersions),
   sharedPrds: many(sharedPrds),
+  comments: many(comments),
 }));
 
 export const prdsRelations = relations(prds, ({ one, many }) => ({
@@ -124,6 +146,7 @@ export const prdsRelations = relations(prds, ({ one, many }) => ({
   }),
   versions: many(prdVersions),
   shares: many(sharedPrds),
+  comments: many(comments),
 }));
 
 export const templatesRelations = relations(templates, ({ many }) => ({
@@ -148,6 +171,17 @@ export const sharedPrdsRelations = relations(sharedPrds, ({ one }) => ({
   }),
   sharedWith: one(users, {
     fields: [sharedPrds.sharedWith],
+    references: [users.id],
+  }),
+}));
+
+export const commentsRelations = relations(comments, ({ one }) => ({
+  prd: one(prds, {
+    fields: [comments.prdId],
+    references: [prds.id],
+  }),
+  user: one(users, {
+    fields: [comments.userId],
     references: [users.id],
   }),
 }));

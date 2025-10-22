@@ -20,6 +20,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { VersionHistoryDialog } from "@/components/VersionHistoryDialog";
 import { SharePRDDialog } from "@/components/SharePRDDialog";
+import { CommentsPanel } from "@/components/CommentsPanel";
 import {
   Select,
   SelectContent,
@@ -51,6 +52,7 @@ export default function Editor() {
   const [status, setStatus] = useState<string>("draft");
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
+  const [showComments, setShowComments] = useState(true);
 
   const { data: prd, isLoading } = useQuery<Prd>({
     queryKey: ["/api/prds", prdId],
@@ -328,60 +330,73 @@ export default function Editor() {
         </div>
       </div>
 
-      {/* Editor Content */}
-      <div className="container max-w-4xl mx-auto px-4 md:px-6 py-8">
-        <div className="space-y-6">
-          {/* Title */}
-          <div>
-            <Input
-              type="text"
-              placeholder="Untitled PRD"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="text-3xl font-semibold border-0 px-0 focus-visible:ring-0 placeholder:text-muted-foreground/50"
-              data-testid="input-title"
-            />
-          </div>
+      {/* Editor Content with Comments Sidebar */}
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex-1 overflow-y-auto">
+          <div className="container max-w-4xl mx-auto px-4 md:px-6 py-8">
+            <div className="space-y-6">
+              {/* Title */}
+              <div>
+                <Input
+                  type="text"
+                  placeholder="Untitled PRD"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="text-3xl font-semibold border-0 px-0 focus-visible:ring-0 placeholder:text-muted-foreground/50"
+                  data-testid="input-title"
+                />
+              </div>
 
-          {/* Description */}
-          <div>
-            <Textarea
-              placeholder="Add a brief description..."
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="resize-none border-0 px-0 focus-visible:ring-0 placeholder:text-muted-foreground/50"
-              rows={2}
-              data-testid="input-description"
-            />
-          </div>
+              {/* Description */}
+              <div>
+                <Textarea
+                  placeholder="Add a brief description..."
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="resize-none border-0 px-0 focus-visible:ring-0 placeholder:text-muted-foreground/50"
+                  rows={2}
+                  data-testid="input-description"
+                />
+              </div>
 
-          {/* Status */}
-          <div className="flex items-center gap-4">
-            <label className="text-sm font-medium">Status:</label>
-            <Select value={status} onValueChange={setStatus}>
-              <SelectTrigger className="w-40" data-testid="select-status">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="draft">Draft</SelectItem>
-                <SelectItem value="in-progress">In Progress</SelectItem>
-                <SelectItem value="review">Review</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+              {/* Status */}
+              <div className="flex items-center gap-4">
+                <label className="text-sm font-medium">Status:</label>
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger className="w-40" data-testid="select-status">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="draft">Draft</SelectItem>
+                    <SelectItem value="in-progress">In Progress</SelectItem>
+                    <SelectItem value="review">Review</SelectItem>
+                    <SelectItem value="pending-approval">Pending Approval</SelectItem>
+                    <SelectItem value="approved">Approved</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
 
-          {/* Content */}
-          <div className="border-t pt-6">
-            <Textarea
-              placeholder="Start writing your PRD content here..."
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              className="min-h-[500px] font-mono text-sm resize-none"
-              data-testid="textarea-content"
-            />
+              {/* Content */}
+              <div className="border-t pt-6">
+                <Textarea
+                  placeholder="Start writing your PRD content here..."
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  className="min-h-[500px] font-mono text-sm resize-none"
+                  data-testid="textarea-content"
+                />
+              </div>
+            </div>
           </div>
         </div>
+
+        {/* Comments Sidebar */}
+        {prdId && showComments && (
+          <div className="w-80 flex-shrink-0">
+            <CommentsPanel prdId={prdId} />
+          </div>
+        )}
       </div>
 
       {/* Dialogs */}
