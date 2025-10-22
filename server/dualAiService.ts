@@ -9,11 +9,34 @@ import {
   type GeneratorResponse,
   type ReviewerResponse
 } from './dualAiPrompts';
+import { db } from './db';
+import { users } from '@shared/schema';
+import { eq } from 'drizzle-orm';
 
 export class DualAiService {
   private client = getOpenRouterClient();
 
-  async generatePRD(request: DualAiRequest): Promise<DualAiResponse> {
+  async generatePRD(request: DualAiRequest, userId?: string): Promise<DualAiResponse> {
+    // Load user preferences if userId is provided
+    if (userId) {
+      const userPrefs = await db.select({ aiPreferences: users.aiPreferences })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      
+      if (userPrefs[0]?.aiPreferences) {
+        const prefs = userPrefs[0].aiPreferences as any;
+        if (prefs.generatorModel) {
+          this.client.setPreferredModel('generator', prefs.generatorModel);
+        }
+        if (prefs.reviewerModel) {
+          this.client.setPreferredModel('reviewer', prefs.reviewerModel);
+        }
+        if (prefs.tier) {
+          this.client.setPreferredTier(prefs.tier);
+        }
+      }
+    }
     const { userInput, existingContent, mode } = request;
 
     if (mode === 'review-only' && !existingContent) {

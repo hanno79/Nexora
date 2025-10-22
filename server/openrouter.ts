@@ -63,6 +63,7 @@ class OpenRouterClient {
   private apiKey: string;
   private baseUrl = 'https://openrouter.ai/api/v1';
   private tier: keyof ModelConfig;
+  private preferredModels: { generator?: string; reviewer?: string } = {};
 
   constructor(apiKey?: string, tier: keyof ModelConfig = 'production') {
     this.apiKey = apiKey || process.env.OPENROUTER_API_KEY || '';
@@ -81,6 +82,14 @@ class OpenRouterClient {
     return MODEL_TIERS[this.tier];
   }
 
+  setPreferredModel(type: 'generator' | 'reviewer', model: string): void {
+    this.preferredModels[type] = model;
+  }
+
+  setPreferredTier(tier: keyof ModelConfig): void {
+    this.tier = tier;
+  }
+
   async callModel(
     modelType: 'generator' | 'reviewer',
     systemPrompt: string,
@@ -92,8 +101,14 @@ class OpenRouterClient {
       throw new Error('OpenRouter API key not configured');
     }
 
-    const models = this.getModels();
-    const modelName = modelType === 'generator' ? models.generator : models.reviewer;
+    // Use preferred model if set, otherwise use tier-based model
+    let modelName: string;
+    if (this.preferredModels[modelType]) {
+      modelName = this.preferredModels[modelType]!;
+    } else {
+      const models = this.getModels();
+      modelName = modelType === 'generator' ? models.generator : models.reviewer;
+    }
 
     const requestBody: OpenRouterRequest = {
       model: modelName,

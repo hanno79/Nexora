@@ -563,7 +563,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userInput: userInput || '',
         existingContent,
         mode: mode || 'improve'
-      });
+      }, userId);
       
       // Log AI usage for both generator and reviewer
       await logAiUsage(
