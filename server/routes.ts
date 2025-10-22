@@ -2,13 +2,14 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
-import { insertPrdSchema, users } from "@shared/schema";
+import { insertPrdSchema, users, aiPreferencesSchema } from "@shared/schema";
 import { generatePRDContent } from "./anthropic";
 import { exportToLinear, checkLinearConnection } from "./linearHelper";
 import { generatePDF, generateWord } from "./exportUtils";
 import { generateClaudeMD } from "./claudemdGenerator";
 import { initializeTemplates } from "./initTemplates";
 import { db } from "./db";
+import { eq } from "drizzle-orm";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Initialize templates
@@ -60,6 +61,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching users:", error);
       res.status(500).json({ message: "Failed to fetch users" });
+    }
+  });
+
+  // AI Settings routes
+  app.get('/api/settings/ai', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const user = await db.select({
+        aiPreferences: users.aiPreferences
+      }).from(users).where(eq(users.id, userId)).limit(1);
+      
+      const preferences = user[0]?.aiPreferences || {
+        generatorModel: 'openai/gpt-4o',
+        reviewerModel: 'anthropic/claude-3.5-sonnet',
+        tier: 'production'
+      };
+      
+      res.json(preferences);
+    } catch (error) {
+      console.error("Error fetching AI settings:", error);
+      res.status(500).json({ message: "Failed to fetch AI settings" });
+    }
+  });
+
+  app.patch('/api/settings/ai', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const preferences = aiPreferencesSchema.parse(req.body);
+      
+      await db.update(users)
+        .set({ 
+          aiPreferences: preferences as any,
+          updatedAt: new Date()
+        })
+        .where(eq(users.id, userId));
+      
+      res.json(preferences);
+    } catch (error) {
+      console.error("Error updating AI settings:", error);
+      res.status(500).json({ message: "Failed to update AI settings" });
     }
   });
 
