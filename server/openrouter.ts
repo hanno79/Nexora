@@ -210,5 +210,25 @@ export function getOpenRouterClient(tier?: keyof ModelConfig): OpenRouterClient 
   return openRouterClient;
 }
 
+/**
+ * Check if OpenRouter API key is configured
+ */
+export function isOpenRouterConfigured(): boolean {
+  return !!process.env.OPENROUTER_API_KEY;
+}
+
+/**
+ * Get user-friendly error message if OpenRouter is not configured
+ */
+export function getOpenRouterConfigError(): string {
+  return `OpenRouter API key is not configured. Please add OPENROUTER_API_KEY to your environment variables. You can get a free API key at https://openrouter.ai/keys`;
+}
+
+// Startup check
+if (!isOpenRouterConfigured()) {
+  console.warn('⚠️  WARNING: OPENROUTER_API_KEY is not set. Dual-AI features will not work.');
+  console.warn('   Get your free API key at: https://openrouter.ai/keys');
+}
+
 export { OpenRouterClient, MODEL_TIERS };
 export type { ModelTier, ModelConfig };

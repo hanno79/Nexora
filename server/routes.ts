@@ -499,9 +499,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Dual-AI generation routes (HRP-17)
   const { getDualAiService } = await import('./dualAiService');
   const { logAiUsage } = await import('./aiUsageLogger');
+  const { isOpenRouterConfigured, getOpenRouterConfigError } = await import('./openrouter');
   
   app.post('/api/ai/generate-dual', isAuthenticated, async (req: any, res) => {
     try {
+      // Check if OpenRouter is configured
+      if (!isOpenRouterConfigured()) {
+        return res.status(503).json({ 
+          message: getOpenRouterConfigError()
+        });
+      }
+      
       const { userInput, existingContent, mode, prdId } = req.body;
       const userId = req.user.claims.sub;
       
@@ -544,6 +552,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/ai/review', isAuthenticated, async (req: any, res) => {
     try {
+      // Check if OpenRouter is configured
+      if (!isOpenRouterConfigured()) {
+        return res.status(503).json({ 
+          message: getOpenRouterConfigError()
+        });
+      }
+      
       const { content, prdId } = req.body;
       const userId = req.user.claims.sub;
       
