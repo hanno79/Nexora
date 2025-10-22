@@ -22,6 +22,7 @@ import { CommentsPanel } from "@/components/CommentsPanel";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { VersionHistory } from "@/components/VersionHistory";
 import { SharePRDDialog } from "@/components/SharePRDDialog";
+import { DualAiDialog } from "@/components/DualAiDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -55,6 +56,7 @@ export default function Editor() {
   const [showComments, setShowComments] = useState(true);
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
+  const [showDualAiDialog, setShowDualAiDialog] = useState(false);
 
   const { data: prd, isLoading } = useQuery<Prd>({
     queryKey: ["/api/prds", prdId],
@@ -122,39 +124,17 @@ export default function Editor() {
     },
   });
 
-  const aiGenerateMutation = useMutation({
-    mutationFn: async () => {
-      return await apiRequest("POST", "/api/ai/generate", {
-        prompt: `Generate professional PRD content for: ${title}. Description: ${description}`,
-        currentContent: content,
-      });
-    },
-    onSuccess: (data: any) => {
-      setContent(data.content);
-      toast({
-        title: "Success",
-        description: "AI content generated successfully",
-      });
-    },
-    onError: (error: Error) => {
-      if (isUnauthorizedError(error)) {
-        toast({
-          title: "Unauthorized",
-          description: "You are logged out. Logging in again...",
-          variant: "destructive",
-        });
-        setTimeout(() => {
-          window.location.href = "/api/login";
-        }, 500);
-        return;
-      }
-      toast({
-        title: "Error",
-        description: "Failed to generate AI content",
-        variant: "destructive",
-      });
-    },
-  });
+  const handleDualAiContentGenerated = (newContent: string, response: any) => {
+    setContent(newContent);
+    
+    // Auto-save after AI generation
+    saveMutation.mutate();
+    
+    toast({
+      title: "Success",
+      description: `PRD ${content ? 'improved' : 'generated'} with Dual-AI (${response.generatorResponse.model.split('/')[1]} + ${response.reviewerResponse.model.split('/')[1]})`,
+    });
+  };
 
   const exportMutation = useMutation({
     mutationFn: async (format: string) => {
@@ -340,12 +320,11 @@ export default function Editor() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => aiGenerateMutation.mutate()}
-                disabled={aiGenerateMutation.isPending}
-                data-testid="button-ai-generate"
+                onClick={() => setShowDualAiDialog(true)}
+                data-testid="button-dual-ai-assist"
               >
                 <Sparkles className="w-4 h-4 mr-2" />
-                {aiGenerateMutation.isPending ? "Generating..." : "AI Assist"}
+                Dual-AI Assist
               </Button>
 
               <DropdownMenu>
@@ -489,6 +468,12 @@ export default function Editor() {
             prdId={prdId}
             open={showApprovalDialog}
             onOpenChange={setShowApprovalDialog}
+          />
+          <DualAiDialog
+            open={showDualAiDialog}
+            onOpenChange={setShowDualAiDialog}
+            currentContent={content}
+            onContentGenerated={handleDualAiContentGenerated}
           />
         </>
       )}
