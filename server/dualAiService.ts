@@ -17,27 +17,11 @@ export class DualAiService {
   private client = getOpenRouterClient();
 
   async generatePRD(request: DualAiRequest, userId?: string): Promise<DualAiResponse> {
-    // Load user preferences if userId is provided
-    if (userId) {
-      const userPrefs = await db.select({ aiPreferences: users.aiPreferences })
-        .from(users)
-        .where(eq(users.id, userId))
-        .limit(1);
-      
-      if (userPrefs[0]?.aiPreferences) {
-        const prefs = userPrefs[0].aiPreferences as any;
-        if (prefs.generatorModel) {
-          this.client.setPreferredModel('generator', prefs.generatorModel);
-        }
-        if (prefs.reviewerModel) {
-          this.client.setPreferredModel('reviewer', prefs.reviewerModel);
-        }
-        if (prefs.tier) {
-          this.client.setPreferredTier(prefs.tier);
-        }
-      }
-    }
-    const { userInput, existingContent, mode } = request;
+    // Load and apply user preferences if userId is provided
+    const cleanup = await this.applyUserPreferences(userId);
+    
+    try {
+      const { userInput, existingContent, mode } = request;
 
     if (mode === 'review-only' && !existingContent) {
       throw new Error('review-only mode requires existingContent');
@@ -140,13 +124,81 @@ export class DualAiService {
       improvedVersion?.model
     ].filter(Boolean))) as string[];
 
-    return {
-      finalContent: improvedVersion?.content || generatorResponse.content,
-      generatorResponse,
-      reviewerResponse,
-      improvedVersion,
-      totalTokens,
-      modelsUsed
+      return {
+        finalContent: improvedVersion?.content || generatorResponse.content,
+        generatorResponse,
+        reviewerResponse,
+        improvedVersion,
+        totalTokens,
+        modelsUsed
+      };
+    } finally {
+      // Always cleanup preferences to prevent cross-user contamination
+      cleanup();
+    }
+  }
+
+  async reviewOnly(prdContent: string, userId?: string): Promise<ReviewerResponse> {
+    // Load and apply user preferences if userId is provided
+    const cleanup = await this.applyUserPreferences(userId);
+    
+    try {
+      console.log('🔍 Reviewing existing PRD...');
+      
+      const reviewerPrompt = `Bewerte folgendes PRD kritisch:\n\n${prdContent}`;
+
+      const reviewResult = await this.client.callWithFallback(
+        'reviewer',
+        REVIEWER_SYSTEM_PROMPT,
+        reviewerPrompt,
+        2000
+      );
+
+      const questions = this.extractQuestions(reviewResult.content);
+
+      return {
+        assessment: reviewResult.content,
+        questions,
+        model: reviewResult.model,
+        usage: reviewResult.usage,
+        tier: reviewResult.tier
+      };
+    } finally {
+      // Always cleanup preferences
+      cleanup();
+    }
+  }
+
+  private async applyUserPreferences(userId?: string): Promise<() => void> {
+    const originalGenerator = this.client.getPreferredModel('generator');
+    const originalReviewer = this.client.getPreferredModel('reviewer');
+    const originalTier = this.client.getTier();
+
+    if (userId) {
+      const userPrefs = await db.select({ aiPreferences: users.aiPreferences })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      
+      if (userPrefs[0]?.aiPreferences) {
+        const prefs = userPrefs[0].aiPreferences as any;
+        if (prefs.generatorModel) {
+          this.client.setPreferredModel('generator', prefs.generatorModel);
+        }
+        if (prefs.reviewerModel) {
+          this.client.setPreferredModel('reviewer', prefs.reviewerModel);
+        }
+        if (prefs.tier) {
+          this.client.setPreferredTier(prefs.tier);
+        }
+      }
+    }
+
+    // Return cleanup function that restores original state
+    return () => {
+      this.client.setPreferredModel('generator', originalGenerator);
+      this.client.setPreferredModel('reviewer', originalReviewer);
+      this.client.setPreferredTier(originalTier);
     };
   }
 
@@ -166,29 +218,6 @@ export class DualAiService {
     }
 
     return questions;
-  }
-
-  async reviewOnly(prdContent: string): Promise<ReviewerResponse> {
-    console.log('🔍 Reviewing existing PRD...');
-    
-    const reviewerPrompt = `Bewerte folgendes PRD kritisch:\n\n${prdContent}`;
-
-    const reviewResult = await this.client.callWithFallback(
-      'reviewer',
-      REVIEWER_SYSTEM_PROMPT,
-      reviewerPrompt,
-      2000
-    );
-
-    const questions = this.extractQuestions(reviewResult.content);
-
-    return {
-      assessment: reviewResult.content,
-      questions,
-      model: reviewResult.model,
-      usage: reviewResult.usage,
-      tier: reviewResult.tier
-    };
   }
 }
 

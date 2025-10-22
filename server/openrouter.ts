@@ -82,8 +82,12 @@ class OpenRouterClient {
     return MODEL_TIERS[this.tier];
   }
 
-  setPreferredModel(type: 'generator' | 'reviewer', model: string): void {
+  setPreferredModel(type: 'generator' | 'reviewer', model: string | undefined): void {
     this.preferredModels[type] = model;
+  }
+
+  getPreferredModel(type: 'generator' | 'reviewer'): string | undefined {
+    return this.preferredModels[type];
   }
 
   setPreferredTier(tier: keyof ModelConfig): void {

@@ -608,7 +608,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const service = getDualAiService();
-      const review = await service.reviewOnly(content);
+      const review = await service.reviewOnly(content, userId);
       
       // Log AI usage for reviewer
       await logAiUsage(
