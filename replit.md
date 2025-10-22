@@ -58,12 +58,26 @@ Preferred communication style: Simple, everyday language.
 - Shared PRDs: Team collaboration with permission levels
 - Comments: Discussion threads on PRDs with user attribution, timestamps, and optional section linking
 - Approvals: Workflow management with requester, reviewers list, status tracking, and completion audit trail
+- AI Usage: Cost tracking and analytics for Dual-AI system with model type, tier, token counts, and calculated costs
 
 ### AI Integration
 
-**Claude AI Integration**
-- Anthropic SDK for content generation
-- Uses claude-sonnet-4-20250514 model (latest as of implementation)
+**Dual-AI System (HRP-17 Implementation)**
+- **OpenRouter Integration**: Unified API access to 400+ LLM models through single API key
+- **Tiered Model Configuration**: 
+  - Development tier: Mistral-7B (generator) + Gemini Flash (reviewer) - Free/Low-cost testing
+  - Production tier: GPT-4o (generator) + Claude 3.5 Sonnet (reviewer) - High-quality output
+  - Premium tier: Role-swap for maximum quality validation
+- **Intelligent Fallback System**: Automatic tier degradation on failures with proper restoration
+- **Dual-AI Workflow**: Generator → Reviewer → Improvement cycle
+  - Generator creates initial PRD content with structured markdown
+  - Reviewer provides critical analysis and generates improvement questions
+  - Generator refines content based on reviewer feedback
+- **Cost Tracking**: Automatic logging of AI usage to `aiUsage` table with token counts and cost calculation
+
+**Legacy Claude AI Integration**
+- Anthropic SDK for single-model content generation
+- Uses claude-sonnet-4-20250514 model
 - System prompt optimized for professional PRD content generation
 - Supports both new content creation and iterative improvement
 - 4000 token max output for comprehensive PRD sections
@@ -154,10 +168,17 @@ Preferred communication style: Simple, everyday language.
 - Environment variables: REPL_ID, REPL_IDENTITY, WEB_REPL_RENEWAL
 - Development-only plugins: cartographer, dev-banner, runtime-error-modal
 
-**Anthropic AI**
-- Claude API for PRD content generation
-- Requires ANTHROPIC_API_KEY environment variable
-- Model: claude-sonnet-4-20250514
+**AI Services**
+- **OpenRouter** (Dual-AI System - Primary)
+  - Unified API for 400+ LLM models
+  - Requires OPENROUTER_API_KEY environment variable
+  - Get free API key at: https://openrouter.ai/keys
+  - Supports GPT-4o, Claude 3.5 Sonnet, Mistral, Gemini, and many more
+  - Automatic fallback between model tiers
+- **Anthropic AI** (Legacy Single-Model)
+  - Claude API for PRD content generation
+  - Requires ANTHROPIC_API_KEY environment variable
+  - Model: claude-sonnet-4-20250514
 
 **Linear**
 - Linear API for issue/project management
