@@ -105,6 +105,27 @@ Preferred communication style: Simple, everyday language.
 - Complete audit trail with requester, reviewers, completion timestamps
 - API endpoints: GET /api/prds/:id/approval, POST /api/prds/:id/approval/request, POST /api/prds/:id/approval/respond
 
+### Export System
+
+**Multi-Format Export**
+- PDF export using jsPDF library with markdown parsing and proper formatting
+- Word (.docx) export using docx library with structured document generation
+- Markdown export as plain text download
+- Export dropdown in Editor toolbar with all format options
+
+**Export Architecture**
+- Backend: POST /api/prds/:id/export endpoint handling all formats
+- PDF/Word: Binary responses with appropriate MIME types and Content-Disposition headers
+- Markdown: JSON response with content field
+- Frontend: Blob creation and automatic download via temporary anchor elements
+- Server-side utilities in exportUtils.ts for PDF/Word generation
+
+**Content Processing**
+- Markdown parsing for headings (H1, H2, H3), bullet points, and paragraphs
+- Automatic page breaks in PDF generation
+- Proper document structure in Word exports with heading levels
+- Title and description formatting with distinct styling
+
 ## External Dependencies
 
 ### Third-Party Services
@@ -146,6 +167,8 @@ Preferred communication style: Simple, everyday language.
 - react-hook-form with zod resolvers for form validation
 - cmdk for command palette patterns
 - class-variance-authority for component variants
+- jspdf for PDF document generation
+- docx for Word document generation
 
 ### Development Tools
 
