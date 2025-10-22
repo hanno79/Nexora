@@ -136,9 +136,22 @@ export default function Editor() {
     }).then(() => {
       queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId] });
       queryClient.invalidateQueries({ queryKey: ["/api/prds"] });
+      
+      // Handle toast message for both simple and iterative workflows
+      let toastDescription = '';
+      if (response.iterations) {
+        // Iterative workflow
+        const iterCount = response.iterations.length;
+        const models = response.modelsUsed.map((m: string) => m.split('/')[1] || m).join(' + ');
+        toastDescription = `PRD refined through ${iterCount} iterations${response.finalReview ? ' + final review' : ''} (${models})`;
+      } else {
+        // Simple workflow
+        toastDescription = `PRD ${content ? 'improved' : 'generated'} with Dual-AI (${response.generatorResponse.model.split('/')[1]} + ${response.reviewerResponse.model.split('/')[1]})`;
+      }
+      
       toast({
         title: "Success",
-        description: `PRD ${content ? 'improved' : 'generated'} with Dual-AI (${response.generatorResponse.model.split('/')[1]} + ${response.reviewerResponse.model.split('/')[1]})`,
+        description: toastDescription,
       });
     }).catch((error) => {
       toast({
