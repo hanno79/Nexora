@@ -10,7 +10,8 @@ import {
   Sparkles,
   FileDown,
   Send,
-  History
+  History,
+  CheckCircle2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +22,7 @@ import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { VersionHistoryDialog } from "@/components/VersionHistoryDialog";
 import { SharePRDDialog } from "@/components/SharePRDDialog";
 import { CommentsPanel } from "@/components/CommentsPanel";
+import { ApprovalDialog } from "@/components/ApprovalDialog";
 import {
   Select,
   SelectContent,
@@ -53,6 +55,7 @@ export default function Editor() {
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [showComments, setShowComments] = useState(true);
+  const [showApprovalDialog, setShowApprovalDialog] = useState(false);
 
   const { data: prd, isLoading } = useQuery<Prd>({
     queryKey: ["/api/prds", prdId],
@@ -289,6 +292,16 @@ export default function Editor() {
               <Button
                 variant="outline"
                 size="sm"
+                onClick={() => setShowApprovalDialog(true)}
+                data-testid="button-request-approval"
+              >
+                <CheckCircle2 className="w-4 h-4 mr-2" />
+                Request Approval
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => aiGenerateMutation.mutate()}
                 disabled={aiGenerateMutation.isPending}
                 data-testid="button-ai-generate"
@@ -415,6 +428,11 @@ export default function Editor() {
             prdId={prdId}
             open={showShareDialog}
             onOpenChange={setShowShareDialog}
+          />
+          <ApprovalDialog
+            prdId={prdId}
+            open={showApprovalDialog}
+            onOpenChange={setShowApprovalDialog}
           />
         </>
       )}

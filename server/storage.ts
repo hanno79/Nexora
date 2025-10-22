@@ -6,6 +6,7 @@ import {
   prdVersions,
   sharedPrds,
   comments,
+  approvals,
   type User,
   type UpsertUser,
   type Prd,
@@ -18,6 +19,8 @@ import {
   type InsertSharedPrd,
   type Comment,
   type InsertComment,
+  type Approval,
+  type InsertApproval,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, sql } from "drizzle-orm";
@@ -53,6 +56,11 @@ export interface IStorage {
   // Comment operations
   getComments(prdId: string): Promise<Comment[]>;
   createComment(comment: InsertComment): Promise<Comment>;
+  
+  // Approval operations
+  getApproval(prdId: string): Promise<Approval | undefined>;
+  createApproval(approval: InsertApproval): Promise<Approval>;
+  updateApproval(id: string, data: { status: string; completedBy: string; completedAt: Date }): Promise<Approval>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -194,6 +202,34 @@ export class DatabaseStorage implements IStorage {
   async createComment(commentData: InsertComment): Promise<Comment> {
     const [comment] = await db.insert(comments).values(commentData).returning();
     return comment;
+  }
+
+  // Approval operations
+  async getApproval(prdId: string): Promise<Approval | undefined> {
+    const [approval] = await db
+      .select()
+      .from(approvals)
+      .where(eq(approvals.prdId, prdId))
+      .orderBy(desc(approvals.requestedAt))
+      .limit(1);
+    return approval;
+  }
+
+  async createApproval(approvalData: InsertApproval): Promise<Approval> {
+    const [approval] = await db.insert(approvals).values(approvalData).returning();
+    return approval;
+  }
+
+  async updateApproval(
+    id: string,
+    data: { status: string; completedBy: string; completedAt: Date }
+  ): Promise<Approval> {
+    const [approval] = await db
+      .update(approvals)
+      .set(data)
+      .where(eq(approvals.id, id))
+      .returning();
+    return approval;
   }
 }
 

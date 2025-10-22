@@ -2,10 +2,11 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
-import { insertPrdSchema } from "@shared/schema";
+import { insertPrdSchema, users } from "@shared/schema";
 import { generatePRDContent } from "./anthropic";
 import { exportToLinear, checkLinearConnection } from "./linearHelper";
 import { initializeTemplates } from "./initTemplates";
+import { db } from "./db";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Initialize templates
@@ -40,6 +41,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error updating user:", error);
       res.status(500).json({ message: "Failed to update user" });
+    }
+  });
+
+  // User routes
+  app.get('/api/users', isAuthenticated, async (req: any, res) => {
+    try {
+      const allUsers = await db.select({
+        id: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        profileImageUrl: users.profileImageUrl,
+      }).from(users);
+      res.json(allUsers);
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      res.status(500).json({ message: "Failed to fetch users" });
     }
   });
 
@@ -310,6 +328,132 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error creating comment:", error);
       res.status(500).json({ message: "Failed to create comment" });
+    }
+  });
+
+  // Approval routes
+  app.get('/api/prds/:id/approval', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const approval = await storage.getApproval(id);
+      
+      if (!approval) {
+        return res.json(null);
+      }
+      
+      // Enrich with requester info
+      const requester = await storage.getUser(approval.requestedBy);
+      const completer = approval.completedBy ? await storage.getUser(approval.completedBy) : null;
+      
+      res.json({
+        ...approval,
+        requester: requester ? {
+          id: requester.id,
+          firstName: requester.firstName,
+          lastName: requester.lastName,
+          email: requester.email,
+        } : null,
+        completer: completer ? {
+          id: completer.id,
+          firstName: completer.firstName,
+          lastName: completer.lastName,
+          email: completer.email,
+        } : null,
+      });
+    } catch (error) {
+      console.error("Error fetching approval:", error);
+      res.status(500).json({ message: "Failed to fetch approval" });
+    }
+  });
+
+  app.post('/api/prds/:id/approval/request', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const { reviewers } = req.body;
+      
+      if (!reviewers || !Array.isArray(reviewers) || reviewers.length === 0) {
+        return res.status(400).json({ message: "At least one reviewer is required" });
+      }
+      
+      // Check if there's already a pending approval
+      const existingApproval = await storage.getApproval(id);
+      if (existingApproval && existingApproval.status === 'pending') {
+        return res.status(400).json({ message: "There is already a pending approval request" });
+      }
+      
+      const approval = await storage.createApproval({
+        prdId: id,
+        requestedBy: userId,
+        reviewers,
+        status: 'pending',
+      });
+      
+      // Update PRD status to pending-approval
+      await storage.updatePrd(id, { status: 'pending-approval' });
+      
+      // Return approval with requester info
+      const requester = await storage.getUser(userId);
+      res.json({
+        ...approval,
+        requester: requester ? {
+          id: requester.id,
+          firstName: requester.firstName,
+          lastName: requester.lastName,
+          email: requester.email,
+        } : null,
+      });
+    } catch (error) {
+      console.error("Error requesting approval:", error);
+      res.status(500).json({ message: "Failed to request approval" });
+    }
+  });
+
+  app.post('/api/prds/:id/approval/respond', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const { approved } = req.body;
+      
+      const approval = await storage.getApproval(id);
+      if (!approval) {
+        return res.status(404).json({ message: "No approval request found" });
+      }
+      
+      if (approval.status !== 'pending') {
+        return res.status(400).json({ message: "Approval request is no longer pending" });
+      }
+      
+      // Check if user is a reviewer
+      if (!approval.reviewers.includes(userId)) {
+        return res.status(403).json({ message: "You are not a reviewer for this PRD" });
+      }
+      
+      const newStatus = approved ? 'approved' : 'rejected';
+      const updatedApproval = await storage.updateApproval(approval.id, {
+        status: newStatus,
+        completedBy: userId,
+        completedAt: new Date(),
+      });
+      
+      // Update PRD status
+      const prdStatus = approved ? 'approved' : 'review';
+      await storage.updatePrd(id, { status: prdStatus });
+      
+      // Return approval with completer info
+      const completer = await storage.getUser(userId);
+      res.json({
+        ...updatedApproval,
+        completer: completer ? {
+          id: completer.id,
+          firstName: completer.firstName,
+          lastName: completer.lastName,
+          email: completer.email,
+        } : null,
+      });
+    } catch (error) {
+      console.error("Error responding to approval:", error);
+      res.status(500).json({ message: "Failed to respond to approval" });
     }
   });
 
