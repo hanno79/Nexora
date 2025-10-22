@@ -6,6 +6,7 @@ import { insertPrdSchema, users } from "@shared/schema";
 import { generatePRDContent } from "./anthropic";
 import { exportToLinear, checkLinearConnection } from "./linearHelper";
 import { generatePDF, generateWord } from "./exportUtils";
+import { generateClaudeMD } from "./claudemdGenerator";
 import { initializeTemplates } from "./initTemplates";
 import { db } from "./db";
 
@@ -509,6 +510,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (format === 'markdown') {
         const markdown = `# ${prd.title}\n\n${prd.description || ''}\n\n---\n\n${prd.content}`;
         res.json({ content: markdown });
+      } else if (format === 'claudemd') {
+        const claudemd = generateClaudeMD({
+          title: prd.title,
+          description: prd.description || undefined,
+          content: prd.content,
+        });
+        res.json({ content: claudemd.content });
       } else if (format === 'pdf') {
         const pdfBuffer = await generatePDF({
           title: prd.title,
@@ -535,6 +543,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error exporting PRD:", error);
       res.status(500).json({ message: "Failed to export PRD" });
+    }
+  });
+
+  // Error logging endpoint
+  app.post('/api/errors', async (req: any, res) => {
+    try {
+      const { message, stack, componentStack, timestamp, userAgent } = req.body;
+      
+      // Log error to console (in production, this would go to monitoring service)
+      console.error('[Frontend Error]', {
+        timestamp,
+        message,
+        stack,
+        componentStack,
+        userAgent,
+        userId: req.user?.id || 'anonymous',
+      });
+      
+      // In production, you would send this to error tracking service:
+      // - Sentry
+      // - LogRocket
+      // - Datadog
+      // - CloudWatch
+      
+      res.status(200).json({ message: 'Error logged' });
+    } catch (error) {
+      console.error('Error logging error:', error);
+      res.status(500).json({ message: 'Failed to log error' });
     }
   });
 

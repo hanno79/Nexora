@@ -176,6 +176,7 @@ export default function Editor() {
         
         return { blob: await response.blob(), format };
       } else {
+        // For markdown and claudemd - JSON response with content
         const response = await apiRequest("POST", `/api/prds/${prdId}/export`, { format });
         return { data: response, format };
       }
@@ -189,6 +190,14 @@ export default function Editor() {
         const a = document.createElement('a');
         a.href = url;
         a.download = `${title.replace(/\s+/g, '-')}.md`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else if (format === 'claudemd') {
+        const blob = new Blob([result.data.content], { type: 'text/markdown' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `CLAUDE-${title.replace(/\s+/g, '-')}.md`;
         a.click();
         URL.revokeObjectURL(url);
       } else if (format === 'pdf') {
@@ -207,9 +216,13 @@ export default function Editor() {
         URL.revokeObjectURL(url);
       }
       
+      const formatName = format === 'word' ? 'Word' : 
+                         format === 'claudemd' ? 'CLAUDE.md' : 
+                         format.toUpperCase();
+      
       toast({
         title: "Success",
-        description: `Exported as ${format === 'word' ? 'Word' : format.toUpperCase()}`,
+        description: `Exported as ${formatName}`,
       });
     },
     onError: (error: Error) => {
@@ -365,6 +378,10 @@ export default function Editor() {
                   <DropdownMenuItem onClick={() => exportMutation.mutate("markdown")} data-testid="menu-export-markdown">
                     <FileDown className="w-4 h-4 mr-2" />
                     Markdown
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => exportMutation.mutate("claudemd")} data-testid="menu-export-claudemd">
+                    <FileDown className="w-4 h-4 mr-2" />
+                    CLAUDE.md (AI Guidelines)
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => linearExportMutation.mutate()} data-testid="menu-export-linear">
                     <Send className="w-4 h-4 mr-2" />
