@@ -51,13 +51,14 @@ Preferred communication style: Simple, everyday language.
 - Tables: users, sessions, prds, templates, prdVersions, sharedPrds, comments, approvals
 
 **Data Model Design**
-- Users: Core authentication and profile information
+- Users: Core authentication and profile information with aiPreferences (iterative mode settings)
 - PRDs: Documents with title, description, content (JSON), status (draft, in-progress, review, pending-approval, approved, completed), template reference
 - Templates: Reusable PRD structures (feature, epic, technical, product-launch categories) with isMeta field for AI-enhanced templates
 - PRD Versions: Complete version history with snapshot content
 - Shared PRDs: Team collaboration with permission levels
 - Comments: Discussion threads on PRDs with user attribution, timestamps, and optional section linking
 - Approvals: Workflow management with requester, reviewers list, status tracking, and completion audit trail
+- AI Preferences: User-specific AI workflow settings (iterativeMode, iterationCount 2-5, useFinalReview)
 - AI Usage: Cost tracking and analytics for Dual-AI system with model type, tier, token counts, and calculated costs
 
 ### AI Integration
@@ -69,10 +70,23 @@ Preferred communication style: Simple, everyday language.
   - Production tier: GPT-4o (generator) + Claude 3.5 Sonnet (reviewer) - High-quality output
   - Premium tier: Role-swap for maximum quality validation
 - **Intelligent Fallback System**: Automatic tier degradation on failures with proper restoration
-- **Dual-AI Workflow**: Generator → Reviewer → Improvement cycle
+- **Dual-AI Workflow Modes**: Users can choose between two AI-powered PRD generation workflows:
+  
+  **Simple Mode (Default)**: Generator → Reviewer → Improvement cycle
   - Generator creates initial PRD content with structured markdown
   - Reviewer provides critical analysis and generates improvement questions
   - Generator refines content based on reviewer feedback
+  - Single iteration for fast, high-quality PRD generation
+  
+  **Iterative Mode (Advanced)**: Multi-iteration refinement with Q&A cycles
+  - AI #1 (Generator): Creates PRD content and asks clarifying questions about requirements
+  - AI #2 (Answerer): Provides best-practice answers using product management expertise
+  - Repeat N times (user-configurable 2-5 iterations) to progressively refine PRD
+  - Optional AI #3 (Final Reviewer): Quality check and final improvements
+  - Achieves 34x+ content expansion with deep requirement analysis
+  - User settings: iterativeMode (on/off), iterationCount (2-5), useFinalReview (on/off)
+  - Progress tracking: Real-time UI updates showing current iteration (e.g., "Iteration 2/3")
+  
 - **Cost Tracking**: Automatic logging of AI usage to `aiUsage` table with token counts and cost calculation
 
 **Legacy Claude AI Integration**
