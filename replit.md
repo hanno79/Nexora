@@ -2,7 +2,7 @@
 
 ## Overview
 
-NEXORA is a modern SaaS platform for creating Product Requirement Documents (PRDs) with AI assistance. The platform combines intelligent content generation using Claude AI with seamless Linear integration, enabling product teams to create professional PRDs 10x faster. Key features include AI-powered content generation, template-based document creation, version control, multi-format export (PDF, Word, Markdown), and direct Linear integration for issue/project management.
+NEXORA is a modern SaaS platform for creating Product Requirement Documents (PRDs) with AI assistance. The platform combines intelligent content generation using Claude AI with seamless Linear integration, enabling product teams to create professional PRDs 10x faster. Key features include AI-powered content generation, template-based document creation, version control, multi-format export (PDF, Word, Markdown), direct Linear integration for issue/project management, real-time commenting system, and approval workflow for PRD review and sign-off.
 
 ## User Preferences
 
@@ -48,14 +48,16 @@ Preferred communication style: Simple, everyday language.
 - Drizzle ORM for type-safe database operations
 - PostgreSQL via Neon serverless driver with WebSocket support
 - Schema-first design with migrations in `/migrations` directory
-- Tables: users, sessions, prds, templates, prdVersions, sharedPrds
+- Tables: users, sessions, prds, templates, prdVersions, sharedPrds, comments, approvals
 
 **Data Model Design**
 - Users: Core authentication and profile information
-- PRDs: Documents with title, description, content (JSON), status, template reference
+- PRDs: Documents with title, description, content (JSON), status (draft, in-progress, review, pending-approval, approved, completed), template reference
 - Templates: Reusable PRD structures (feature, epic, technical, product-launch categories)
 - PRD Versions: Complete version history with snapshot content
 - Shared PRDs: Team collaboration with permission levels
+- Comments: Discussion threads on PRDs with user attribution, timestamps, and optional section linking
+- Approvals: Workflow management with requester, reviewers list, status tracking, and completion audit trail
 
 ### AI Integration
 
@@ -84,6 +86,24 @@ Preferred communication style: Simple, everyday language.
 - Uncached client instances (tokens expire, must be recreated per request)
 - Connection status checking before operations
 - Title and description mapping from PRD to Linear issue
+
+### Collaboration Features
+
+**Comment System**
+- Real-time commenting on PRDs with user attribution
+- CommentsPanel component in Editor sidebar showing threaded discussions
+- User avatars, timestamps with relative formatting (via date-fns)
+- Optional section-level comments for inline discussions
+- API endpoints: GET/POST /api/prds/:id/comments with user info enrichment
+
+**Approval Workflow**
+- Multi-reviewer approval requests with status tracking
+- ApprovalDialog for reviewer selection and approval management
+- Status states: pending, approved, rejected
+- Automatic PRD status updates (pending-approval → approved/review)
+- Reviewer authorization checks ensuring only designated reviewers can respond
+- Complete audit trail with requester, reviewers, completion timestamps
+- API endpoints: GET /api/prds/:id/approval, POST /api/prds/:id/approval/request, POST /api/prds/:id/approval/respond
 
 ## External Dependencies
 
