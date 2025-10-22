@@ -30,12 +30,22 @@ export const users = pgTable("users", {
   profileImageUrl: varchar("profile_image_url"),
   company: varchar("company"),
   role: varchar("role"),
+  aiPreferences: jsonb("ai_preferences"), // AI model preferences: { generatorModel, reviewerModel, tier }
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
+
+// AI Preferences schema for validation
+export const aiPreferencesSchema = z.object({
+  generatorModel: z.string().optional(),
+  reviewerModel: z.string().optional(),
+  tier: z.enum(['development', 'production', 'premium']).optional(),
+});
+
+export type AiPreferences = z.infer<typeof aiPreferencesSchema>;
 
 // Templates table for PRD templates
 export const templates = pgTable("templates", {
