@@ -32,7 +32,7 @@ export function CommentsPanel({ prdId }: CommentsPanelProps) {
   const { toast } = useToast();
 
   const { data: comments = [], isLoading } = useQuery<Comment[]>({
-    queryKey: ["/api/prds", prdId, "comments"],
+    queryKey: [`/api/prds/${prdId}/comments`],
   });
 
   const createCommentMutation = useMutation({
@@ -43,7 +43,7 @@ export function CommentsPanel({ prdId }: CommentsPanelProps) {
       return await res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId, "comments"] });
+      queryClient.invalidateQueries({ queryKey: [`/api/prds/${prdId}/comments`] });
       setNewComment("");
       toast({
         title: "Success",
