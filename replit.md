@@ -2,7 +2,7 @@
 
 ## Overview
 
-NEXORA is a modern SaaS platform for creating Product Requirement Documents (PRDs) with AI assistance. The platform combines intelligent content generation using Claude AI with seamless Linear integration, enabling product teams to create professional PRDs 10x faster. Key features include AI-powered content generation, template-based document creation, version control, multi-format export (PDF, Word, Markdown), direct Linear integration for issue/project management, real-time commenting system, and approval workflow for PRD review and sign-off.
+NEXORA is a modern SaaS platform for creating Product Requirement Documents (PRDs) with AI assistance. The platform combines intelligent content generation using Claude AI with seamless Linear integration, enabling product teams to create professional PRDs 10x faster. Key features include AI-powered content generation, template-based document creation, version control, multi-format export (PDF, Word, Markdown, CLAUDE.md), direct Linear integration for issue/project management, real-time commenting system, approval workflow for PRD review and sign-off, and intelligent CLAUDE.md generation for AI development guidelines.
 
 ## User Preferences
 
@@ -53,7 +53,7 @@ Preferred communication style: Simple, everyday language.
 **Data Model Design**
 - Users: Core authentication and profile information
 - PRDs: Documents with title, description, content (JSON), status (draft, in-progress, review, pending-approval, approved, completed), template reference
-- Templates: Reusable PRD structures (feature, epic, technical, product-launch categories)
+- Templates: Reusable PRD structures (feature, epic, technical, product-launch categories) with isMeta field for AI-enhanced templates
 - PRD Versions: Complete version history with snapshot content
 - Shared PRDs: Team collaboration with permission levels
 - Comments: Discussion threads on PRDs with user attribution, timestamps, and optional section linking
@@ -111,20 +111,38 @@ Preferred communication style: Simple, everyday language.
 - PDF export using jsPDF library with markdown parsing and proper formatting
 - Word (.docx) export using docx library with structured document generation
 - Markdown export as plain text download
+- CLAUDE.md export - AI development guidelines extracted from PRD content
 - Export dropdown in Editor toolbar with all format options
+
+**CLAUDE.md Generator**
+- Intelligent content extraction from PRD text
+- Extracts tech stack, architecture patterns, API endpoints, components, user stories
+- Generates structured development guidelines for AI agents
+- Regex-based pattern matching for technical terms and structures
+- Output format: Markdown with sections for Overview, Tech Stack, Architecture, APIs, Components, Requirements, Testing
 
 **Export Architecture**
 - Backend: POST /api/prds/:id/export endpoint handling all formats
 - PDF/Word: Binary responses with appropriate MIME types and Content-Disposition headers
-- Markdown: JSON response with content field
+- Markdown/CLAUDE.md: JSON response with content field
 - Frontend: Blob creation and automatic download via temporary anchor elements
 - Server-side utilities in exportUtils.ts for PDF/Word generation
+- Server-side utilities in claudemdGenerator.ts for CLAUDE.md generation
 
 **Content Processing**
 - Markdown parsing for headings (H1, H2, H3), bullet points, and paragraphs
 - Automatic page breaks in PDF generation
 - Proper document structure in Word exports with heading levels
 - Title and description formatting with distinct styling
+
+### Error Tracking & Monitoring
+
+**Error Logging System**
+- Frontend ErrorBoundary captures React errors and logs to backend
+- Backend endpoint: POST /api/errors for error reporting
+- Structured error logging with message, stack trace, component stack, timestamp, user agent
+- Console logging in development; ready for production integration with Sentry/Datadog/LogRocket
+- User-friendly error UI with reload and home navigation options
 
 ## External Dependencies
 
