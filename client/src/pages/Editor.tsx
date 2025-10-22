@@ -139,14 +139,19 @@ export default function Editor() {
       
       // Handle toast message for both simple and iterative workflows
       let toastDescription = '';
-      if (response.iterations) {
+      if (response.iterations && Array.isArray(response.iterations) && response.iterations.length > 0) {
         // Iterative workflow
         const iterCount = response.iterations.length;
-        const models = response.modelsUsed.map((m: string) => m.split('/')[1] || m).join(' + ');
-        toastDescription = `PRD refined through ${iterCount} iterations${response.finalReview ? ' + final review' : ''} (${models})`;
-      } else {
+        const models = response.modelsUsed?.map((m: string) => m.split('/')[1] || m).join(' + ') || 'AI models';
+        toastDescription = `PRD refined through ${iterCount} iteration${iterCount > 1 ? 's' : ''}${response.finalReview ? ' + final review' : ''} (${models})`;
+      } else if (response.generatorResponse && response.reviewerResponse) {
         // Simple workflow
-        toastDescription = `PRD ${content ? 'improved' : 'generated'} with Dual-AI (${response.generatorResponse.model.split('/')[1]} + ${response.reviewerResponse.model.split('/')[1]})`;
+        const genModel = response.generatorResponse.model?.split('/')[1] || response.generatorResponse.model || 'Generator';
+        const revModel = response.reviewerResponse.model?.split('/')[1] || response.reviewerResponse.model || 'Reviewer';
+        toastDescription = `PRD ${content ? 'improved' : 'generated'} with Dual-AI (${genModel} + ${revModel})`;
+      } else {
+        // Fallback for unknown response structure
+        toastDescription = `PRD ${content ? 'improved' : 'generated'} successfully`;
       }
       
       toast({
