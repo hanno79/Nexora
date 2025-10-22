@@ -1,5 +1,6 @@
 // Dual-AI Service - Orchestrates Generator & Reviewer based on HRP-17
 import { getOpenRouterClient } from './openrouter';
+import type { OpenRouterClient } from './openrouter';
 import {
   GENERATOR_SYSTEM_PROMPT,
   REVIEWER_SYSTEM_PROMPT,
@@ -14,14 +15,11 @@ import { users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
 
 export class DualAiService {
-  private client = getOpenRouterClient();
-
   async generatePRD(request: DualAiRequest, userId?: string): Promise<DualAiResponse> {
-    // Load and apply user preferences if userId is provided
-    const cleanup = await this.applyUserPreferences(userId);
+    // Create fresh client per request to prevent cross-user contamination
+    const client = await this.createClientWithUserPreferences(userId);
     
-    try {
-      const { userInput, existingContent, mode } = request;
+    const { userInput, existingContent, mode } = request;
 
     if (mode === 'review-only' && !existingContent) {
       throw new Error('review-only mode requires existingContent');
@@ -39,7 +37,7 @@ export class DualAiService {
         ? `Verbessere folgendes PRD basierend auf neuem Input:\n\nBISHERIGES PRD:\n${existingContent}\n\nNEUER INPUT:\n${userInput}`
         : `Erstelle ein vollständiges PRD basierend auf:\n\n${userInput}`;
 
-      const genResult = await this.client.callWithFallback(
+      const genResult = await client.callWithFallback(
         'generator',
         GENERATOR_SYSTEM_PROMPT,
         generatorPrompt,
@@ -68,7 +66,7 @@ export class DualAiService {
     
     const reviewerPrompt = `Bewerte folgendes PRD kritisch:\n\n${generatorResponse.content}`;
 
-    const reviewResult = await this.client.callWithFallback(
+    const reviewResult = await client.callWithFallback(
       'reviewer',
       REVIEWER_SYSTEM_PROMPT,
       reviewerPrompt,
@@ -95,7 +93,7 @@ export class DualAiService {
       
       const improvementPrompt = `ORIGINAL PRD:\n${generatorResponse.content}\n\nREVIEW FEEDBACK:\n${reviewContent}\n\nVerbessere das PRD und adressiere die kritischen Fragen.`;
 
-      const improveResult = await this.client.callWithFallback(
+      const improveResult = await client.callWithFallback(
         'generator',
         IMPROVEMENT_SYSTEM_PROMPT,
         improvementPrompt,
@@ -124,55 +122,44 @@ export class DualAiService {
       improvedVersion?.model
     ].filter(Boolean))) as string[];
 
-      return {
-        finalContent: improvedVersion?.content || generatorResponse.content,
-        generatorResponse,
-        reviewerResponse,
-        improvedVersion,
-        totalTokens,
-        modelsUsed
-      };
-    } finally {
-      // Always cleanup preferences to prevent cross-user contamination
-      cleanup();
-    }
+    return {
+      finalContent: improvedVersion?.content || generatorResponse.content,
+      generatorResponse,
+      reviewerResponse,
+      improvedVersion,
+      totalTokens,
+      modelsUsed
+    };
   }
 
   async reviewOnly(prdContent: string, userId?: string): Promise<ReviewerResponse> {
-    // Load and apply user preferences if userId is provided
-    const cleanup = await this.applyUserPreferences(userId);
+    // Create fresh client per request to prevent cross-user contamination
+    const client = await this.createClientWithUserPreferences(userId);
     
-    try {
-      console.log('🔍 Reviewing existing PRD...');
-      
-      const reviewerPrompt = `Bewerte folgendes PRD kritisch:\n\n${prdContent}`;
+    console.log('🔍 Reviewing existing PRD...');
+    
+    const reviewerPrompt = `Bewerte folgendes PRD kritisch:\n\n${prdContent}`;
 
-      const reviewResult = await this.client.callWithFallback(
-        'reviewer',
-        REVIEWER_SYSTEM_PROMPT,
-        reviewerPrompt,
-        2000
-      );
+    const reviewResult = await client.callWithFallback(
+      'reviewer',
+      REVIEWER_SYSTEM_PROMPT,
+      reviewerPrompt,
+      2000
+    );
 
-      const questions = this.extractQuestions(reviewResult.content);
+    const questions = this.extractQuestions(reviewResult.content);
 
-      return {
-        assessment: reviewResult.content,
-        questions,
-        model: reviewResult.model,
-        usage: reviewResult.usage,
-        tier: reviewResult.tier
-      };
-    } finally {
-      // Always cleanup preferences
-      cleanup();
-    }
+    return {
+      assessment: reviewResult.content,
+      questions,
+      model: reviewResult.model,
+      usage: reviewResult.usage,
+      tier: reviewResult.tier
+    };
   }
 
-  private async applyUserPreferences(userId?: string): Promise<() => void> {
-    const originalGenerator = this.client.getPreferredModel('generator');
-    const originalReviewer = this.client.getPreferredModel('reviewer');
-    const originalTier = this.client.getTier();
+  private async createClientWithUserPreferences(userId?: string): Promise<OpenRouterClient> {
+    const client = getOpenRouterClient();
 
     if (userId) {
       const userPrefs = await db.select({ aiPreferences: users.aiPreferences })
@@ -183,23 +170,18 @@ export class DualAiService {
       if (userPrefs[0]?.aiPreferences) {
         const prefs = userPrefs[0].aiPreferences as any;
         if (prefs.generatorModel) {
-          this.client.setPreferredModel('generator', prefs.generatorModel);
+          client.setPreferredModel('generator', prefs.generatorModel);
         }
         if (prefs.reviewerModel) {
-          this.client.setPreferredModel('reviewer', prefs.reviewerModel);
+          client.setPreferredModel('reviewer', prefs.reviewerModel);
         }
         if (prefs.tier) {
-          this.client.setPreferredTier(prefs.tier);
+          client.setPreferredTier(prefs.tier);
         }
       }
     }
 
-    // Return cleanup function that restores original state
-    return () => {
-      this.client.setPreferredModel('generator', originalGenerator);
-      this.client.setPreferredModel('reviewer', originalReviewer);
-      this.client.setPreferredTier(originalTier);
-    };
+    return client;
   }
 
   private extractQuestions(reviewText: string): string[] {

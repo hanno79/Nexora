@@ -215,18 +215,16 @@ class OpenRouterClient {
   }
 }
 
-// Singleton instance
-let openRouterClient: OpenRouterClient | null = null;
-
+/**
+ * Create a new OpenRouterClient instance per request to prevent cross-user contamination.
+ * Each request gets its own client with isolated state for preferences.
+ */
 export function getOpenRouterClient(tier?: keyof ModelConfig): OpenRouterClient {
   const envTier = (process.env.AI_TIER as keyof ModelConfig) || 'production';
   const selectedTier = tier || envTier;
   
-  if (!openRouterClient || openRouterClient.getTier() !== selectedTier) {
-    openRouterClient = new OpenRouterClient(undefined, selectedTier);
-  }
-  
-  return openRouterClient;
+  // Always create a fresh instance to prevent shared mutable state
+  return new OpenRouterClient(undefined, selectedTier);
 }
 
 /**
