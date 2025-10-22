@@ -357,9 +357,34 @@ interface DualAiResponse {
   modelsUsed: string[];
 }
 
+// Iterative workflow types
+interface IterationData {
+  iterationNumber: number;
+  generatorOutput: string; // PRD draft + questions
+  answererOutput: string; // Best practice answers
+  questions: string[];
+  mergedPRD: string;
+  tokensUsed: number;
+}
+
+interface IterativeResponse {
+  finalContent: string;
+  iterations: IterationData[];
+  finalReview?: {
+    content: string;
+    model: string;
+    usage: any;
+    tier: string;
+  };
+  totalTokens: number;
+  modelsUsed: string[];
+}
+
 export type {
   DualAiRequest,
   GeneratorResponse,
   ReviewerResponse,
-  DualAiResponse
+  DualAiResponse,
+  IterationData,
+  IterativeResponse
 };

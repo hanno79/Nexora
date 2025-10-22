@@ -5,10 +5,15 @@ import {
   GENERATOR_SYSTEM_PROMPT,
   REVIEWER_SYSTEM_PROMPT,
   IMPROVEMENT_SYSTEM_PROMPT,
+  ITERATIVE_GENERATOR_PROMPT,
+  BEST_PRACTICE_ANSWERER_PROMPT,
+  FINAL_REVIEWER_PROMPT,
   type DualAiRequest,
   type DualAiResponse,
   type GeneratorResponse,
-  type ReviewerResponse
+  type ReviewerResponse,
+  type IterativeResponse,
+  type IterationData
 } from './dualAiPrompts';
 import { db } from './db';
 import { users } from '@shared/schema';
@@ -156,6 +161,160 @@ export class DualAiService {
       usage: reviewResult.usage,
       tier: reviewResult.tier
     };
+  }
+
+  async generateIterative(
+    initialContent: string,
+    iterationCount: number = 3,
+    useFinalReview: boolean = false,
+    userId?: string
+  ): Promise<IterativeResponse> {
+    // Create fresh client per request to prevent cross-user contamination
+    const client = await this.createClientWithUserPreferences(userId);
+    
+    console.log(`🔄 Starting iterative workflow: ${iterationCount} iterations, final review: ${useFinalReview}`);
+    
+    const iterations: IterationData[] = [];
+    let currentPRD = initialContent;
+    const modelsUsed = new Set<string>();
+    
+    // Iterative Q&A Loop
+    for (let i = 1; i <= iterationCount; i++) {
+      console.log(`\n📝 Iteration ${i}/${iterationCount}`);
+      
+      // Step 1: AI #1 (Generator) - Creates PRD draft + asks questions
+      console.log(`🤖 AI #1: Generating PRD draft and identifying gaps...`);
+      
+      const generatorPrompt = i === 1
+        ? `INITIAL INPUT:\n${initialContent}\n\nErstelle einen ersten PRD-Entwurf und stelle Fragen zu offenen Punkten.`
+        : `CURRENT PRD:\n${currentPRD}\n\nVerbessere das PRD weiter und stelle Fragen zu verbleibenden Lücken.`;
+      
+      const genResult = await client.callWithFallback(
+        'generator',
+        ITERATIVE_GENERATOR_PROMPT,
+        generatorPrompt,
+        8000  // Enough for PRD + questions
+      );
+      
+      modelsUsed.add(genResult.model);
+      console.log(`✅ Generated ${genResult.usage.completion_tokens} tokens with ${genResult.model}`);
+      
+      // Extract questions from generator output
+      const questions = this.extractQuestionsFromIterativeOutput(genResult.content);
+      console.log(`📋 Extracted ${questions.length} questions`);
+      
+      // Step 2: AI #2 (Answerer) - Answers with best practices
+      console.log(`🧠 AI #2: Answering questions with best practices...`);
+      
+      const answererPrompt = `Folgendes PRD wird entwickelt:\n\n${genResult.content}\n\nBeantworte die gestellten Fragen mit Best Practices.`;
+      
+      const answerResult = await client.callWithFallback(
+        'reviewer',  // Using reviewer model for answerer role
+        BEST_PRACTICE_ANSWERER_PROMPT,
+        answererPrompt,
+        4000  // Enough for detailed answers
+      );
+      
+      modelsUsed.add(answerResult.model);
+      console.log(`✅ Answered with ${answerResult.usage.completion_tokens} tokens using ${answerResult.model}`);
+      
+      // Step 3: Merge answers into PRD
+      const mergedPRD = this.mergePRDWithAnswers(genResult.content, answerResult.content);
+      currentPRD = mergedPRD;
+      
+      iterations.push({
+        iterationNumber: i,
+        generatorOutput: genResult.content,
+        answererOutput: answerResult.content,
+        questions,
+        mergedPRD,
+        tokensUsed: genResult.usage.total_tokens + answerResult.usage.total_tokens
+      });
+    }
+    
+    let finalReview: IterativeResponse['finalReview'] = undefined;
+    
+    // Optional: Final Review with AI #3
+    if (useFinalReview) {
+      console.log('\n🎯 AI #3: Final review and polish...');
+      
+      const finalReviewerPrompt = `Reviewe folgendes PRD auf höchstem Niveau:\n\n${currentPRD}`;
+      
+      const reviewResult = await client.callWithFallback(
+        'reviewer',
+        FINAL_REVIEWER_PROMPT,
+        finalReviewerPrompt,
+        6000  // Enough for comprehensive review
+      );
+      
+      modelsUsed.add(reviewResult.model);
+      console.log(`✅ Final review complete with ${reviewResult.usage.completion_tokens} tokens`);
+      
+      finalReview = {
+        content: reviewResult.content,
+        model: reviewResult.model,
+        usage: reviewResult.usage,
+        tier: reviewResult.tier
+      };
+      
+      // Apply final polish if review suggests improvements
+      currentPRD = this.applyFinalReview(currentPRD, reviewResult.content);
+    }
+    
+    // Calculate totals
+    const totalTokens = iterations.reduce((sum, iter) => sum + iter.tokensUsed, 0) +
+      (finalReview?.usage.total_tokens || 0);
+    
+    console.log(`\n✅ Iterative workflow complete! Total tokens: ${totalTokens}`);
+    
+    return {
+      finalContent: currentPRD,
+      iterations,
+      finalReview,
+      totalTokens,
+      modelsUsed: Array.from(modelsUsed)
+    };
+  }
+
+  private extractQuestionsFromIterativeOutput(generatorOutput: string): string[] {
+    const questions: string[] = [];
+    
+    // Look for "Fragen zur Verbesserung" section
+    const questionSectionMatch = generatorOutput.match(/## Fragen zur Verbesserung([\s\S]*?)(?=##|$)/i);
+    
+    if (questionSectionMatch) {
+      const questionSection = questionSectionMatch[1];
+      const lines = questionSection.split('\n');
+      
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.match(/^\d+\.\s+/) && trimmed.includes('?')) {
+          const question = trimmed.replace(/^\d+\.\s+/, '').trim();
+          if (question.length > 10) {
+            questions.push(question);
+          }
+        }
+      }
+    }
+    
+    return questions;
+  }
+
+  private mergePRDWithAnswers(generatorOutput: string, answererOutput: string): string {
+    // Extract the "Überarbeitetes PRD" section from generator output
+    const prdMatch = generatorOutput.match(/## Überarbeitetes PRD([\s\S]*?)(?=## Offene Punkte|## Fragen|$)/i);
+    let prdContent = prdMatch ? prdMatch[1].trim() : generatorOutput;
+    
+    // Append answerer insights as a new section
+    const mergedContent = `${prdContent}\n\n---\n\n## Best Practice Empfehlungen (Iteration)\n\n${answererOutput}`;
+    
+    return mergedContent;
+  }
+
+  private applyFinalReview(currentPRD: string, reviewContent: string): string {
+    // For now, append review as final section
+    // In future iterations, could use another AI call to actually apply the suggestions
+    return `${currentPRD}\n\n---\n\n## Final Review Feedback\n\n${reviewContent}`;
   }
 
   private async createClientWithUserPreferences(userId?: string): Promise<OpenRouterClient> {
