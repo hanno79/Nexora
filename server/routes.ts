@@ -479,7 +479,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // AI generation route
+  // AI generation route (legacy - uses single Anthropic model)
   app.post('/api/ai/generate', isAuthenticated, async (req: any, res) => {
     try {
       const { prompt, currentContent } = req.body;
@@ -493,6 +493,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error generating AI content:", error);
       res.status(500).json({ message: error.message || "Failed to generate AI content" });
+    }
+  });
+
+  // Dual-AI generation routes (HRP-17)
+  const { getDualAiService } = await import('./dualAiService');
+  
+  app.post('/api/ai/generate-dual', isAuthenticated, async (req: any, res) => {
+    try {
+      const { userInput, existingContent, mode } = req.body;
+      
+      if (!userInput && !existingContent) {
+        return res.status(400).json({ message: "User input or existing content is required" });
+      }
+      
+      const service = getDualAiService();
+      const result = await service.generatePRD({
+        userInput: userInput || '',
+        existingContent,
+        mode: mode || 'improve'
+      });
+      
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error in Dual-AI generation:", error);
+      res.status(500).json({ message: error.message || "Failed to generate with Dual-AI" });
+    }
+  });
+
+  app.post('/api/ai/review', isAuthenticated, async (req: any, res) => {
+    try {
+      const { content } = req.body;
+      
+      if (!content) {
+        return res.status(400).json({ message: "Content is required for review" });
+      }
+      
+      const service = getDualAiService();
+      const review = await service.reviewOnly(content);
+      
+      res.json(review);
+    } catch (error: any) {
+      console.error("Error in AI review:", error);
+      res.status(500).json({ message: error.message || "Failed to review content" });
     }
   });
 

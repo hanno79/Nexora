@@ -87,3 +87,30 @@ export async function checkLinearConnection(): Promise<boolean> {
     return false;
   }
 }
+
+export async function getLinearIssue(issueIdentifier: string): Promise<any> {
+  try {
+    const linear = await getUncachableLinearClient();
+    
+    const issue = await linear.issue(issueIdentifier);
+    
+    if (!issue) {
+      throw new Error(`Issue ${issueIdentifier} not found`);
+    }
+
+    return {
+      id: issue.id,
+      identifier: issue.identifier,
+      title: issue.title,
+      description: issue.description,
+      url: issue.url,
+      state: await issue.state,
+      priority: issue.priority,
+      createdAt: issue.createdAt,
+      updatedAt: issue.updatedAt,
+    };
+  } catch (error: any) {
+    console.error('Error fetching Linear issue:', error);
+    throw new Error(`Failed to fetch Linear issue: ${error.message}`);
+  }
+}
