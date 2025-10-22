@@ -1,20 +1,23 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Save, Check, Link2 } from "lucide-react";
+import { Save, Check, Link2, Sun, Moon, Monitor } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { TopBar } from "@/components/TopBar";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { useAuth } from "@/hooks/useAuth";
+import { useTheme } from "@/components/ThemeProvider";
 
 export default function Settings() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { theme, setTheme } = useTheme();
   
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -153,6 +156,75 @@ export default function Settings() {
                 <Save className="w-4 h-4 mr-2" />
                 {updateProfileMutation.isPending ? "Saving..." : "Save Changes"}
               </Button>
+            </CardContent>
+          </Card>
+
+          {/* Appearance */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Appearance</CardTitle>
+              <CardDescription>
+                Customize how NEXORA looks on your device
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-3">
+                <Label>Theme</Label>
+                <RadioGroup 
+                  value={theme} 
+                  onValueChange={(value) => setTheme(value as "light" | "dark" | "system")}
+                  className="grid grid-cols-3 gap-4"
+                >
+                  <div>
+                    <RadioGroupItem
+                      value="light"
+                      id="theme-light"
+                      className="peer sr-only"
+                      data-testid="radio-theme-light"
+                    />
+                    <Label
+                      htmlFor="theme-light"
+                      className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover-elevate peer-data-[state=checked]:border-primary cursor-pointer"
+                      data-testid="label-theme-light"
+                    >
+                      <Sun className="mb-3 h-6 w-6" />
+                      <span className="text-sm font-medium">Light</span>
+                    </Label>
+                  </div>
+                  <div>
+                    <RadioGroupItem
+                      value="dark"
+                      id="theme-dark"
+                      className="peer sr-only"
+                      data-testid="radio-theme-dark"
+                    />
+                    <Label
+                      htmlFor="theme-dark"
+                      className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover-elevate peer-data-[state=checked]:border-primary cursor-pointer"
+                      data-testid="label-theme-dark"
+                    >
+                      <Moon className="mb-3 h-6 w-6" />
+                      <span className="text-sm font-medium">Dark</span>
+                    </Label>
+                  </div>
+                  <div>
+                    <RadioGroupItem
+                      value="system"
+                      id="theme-system"
+                      className="peer sr-only"
+                      data-testid="radio-theme-system"
+                    />
+                    <Label
+                      htmlFor="theme-system"
+                      className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover-elevate peer-data-[state=checked]:border-primary cursor-pointer"
+                      data-testid="label-theme-system"
+                    >
+                      <Monitor className="mb-3 h-6 w-6" />
+                      <span className="text-sm font-medium">System</span>
+                    </Label>
+                  </div>
+                </RadioGroup>
+              </div>
             </CardContent>
           </Card>
 
