@@ -146,10 +146,10 @@ export default function Settings() {
     <div className="min-h-screen bg-background">
       <TopBar />
       
-      <div className="container max-w-4xl mx-auto px-4 md:px-6 py-8">
-        <h1 className="text-3xl font-semibold mb-8">Settings</h1>
+      <div className="container max-w-4xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-8">
+        <h1 className="text-2xl sm:text-3xl font-semibold mb-6 sm:mb-8">Settings</h1>
 
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
           {/* Profile Settings */}
           <Card>
             <CardHeader>

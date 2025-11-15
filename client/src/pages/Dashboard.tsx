@@ -70,22 +70,30 @@ export default function Dashboard() {
     <div className="min-h-screen bg-background">
       <TopBar onSearchChange={setSearchQuery} searchValue={searchQuery} />
       
-      <div className="container max-w-7xl mx-auto px-4 md:px-6 py-8">
+      <div className="container max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-8">
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-semibold mb-2">Dashboard</h1>
-            <p className="text-muted-foreground">
+        <div className="flex items-center justify-between mb-6 sm:mb-8 gap-3">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-2xl sm:text-3xl font-semibold mb-1 sm:mb-2">Dashboard</h1>
+            <p className="text-sm sm:text-base text-muted-foreground">
               Overview of your product requirement documents
             </p>
           </div>
           <Button 
             onClick={() => navigate("/templates")}
-            className="gap-2"
+            className="gap-2 flex-shrink-0 hidden sm:inline-flex"
             data-testid="button-new-prd"
           >
             <Plus className="w-4 h-4" />
             New PRD
+          </Button>
+          <Button 
+            onClick={() => navigate("/templates")}
+            size="icon"
+            className="sm:hidden flex-shrink-0 h-10 w-10"
+            data-testid="button-new-prd-mobile"
+          >
+            <Plus className="w-5 h-5" />
           </Button>
         </div>
 

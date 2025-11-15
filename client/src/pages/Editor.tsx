@@ -10,7 +10,8 @@ import {
   FileDown,
   Send,
   CheckCircle2,
-  Share2
+  Share2,
+  MessageSquare
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +25,7 @@ import { VersionHistory } from "@/components/VersionHistory";
 import { SharePRDDialog } from "@/components/SharePRDDialog";
 import { DualAiDialog } from "@/components/DualAiDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import {
   Select,
   SelectContent,
@@ -57,6 +59,8 @@ export default function Editor() {
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [showDualAiDialog, setShowDualAiDialog] = useState(false);
+  const [showMobileSheet, setShowMobileSheet] = useState(false);
+  const [mobileSheetTab, setMobileSheetTab] = useState<"comments" | "versions">("comments");
 
   const { data: prd, isLoading } = useQuery<Prd>({
     queryKey: ["/api/prds", prdId],
@@ -305,22 +309,23 @@ export default function Editor() {
       
       {/* Editor Header */}
       <div className="sticky top-14 z-40 border-b bg-background/95 backdrop-blur">
-        <div className="container max-w-4xl mx-auto px-4 md:px-6 py-4">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
+        <div className="container max-w-4xl mx-auto px-3 sm:px-4 md:px-6 py-2 sm:py-4">
+          <div className="flex items-center justify-between gap-2 sm:gap-4">
+            <div className="flex items-center gap-2 min-w-0 flex-shrink">
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={() => navigate("/")}
                 data-testid="button-back"
+                className="flex-shrink-0"
               >
                 <ArrowLeft className="w-4 h-4" />
               </Button>
               
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                 <StatusBadge status={status as any} />
                 {prd?.updatedAt && (
-                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  <span className="hidden sm:flex text-xs text-muted-foreground items-center gap-1">
                     <Clock className="w-3 h-3" />
                     {formatDistance(new Date(prd.updatedAt), new Date(), { addSuffix: true })}
                   </span>
@@ -328,15 +333,26 @@ export default function Editor() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+              {/* Mobile: Icon only, Desktop: Icon + Text */}
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setShowShareDialog(true)}
                 data-testid="button-share"
+                className="hidden sm:inline-flex"
               >
                 <Share2 className="w-4 h-4 mr-2" />
                 Share
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setShowShareDialog(true)}
+                data-testid="button-share-mobile"
+                className="sm:hidden h-9 w-9"
+              >
+                <Share2 className="w-4 h-4" />
               </Button>
 
               <Button
@@ -344,9 +360,19 @@ export default function Editor() {
                 size="sm"
                 onClick={() => setShowApprovalDialog(true)}
                 data-testid="button-request-approval"
+                className="hidden md:inline-flex"
               >
                 <CheckCircle2 className="w-4 h-4 mr-2" />
                 Request Approval
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setShowApprovalDialog(true)}
+                data-testid="button-request-approval-mobile"
+                className="md:hidden h-9 w-9"
+              >
+                <CheckCircle2 className="w-4 h-4" />
               </Button>
 
               <Button
@@ -354,14 +380,24 @@ export default function Editor() {
                 size="sm"
                 onClick={() => setShowDualAiDialog(true)}
                 data-testid="button-dual-ai-assist"
+                className="hidden lg:inline-flex"
               >
                 <Sparkles className="w-4 h-4 mr-2" />
                 Dual-AI Assist
               </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setShowDualAiDialog(true)}
+                data-testid="button-dual-ai-assist-mobile"
+                className="lg:hidden h-9 w-9"
+              >
+                <Sparkles className="w-4 h-4" />
+              </Button>
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" data-testid="button-export">
+                  <Button variant="outline" size="sm" data-testid="button-export" className="hidden sm:inline-flex">
                     <Download className="w-4 h-4 mr-2" />
                     Export
                   </Button>
@@ -389,26 +425,82 @@ export default function Editor() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+              
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon" data-testid="button-export-mobile" className="sm:hidden h-9 w-9">
+                    <Download className="w-4 h-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => exportMutation.mutate("pdf")} data-testid="menu-export-pdf-mobile">
+                    <FileDown className="w-4 h-4 mr-2" />
+                    PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => exportMutation.mutate("word")} data-testid="menu-export-word-mobile">
+                    <FileDown className="w-4 h-4 mr-2" />
+                    Word (.docx)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => exportMutation.mutate("markdown")} data-testid="menu-export-markdown-mobile">
+                    <FileDown className="w-4 h-4 mr-2" />
+                    Markdown
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => exportMutation.mutate("claudemd")} data-testid="menu-export-claudemd-mobile">
+                    <FileDown className="w-4 h-4 mr-2" />
+                    CLAUDE.md (AI Guidelines)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => linearExportMutation.mutate()} data-testid="menu-export-linear-mobile">
+                    <Send className="w-4 h-4 mr-2" />
+                    Export to Linear
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
 
               <Button
                 size="sm"
                 onClick={() => saveMutation.mutate()}
                 disabled={saveMutation.isPending}
                 data-testid="button-save"
+                className="hidden sm:inline-flex"
               >
                 <Save className="w-4 h-4 mr-2" />
                 {saveMutation.isPending ? "Saving..." : "Save"}
               </Button>
+              <Button
+                size="icon"
+                onClick={() => saveMutation.mutate()}
+                disabled={saveMutation.isPending}
+                data-testid="button-save-mobile"
+                className="sm:hidden h-9 w-9"
+              >
+                <Save className="w-4 h-4" />
+              </Button>
+              
+              {/* Mobile Comments/Versions Button */}
+              {prdId && (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => {
+                    setMobileSheetTab("comments");
+                    setShowMobileSheet(true);
+                  }}
+                  className="lg:hidden h-9 w-9"
+                  data-testid="button-mobile-comments"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                </Button>
+              )}
             </div>
           </div>
         </div>
       </div>
 
       {/* Editor Content with Comments Sidebar */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden flex-col lg:flex-row">
         <div className="flex-1 overflow-y-auto">
-          <div className="container max-w-4xl mx-auto px-4 md:px-6 py-8">
-            <div className="space-y-6">
+          <div className="container max-w-4xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-8">
+            <div className="space-y-4 sm:space-y-6">
               {/* Title */}
               <div>
                 <Input
@@ -416,7 +508,7 @@ export default function Editor() {
                   placeholder="Untitled PRD"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  className="text-3xl font-semibold border-0 px-0 focus-visible:ring-0 placeholder:text-muted-foreground/50"
+                  className="text-2xl sm:text-3xl font-semibold border-0 px-0 focus-visible:ring-0 placeholder:text-muted-foreground/50"
                   data-testid="input-title"
                 />
               </div>
@@ -434,10 +526,10 @@ export default function Editor() {
               </div>
 
               {/* Status */}
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3 sm:gap-4">
                 <label className="text-sm font-medium">Status:</label>
                 <Select value={status} onValueChange={setStatus}>
-                  <SelectTrigger className="w-40" data-testid="select-status">
+                  <SelectTrigger className="w-36 sm:w-40" data-testid="select-status">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -452,12 +544,12 @@ export default function Editor() {
               </div>
 
               {/* Content */}
-              <div className="border-t pt-6">
+              <div className="border-t pt-4 sm:pt-6">
                 <Textarea
                   placeholder="Start writing your PRD content here..."
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
-                  className="min-h-[500px] font-mono text-sm resize-none"
+                  className="min-h-[400px] sm:min-h-[500px] font-mono text-xs sm:text-sm resize-none"
                   data-testid="textarea-content"
                 />
               </div>
@@ -465,9 +557,9 @@ export default function Editor() {
           </div>
         </div>
 
-        {/* Comments & Version History Sidebar */}
+        {/* Comments & Version History Sidebar - Hidden on mobile, visible on large screens */}
         {prdId && showComments && (
-          <div className="w-80 flex-shrink-0 border-l bg-muted/10">
+          <div className="hidden lg:block w-80 flex-shrink-0 border-l bg-muted/10">
             <Tabs defaultValue="comments" className="h-full flex flex-col">
               <TabsList className="w-full rounded-none border-b">
                 <TabsTrigger value="comments" className="flex-1" data-testid="tab-comments">
@@ -507,6 +599,33 @@ export default function Editor() {
             currentContent={content}
             onContentGenerated={handleDualAiContentGenerated}
           />
+          
+          {/* Mobile Comments/Versions Sheet */}
+          <Sheet open={showMobileSheet} onOpenChange={setShowMobileSheet}>
+            <SheetContent side="bottom" className="h-[80vh] flex flex-col p-0">
+              <SheetHeader className="px-6 py-4 border-b">
+                <SheetTitle>
+                  <Tabs value={mobileSheetTab} onValueChange={(v) => setMobileSheetTab(v as "comments" | "versions")} className="w-full">
+                    <TabsList className="w-full">
+                      <TabsTrigger value="comments" className="flex-1" data-testid="mobile-tab-comments">
+                        Comments
+                      </TabsTrigger>
+                      <TabsTrigger value="versions" className="flex-1" data-testid="mobile-tab-versions">
+                        Versions
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                </SheetTitle>
+              </SheetHeader>
+              <div className="flex-1 overflow-hidden">
+                {mobileSheetTab === "comments" ? (
+                  <CommentsPanel prdId={prdId} />
+                ) : (
+                  <VersionHistory prdId={prdId} />
+                )}
+              </div>
+            </SheetContent>
+          </Sheet>
         </>
       )}
     </div>
