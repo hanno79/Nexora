@@ -24,6 +24,24 @@ Preferred communication style: Simple, everyday language.
 - Custom color system supporting dark/light modes with HSL color values
 - Design inspired by Linear, Notion, and Stripe for a clean, professional aesthetic
 
+**Mobile Responsiveness** (Updated: Nov 15, 2025)
+- **Fully responsive design** across all viewports: Mobile (375px), Tablet (768px), Desktop (1440px+)
+- **Editor Page Mobile UX**:
+  - Icon-only toolbar buttons on mobile (<sm) for space efficiency
+  - Full text labels on desktop (lg+) for clarity
+  - Mobile Comments Access: MessageSquare button (lg:hidden) opens bottom sheet
+  - Bottom Sheet: 80vh height with tabs for Comments and Versions
+  - Desktop: Traditional right sidebar (w-80) visible only on lg+ screens
+- **Dashboard Mobile UX**:
+  - Icon-only "New PRD" button on mobile (sm:hidden)
+  - Stats grid: 1-column (mobile) → 2-column (md) → 4-column (lg)
+  - Responsive padding: px-3 sm:px-4 md:px-6
+- **Settings Mobile UX**:
+  - Responsive padding and spacing throughout
+  - Responsive title sizes: text-2xl sm:text-3xl
+- **Breakpoints**: sm (640px), md (768px), lg (1024px), xl (1280px)
+- **Testing**: E2E tests verify responsive behavior across all viewport sizes
+
 **State Management Strategy**
 - Server state managed through TanStack Query with infinite stale time
 - Authentication state centralized through `useAuth` hook
