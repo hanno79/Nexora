@@ -6,11 +6,30 @@ import { Badge } from "@/components/ui/badge";
 import { TopBar } from "@/components/TopBar";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { Template, User } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { resolveLanguage } from "@/lib/i18n";
+import { useState } from "react";
 
 const templateIcons: Record<string, any> = {
   feature: FileText,
@@ -23,6 +42,13 @@ const templateIcons: Record<string, any> = {
 export default function Templates() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  
+  // Dialog state
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [prdTitle, setPrdTitle] = useState("");
+  const [prdDescription, setPrdDescription] = useState("");
+  const [prdLanguage, setPrdLanguage] = useState<string>("auto");
 
   const { data: templates, isLoading } = useQuery<Template[]>({
     queryKey: ["/api/templates"],
@@ -33,16 +59,22 @@ export default function Templates() {
   });
 
   const createPrdMutation = useMutation({
-    mutationFn: async (templateId: string) => {
-      const template = templates?.find(t => t.id === templateId);
-      // Use user's default content language or fallback to English
-      const contentLanguage = resolveLanguage(user?.defaultContentLanguage);
+    mutationFn: async () => {
+      if (!selectedTemplateId) {
+        throw new Error("No template selected");
+      }
+      
+      const template = templates?.find(t => t.id === selectedTemplateId);
+      // Use selected language or user's default
+      const contentLanguage = prdLanguage === "auto" 
+        ? resolveLanguage(user?.defaultContentLanguage)
+        : prdLanguage;
       
       const res = await apiRequest("POST", "/api/prds", {
-        title: "Untitled PRD",
-        description: "",
+        title: prdTitle || "Untitled PRD",
+        description: prdDescription,
         content: template?.content || "{}",
-        templateId,
+        templateId: selectedTemplateId,
         status: "draft",
         language: contentLanguage,
       });
@@ -50,6 +82,12 @@ export default function Templates() {
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/prds"] });
+      setDialogOpen(false);
+      // Reset form
+      setPrdTitle("");
+      setPrdDescription("");
+      setPrdLanguage("auto");
+      setSelectedTemplateId(null);
       navigate(`/editor/${data.id}`);
     },
     onError: (error: Error) => {
@@ -71,6 +109,13 @@ export default function Templates() {
       });
     },
   });
+
+  const handleTemplateClick = (templateId: string) => {
+    setSelectedTemplateId(templateId);
+    // Pre-fill language with user's default
+    setPrdLanguage(user?.defaultContentLanguage || "auto");
+    setDialogOpen(true);
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -117,7 +162,7 @@ export default function Templates() {
                 <Card
                   key={template.id}
                   className="hover-elevate active-elevate-2 cursor-pointer transition-all"
-                  onClick={() => createPrdMutation.mutate(template.id)}
+                  onClick={() => handleTemplateClick(template.id)}
                   data-testid={`card-template-${template.category}`}
                 >
                   <CardHeader className="space-y-4">
@@ -146,6 +191,77 @@ export default function Templates() {
           </div>
         )}
       </div>
+
+      {/* New PRD Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Create New PRD</DialogTitle>
+            <DialogDescription>
+              Enter details for your new Product Requirement Document
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="prd-title">Title</Label>
+              <Input
+                id="prd-title"
+                placeholder="e.g., Mobile App User Authentication"
+                value={prdTitle}
+                onChange={(e) => setPrdTitle(e.target.value)}
+                data-testid="input-prd-title"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="prd-description">Description</Label>
+              <Textarea
+                id="prd-description"
+                placeholder="Brief description of this PRD..."
+                value={prdDescription}
+                onChange={(e) => setPrdDescription(e.target.value)}
+                data-testid="input-prd-description"
+                rows={3}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="prd-language">Content Language</Label>
+              <Select value={prdLanguage} onValueChange={setPrdLanguage}>
+                <SelectTrigger id="prd-language" data-testid="select-prd-language">
+                  <SelectValue placeholder="Select language" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto-detect</SelectItem>
+                  <SelectItem value="en">English</SelectItem>
+                  <SelectItem value="de">Deutsch (German)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Language for AI-generated content
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDialogOpen(false)}
+              data-testid="button-cancel-prd"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => createPrdMutation.mutate()}
+              disabled={createPrdMutation.isPending}
+              data-testid="button-create-prd"
+            >
+              {createPrdMutation.isPending ? "Creating..." : "Create PRD"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
