@@ -29,7 +29,7 @@ async function dartApiRequest(
   
   const url = `${DART_API_BASE_URL}${endpoint}`;
   const headers: Record<string, string> = {
-    'Authorization': apiKey, // Dart AI tokens already include the auth scheme (e.g., "dsa_...")
+    'Authorization': `Bearer ${apiKey}`, // Dart AI requires Bearer prefix despite dsa_ token format
     'Content-Type': 'application/json',
     'Accept': 'application/json',
   };
