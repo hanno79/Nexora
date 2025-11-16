@@ -15,7 +15,7 @@ interface I18nContextType {
   setLanguage: (lang: string) => void;
 }
 
-const I18nContext = createContext<I18nContextType | undefined>(undefined);
+export const I18nContext = createContext<I18nContextType | undefined>(undefined);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [language, setLanguageState] = useState<string>(() => resolveLanguage('auto'));
@@ -41,12 +41,4 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       {children}
     </I18nContext.Provider>
   );
-}
-
-export function useTranslation() {
-  const context = useContext(I18nContext);
-  if (!context) {
-    throw new Error('useTranslation must be used within I18nProvider');
-  }
-  return context;
 }
