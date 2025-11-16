@@ -146,6 +146,10 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent>
+          <DialogHeader>
+            <DialogTitle>PRD Approval</DialogTitle>
+            <DialogDescription>Loading approval information...</DialogDescription>
+          </DialogHeader>
           <div className="text-center py-8">Loading...</div>
         </DialogContent>
       </Dialog>
