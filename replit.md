@@ -37,21 +37,30 @@ Integration with Dart AI enables direct export of PRDs as Dart AI documents for 
 
 *   **Authentication**: Bearer token authentication via `DART_AI_API_KEY` environment variable (stored in Replit Secrets).
     *   Header format: `Authorization: Bearer ${token}` (required despite `dsa_` token prefix)
-*   **API Client**: `server/dartHelper.ts` provides `exportToDart()`, `checkDartConnection()`, and `getDartDoc()` functions.
+*   **API Client**: `server/dartHelper.ts` provides `exportToDart()`, `checkDartConnection()`, `getDartDoc()`, and `getDartboards()` functions.
     *   Request format: `{ item: { title, text, folder } }` (uses `item` wrapper object)
     *   Response format: `{ item: { id, htmlUrl, title, folder, text } }`
 *   **Backend Routes**: 
-    *   `POST /api/dart/export`: Exports PRD to Dart AI and persists `dartDocId` and `dartDocUrl` to the database.
+    *   `POST /api/dart/export`: Exports PRD to Dart AI with user-selected folder and persists `dartDocId`, `dartDocUrl`, and `dartFolder` to the database.
+    *   `GET /api/dart/dartboards`: Fetches available dartboards and folders from user's Dart AI workspace (requires authentication).
     *   `GET /api/dart/status`: Checks Dart AI connection status.
 *   **Frontend Integration**: 
     *   Export button in Editor UI (desktop and mobile)
+    *   DartExportDialog component with dartboard/folder selection dropdown
+    *   Loading states, error handling, and helpful hints for missing dartboards
     *   Connection status display in Settings page
     *   All strings localized via `t.integrations.dart.*` (English/German)
-    *   Export mutations automatically invalidate TanStack Query cache to ensure UI reflects updated linkage metadata (dartDocId, dartDocUrl).
-*   **Database Fields**: PRDs table includes `dartDocId` (varchar) and `dartDocUrl` (varchar) fields for tracking exported documents.
-*   **Status**: ✅ Fully functional and tested (E2E verified November 16, 2025)
+    *   Export mutations automatically invalidate TanStack Query cache to ensure UI reflects updated linkage metadata (dartDocId, dartDocUrl, dartFolder).
+*   **Database Fields**: PRDs table includes `dartDocId` (varchar), `dartDocUrl` (varchar), and `dartFolder` (varchar) fields for tracking exported documents and their location.
+*   **Dartboard Selection Workflow**: 
+    *   User clicks "Export to Dart AI" → DartExportDialog opens
+    *   Dialog fetches available folders via `/api/dart/dartboards`
+    *   User selects target folder/dartboard from dropdown
+    *   Export proceeds with selected folder parameter
+    *   If no folders exist, helpful hint guides user to create one in Dart AI
+*   **Status**: ✅ Fully functional with dartboard selection workflow (E2E verified November 16, 2025)
 
-The Dart AI integration follows the same architectural pattern as Linear integration, ensuring consistency across external service integrations.
+The Dart AI integration follows the same architectural pattern as Linear integration, ensuring consistency across external service integrations. The dartboard selection workflow provides organized project structure by allowing users to manually create spaces/dartboards in Dart AI and then select them during export.
 
 ### Collaboration Features
 
