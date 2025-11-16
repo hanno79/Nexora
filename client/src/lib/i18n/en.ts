@@ -57,6 +57,7 @@ export const en = {
     versions: "Versions",
     approval: "Request Approval",
     linearExport: "Export to Linear",
+    dartExport: "Export to Dart AI",
     aiSettings: "AI Settings",
     contentLanguage: "Content Language",
     selectLanguage: "Select Language",

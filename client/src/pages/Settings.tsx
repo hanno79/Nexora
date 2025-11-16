@@ -52,6 +52,10 @@ export default function Settings() {
     queryKey: ["/api/linear/status"],
   });
 
+  const { data: dartStatus } = useQuery<{ connected: boolean }>({
+    queryKey: ["/api/dart/status"],
+  });
+
   const { data: aiPreferences } = useQuery<{
     generatorModel?: string;
     reviewerModel?: string;
@@ -578,6 +582,44 @@ export default function Settings() {
               </div>
               <p className="text-xs text-muted-foreground">
                 Linear integration is pre-configured. You can export PRDs directly from the editor.
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Dart AI Integration */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Dart AI Integration</CardTitle>
+              <CardDescription>
+                Connect Dart AI to export PRDs as intelligent docs
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between p-4 rounded-lg border bg-card">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10">
+                    <Brain className="w-5 h-5 text-primary" />
+                  </div>
+                  <div>
+                    <p className="font-medium">Dart AI Workspace</p>
+                    <p className="text-sm text-muted-foreground">
+                      {dartStatus?.connected ? "Connected" : "Not connected"}
+                    </p>
+                  </div>
+                </div>
+                {dartStatus?.connected ? (
+                  <div className="flex items-center gap-2 text-green-600 dark:text-green-500">
+                    <Check className="w-5 h-5" />
+                    <span className="text-sm font-medium">Connected</span>
+                  </div>
+                ) : (
+                  <Button variant="outline" size="sm" disabled data-testid="button-connect-dart">
+                    Configure
+                  </Button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Add DART_AI_API_KEY to your Replit Secrets to enable Dart AI integration.
               </p>
             </CardContent>
           </Card>

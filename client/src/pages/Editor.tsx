@@ -294,6 +294,40 @@ export default function Editor() {
     },
   });
 
+  const dartExportMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", "/api/dart/export", {
+        prdId,
+        title,
+        content,
+      });
+    },
+    onSuccess: () => {
+      toast({
+        title: "Success",
+        description: "Exported to Dart AI successfully",
+      });
+    },
+    onError: (error: Error) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/api/login";
+        }, 500);
+        return;
+      }
+      toast({
+        title: "Dart AI Export Failed",
+        description: error.message || "Failed to export to Dart AI",
+        variant: "destructive",
+      });
+    },
+  });
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
@@ -423,6 +457,10 @@ export default function Editor() {
                     <Send className="w-4 h-4 mr-2" />
                     Export to Linear
                   </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => dartExportMutation.mutate()} data-testid="menu-export-dart">
+                    <Send className="w-4 h-4 mr-2" />
+                    Export to Dart AI
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
               
@@ -452,6 +490,10 @@ export default function Editor() {
                   <DropdownMenuItem onClick={() => linearExportMutation.mutate()} data-testid="menu-export-linear-mobile">
                     <Send className="w-4 h-4 mr-2" />
                     Export to Linear
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => dartExportMutation.mutate()} data-testid="menu-export-dart-mobile">
+                    <Send className="w-4 h-4 mr-2" />
+                    Export to Dart AI
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

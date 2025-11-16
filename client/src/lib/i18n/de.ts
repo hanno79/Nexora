@@ -59,6 +59,7 @@ export const de: Translations = {
     versions: "Versionen",
     approval: "Freigabe anfordern",
     linearExport: "Nach Linear exportieren",
+    dartExport: "Nach Dart AI exportieren",
     aiSettings: "KI-Einstellungen",
     contentLanguage: "Inhaltssprache",
     selectLanguage: "Sprache wählen",
