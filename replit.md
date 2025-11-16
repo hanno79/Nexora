@@ -190,6 +190,14 @@ Preferred communication style: Simple, everyday language.
 - Console logging in development; ready for production integration with Sentry/Datadog/LogRocket
 - User-friendly error UI with reload and home navigation options
 
+**Enhanced Error Handling** (Updated: Nov 16, 2025)
+- **OpenRouter API Errors**: Detailed messages for rate limits (429), insufficient credits (402), authentication failures (401/403), model unavailability (503/504), and connection issues
+- **Anthropic Claude Errors**: Specific handling for API key issues, rate limits, billing problems, overload situations, and token limit errors with actionable guidance
+- **Linear Integration Errors**: Clear messages for workspace limits, authentication failures, and team configuration issues with links to Linear support
+- **Export Errors**: Format-specific error messages (PDF, Word, Markdown, CLAUDE.md) explaining content size/formatting issues
+- **AI Generation Errors**: Passes through detailed error messages from AI services to help users understand and resolve API configuration issues
+- All error messages include specific problem descriptions and actionable solutions (e.g., links to get API keys, upgrade plans, or adjust settings)
+
 ## External Dependencies
 
 ### Third-Party Services
