@@ -10,6 +10,7 @@ import { generateClaudeMD } from "./claudemdGenerator";
 import { initializeTemplates } from "./initTemplates";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
+import { z } from "zod";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Initialize templates
