@@ -81,6 +81,8 @@ export const prds = pgTable("prds", {
   language: varchar("language").notNull().default('en'), // Language of the PRD content (e.g., 'en', 'de')
   linearIssueId: varchar("linear_issue_id"), // Linear issue ID if exported
   linearIssueUrl: varchar("linear_issue_url"), // Linear issue URL if exported
+  dartDocId: varchar("dart_doc_id"), // Dart AI doc ID if exported
+  dartDocUrl: varchar("dart_doc_url"), // Dart AI doc URL if exported
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
