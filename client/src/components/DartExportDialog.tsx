@@ -95,9 +95,11 @@ export function DartExportDialog({
     exportMutation.mutate();
   };
 
-  const allOptions = [
-    ...(dartboards?.folders || []),
-  ];
+  // Only show folders (Dart AI docs can only be saved in folders, not dartboards)
+  const allOptions = (dartboards?.folders || []).map(folder => ({ 
+    label: `📁 ${folder}`, 
+    value: folder 
+  }));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -141,8 +143,8 @@ export function DartExportDialog({
                       </SelectItem>
                     ) : (
                       allOptions.map((option) => (
-                        <SelectItem key={option} value={option} data-testid={`option-${option}`}>
-                          {option}
+                        <SelectItem key={option.value} value={option.value} data-testid={`option-${option.value}`}>
+                          {option.label}
                         </SelectItem>
                       ))
                     )}
