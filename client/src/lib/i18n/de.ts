@@ -20,6 +20,8 @@ export const de: Translations = {
     dashboard: "Dashboard",
     templates: "Vorlagen",
     settings: "Einstellungen",
+    signOut: "Abmelden",
+    profile: "Profil",
   },
   
   dashboard: {
@@ -32,6 +34,8 @@ export const de: Translations = {
     noPrds: "Noch keine PRDs",
     createFirst: "Erstellen Sie Ihr erstes PRD, um zu beginnen",
     recentPrds: "Aktuelle PRDs",
+    searchPlaceholder: "PRDs durchsuchen...",
+    updated: "Aktualisiert",
   },
   
   editor: {
@@ -66,12 +70,28 @@ export const de: Translations = {
   
   templates: {
     title: "PRD-Vorlagen",
+    chooseTemplate: "Vorlage auswählen",
     createTemplate: "Vorlage erstellen",
     useTemplate: "Vorlage verwenden",
     editTemplate: "Vorlage bearbeiten",
     deleteTemplate: "Vorlage löschen",
     noTemplates: "Keine Vorlagen gefunden",
     createFirst: "Erstellen Sie Ihre erste Vorlage",
+    backToDashboard: "Zurück zum Dashboard",
+    startWith: "Starten Sie mit einer vorgefertigten Vorlage oder erstellen Sie Ihre eigene",
+    custom: "Benutzerdefiniert",
+    dialog: {
+      title: "Neues PRD erstellen",
+      description: "Geben Sie Details für Ihr neues Product Requirement Document ein",
+      titleLabel: "Titel",
+      titlePlaceholder: "z.B. Mobile App Benutzer-Authentifizierung",
+      descriptionLabel: "Beschreibung",
+      descriptionPlaceholder: "Kurze Beschreibung dieses PRD...",
+      languageLabel: "Inhaltssprache",
+      languageHelp: "Sprache für KI-generierten Inhalt",
+      creating: "Erstelle...",
+      createButton: "PRD erstellen",
+    },
   },
   
   prd: {

@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/useAuth";
+import { useTranslation } from "@/lib/i18n";
 
 interface TopBarProps {
   onSearchChange?: (value: string) => void;
@@ -19,6 +20,7 @@ interface TopBarProps {
 
 export function TopBar({ onSearchChange, searchValue }: TopBarProps) {
   const { user } = useAuth();
+  const { t } = useTranslation();
 
   const getInitials = (firstName?: string | null, lastName?: string | null, email?: string | null) => {
     if (firstName && lastName) {
@@ -48,7 +50,7 @@ export function TopBar({ onSearchChange, searchValue }: TopBarProps) {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 type="search"
-                placeholder="Search PRDs..."
+                placeholder={t.dashboard.searchPlaceholder}
                 className="pl-10 h-9"
                 value={searchValue}
                 onChange={(e) => onSearchChange(e.target.value)}
@@ -104,14 +106,14 @@ export function TopBar({ onSearchChange, searchValue }: TopBarProps) {
               <DropdownMenuItem asChild>
                 <Link href="/settings" className="cursor-pointer" data-testid="link-settings">
                   <User className="mr-2 h-4 w-4" />
-                  Settings
+                  {t.nav.settings}
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
                 <a href="/api/logout" className="cursor-pointer text-destructive" data-testid="link-logout">
                   <LogOut className="mr-2 h-4 w-4" />
-                  Log out
+                  {t.nav.signOut}
                 </a>
               </DropdownMenuItem>
             </DropdownMenuContent>

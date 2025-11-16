@@ -30,6 +30,7 @@ import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { resolveLanguage } from "@/lib/i18n";
 import { useState } from "react";
+import { useTranslation } from "@/lib/i18n";
 
 const templateIcons: Record<string, any> = {
   feature: FileText,
@@ -42,6 +43,7 @@ const templateIcons: Record<string, any> = {
 export default function Templates() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { t } = useTranslation();
   
   // Dialog state
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -142,13 +144,13 @@ export default function Templates() {
             data-testid="button-back"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Dashboard
+            {t.templates.backToDashboard}
           </Button>
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-semibold mb-2">Choose a Template</h1>
+              <h1 className="text-3xl font-semibold mb-2">{t.templates.chooseTemplate}</h1>
               <p className="text-muted-foreground">
-                Start with a pre-built template or create your own
+                {t.templates.startWith}
               </p>
             </div>
             <Button
@@ -156,7 +158,7 @@ export default function Templates() {
               data-testid="button-create-template"
             >
               <Plus className="w-4 h-4 mr-2" />
-              Create Template
+              {t.templates.createTemplate}
             </Button>
           </div>
         </div>
@@ -186,7 +188,7 @@ export default function Templates() {
                           <CardTitle className="text-xl">{template.name}</CardTitle>
                           {isCustom && (
                             <Badge variant="secondary" className="text-xs" data-testid={`badge-custom-${template.id}`}>
-                              Custom
+                              {t.templates.custom}
                             </Badge>
                           )}
                         </div>
@@ -207,18 +209,18 @@ export default function Templates() {
       <Dialog open={dialogOpen} onOpenChange={handleDialogClose}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
-            <DialogTitle>Create New PRD</DialogTitle>
+            <DialogTitle>{t.templates.dialog.title}</DialogTitle>
             <DialogDescription>
-              Enter details for your new Product Requirement Document
+              {t.templates.dialog.description}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="prd-title">Title</Label>
+              <Label htmlFor="prd-title">{t.templates.dialog.titleLabel}</Label>
               <Input
                 id="prd-title"
-                placeholder="e.g., Mobile App User Authentication"
+                placeholder={t.templates.dialog.titlePlaceholder}
                 value={prdTitle}
                 onChange={(e) => setPrdTitle(e.target.value)}
                 data-testid="input-prd-title"
@@ -226,10 +228,10 @@ export default function Templates() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="prd-description">Description</Label>
+              <Label htmlFor="prd-description">{t.templates.dialog.descriptionLabel}</Label>
               <Textarea
                 id="prd-description"
-                placeholder="Brief description of this PRD..."
+                placeholder={t.templates.dialog.descriptionPlaceholder}
                 value={prdDescription}
                 onChange={(e) => setPrdDescription(e.target.value)}
                 data-testid="input-prd-description"
@@ -238,19 +240,19 @@ export default function Templates() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="prd-language">Content Language</Label>
+              <Label htmlFor="prd-language">{t.templates.dialog.languageLabel}</Label>
               <Select value={prdLanguage} onValueChange={setPrdLanguage}>
                 <SelectTrigger id="prd-language" data-testid="select-prd-language">
-                  <SelectValue placeholder="Select language" />
+                  <SelectValue placeholder={t.editor.selectLanguage} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="auto">Auto-detect</SelectItem>
-                  <SelectItem value="en">English</SelectItem>
-                  <SelectItem value="de">Deutsch (German)</SelectItem>
+                  <SelectItem value="auto">{t.languages.auto}</SelectItem>
+                  <SelectItem value="en">{t.languages.en}</SelectItem>
+                  <SelectItem value="de">{t.languages.de}</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Language for AI-generated content
+                {t.templates.dialog.languageHelp}
               </p>
             </div>
           </div>
@@ -261,14 +263,14 @@ export default function Templates() {
               onClick={() => setDialogOpen(false)}
               data-testid="button-cancel-prd"
             >
-              Cancel
+              {t.common.cancel}
             </Button>
             <Button
               onClick={() => createPrdMutation.mutate()}
               disabled={createPrdMutation.isPending}
               data-testid="button-create-prd"
             >
-              {createPrdMutation.isPending ? "Creating..." : "Create PRD"}
+              {createPrdMutation.isPending ? t.templates.dialog.creating : t.templates.dialog.createButton}
             </Button>
           </DialogFooter>
         </DialogContent>

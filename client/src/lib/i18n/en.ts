@@ -18,6 +18,8 @@ export const en = {
     dashboard: "Dashboard",
     templates: "Templates",
     settings: "Settings",
+    signOut: "Sign out",
+    profile: "Profile",
   },
   
   dashboard: {
@@ -30,6 +32,8 @@ export const en = {
     noPrds: "No PRDs yet",
     createFirst: "Create your first PRD to get started",
     recentPrds: "Recent PRDs",
+    searchPlaceholder: "Search PRDs...",
+    updated: "Updated",
   },
   
   editor: {
@@ -64,12 +68,28 @@ export const en = {
   
   templates: {
     title: "PRD Templates",
+    chooseTemplate: "Choose a Template",
     createTemplate: "Create Template",
     useTemplate: "Use Template",
     editTemplate: "Edit Template",
     deleteTemplate: "Delete Template",
     noTemplates: "No templates found",
     createFirst: "Create your first template",
+    backToDashboard: "Back to Dashboard",
+    startWith: "Start with a pre-built template or create your own",
+    custom: "Custom",
+    dialog: {
+      title: "Create New PRD",
+      description: "Enter details for your new Product Requirement Document",
+      titleLabel: "Title",
+      titlePlaceholder: "e.g., Mobile App User Authentication",
+      descriptionLabel: "Description",
+      descriptionPlaceholder: "Brief description of this PRD...",
+      languageLabel: "Content Language",
+      languageHelp: "Language for AI-generated content",
+      creating: "Creating...",
+      createButton: "Create PRD",
+    },
   },
   
   prd: {
