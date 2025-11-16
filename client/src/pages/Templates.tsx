@@ -117,6 +117,17 @@ export default function Templates() {
     setDialogOpen(true);
   };
 
+  const handleDialogClose = (open: boolean) => {
+    setDialogOpen(open);
+    // Reset form when dialog closes
+    if (!open) {
+      setPrdTitle("");
+      setPrdDescription("");
+      setPrdLanguage("auto");
+      setSelectedTemplateId(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <TopBar />
@@ -193,7 +204,7 @@ export default function Templates() {
       </div>
 
       {/* New PRD Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={dialogOpen} onOpenChange={handleDialogClose}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>Create New PRD</DialogTitle>
