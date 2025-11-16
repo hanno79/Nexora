@@ -31,6 +31,8 @@ export const users = pgTable("users", {
   company: varchar("company"),
   role: varchar("role"),
   aiPreferences: jsonb("ai_preferences"), // AI model preferences: { generatorModel, reviewerModel, tier }
+  uiLanguage: varchar("ui_language").default('auto'), // UI language: 'auto' (browser), 'en', 'de', etc.
+  defaultContentLanguage: varchar("default_content_language").default('auto'), // Default language for generated content
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -76,6 +78,7 @@ export const prds = pgTable("prds", {
   description: text("description"),
   content: text("content").notNull(), // JSON string with PRD sections
   status: varchar("status").notNull().default('draft'), // 'draft', 'in-progress', 'review', 'pending-approval', 'approved', 'completed'
+  language: varchar("language").notNull().default('en'), // Language of the PRD content (e.g., 'en', 'de')
   linearIssueId: varchar("linear_issue_id"), // Linear issue ID if exported
   linearIssueUrl: varchar("linear_issue_url"), // Linear issue URL if exported
   createdAt: timestamp("created_at").defaultNow(),
@@ -88,6 +91,7 @@ export const insertPrdSchema = createInsertSchema(prds, {
   title: z.string().min(1, "Title is required"),
   content: z.string(),
   status: z.enum(['draft', 'in-progress', 'review', 'pending-approval', 'approved', 'completed']).default('draft'),
+  language: z.string().default('en'), // Language code (e.g., 'en', 'de', 'fr')
 }).omit({
   id: true,
   createdAt: true,

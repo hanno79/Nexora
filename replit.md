@@ -2,7 +2,7 @@
 
 ## Overview
 
-NEXORA is a modern SaaS platform for creating Product Requirement Documents (PRDs) with AI assistance. The platform combines intelligent content generation using Claude AI with seamless Linear integration, enabling product teams to create professional PRDs 10x faster. Key features include AI-powered content generation, template-based document creation, version control, multi-format export (PDF, Word, Markdown, CLAUDE.md), direct Linear integration for issue/project management, real-time commenting system, approval workflow for PRD review and sign-off, and intelligent CLAUDE.md generation for AI development guidelines.
+NEXORA is a SaaS platform designed to accelerate Product Requirement Document (PRD) creation using AI. It integrates Claude AI for intelligent content generation and Linear for project management, enabling product teams to produce professional PRDs up to 10 times faster. Key capabilities include AI-driven content generation, template-based document creation, version control, multi-format export (PDF, Word, Markdown, CLAUDE.md), direct Linear integration, real-time commenting, approval workflows, and intelligent CLAUDE.md generation for AI development guidelines. The platform aims to streamline the PRD process, enhance collaboration, and improve product development efficiency.
 
 ## User Preferences
 
@@ -12,252 +12,71 @@ Preferred communication style: Simple, everyday language.
 
 ### Frontend Architecture
 
-**Framework & Build Tools**
-- React 18 with TypeScript for type-safe component development
-- Vite as the build tool for fast development and optimized production builds
-- Wouter for lightweight client-side routing
-- TanStack Query (React Query) for server state management and caching
-
-**UI Component System**
-- shadcn/ui components built on Radix UI primitives for accessible, composable UI
-- Tailwind CSS for utility-first styling with custom design tokens
-- Custom color system supporting dark/light modes with HSL color values
-- Design inspired by Linear, Notion, and Stripe for a clean, professional aesthetic
-
-**Mobile Responsiveness** (Updated: Nov 15, 2025)
-- **Fully responsive design** across all viewports: Mobile (375px), Tablet (768px), Desktop (1440px+)
-- **Editor Page Mobile UX**:
-  - Icon-only toolbar buttons on mobile (<sm) for space efficiency
-  - Full text labels on desktop (lg+) for clarity
-  - Mobile Comments Access: MessageSquare button (lg:hidden) opens bottom sheet
-  - Bottom Sheet: 80vh height with tabs for Comments and Versions
-  - Desktop: Traditional right sidebar (w-80) visible only on lg+ screens
-- **Dashboard Mobile UX**:
-  - Icon-only "New PRD" button on mobile (sm:hidden)
-  - Stats grid: 1-column (mobile) → 2-column (md) → 4-column (lg)
-  - Responsive padding: px-3 sm:px-4 md:px-6
-- **Settings Mobile UX**:
-  - Responsive padding and spacing throughout
-  - Responsive title sizes: text-2xl sm:text-3xl
-- **Breakpoints**: sm (640px), md (768px), lg (1024px), xl (1280px)
-- **Testing**: E2E tests verify responsive behavior across all viewport sizes
-
-**State Management Strategy**
-- Server state managed through TanStack Query with infinite stale time
-- Authentication state centralized through `useAuth` hook
-- Local component state using React hooks
-- No global client state management library (avoiding Redux/Zustand complexity)
+The frontend is built with React 18 and TypeScript, using Vite for fast development and optimized builds. Wouter handles client-side routing, and TanStack Query manages server state. The UI utilizes shadcn/ui components (based on Radix UI) and Tailwind CSS for styling, featuring a custom HSL color system and dark/light modes. The design is inspired by Linear, Notion, and Stripe, emphasizing a clean and professional aesthetic. It is fully responsive across mobile, tablet, and desktop viewports, with specific UX considerations for the editor and dashboard. State management primarily uses TanStack Query for server state and React hooks for local component state, avoiding complex global state libraries. The system supports internationalization (i18n) with separate UI and content language settings, allowing users to configure interface language independently from PRD generation language.
 
 ### Backend Architecture
 
-**Server Framework**
-- Express.js server with TypeScript
-- Session-based authentication using express-session with PostgreSQL store
-- RESTful API design with JSON responses
-- Development mode uses Vite middleware for HMR
-
-**Authentication System**
-- Replit OAuth integration via OpenID Connect (OIDC)
-- Session management with PostgreSQL-backed session store (connect-pg-simple)
-- Protected routes using `isAuthenticated` middleware
-- User profile management with onboarding flow
-
-**Database Layer**
-- Drizzle ORM for type-safe database operations
-- PostgreSQL via Neon serverless driver with WebSocket support
-- Schema-first design with migrations in `/migrations` directory
-- Tables: users, sessions, prds, templates, prdVersions, sharedPrds, comments, approvals
-
-**Data Model Design**
-- Users: Core authentication and profile information with aiPreferences (iterative mode settings)
-- PRDs: Documents with title, description, content (JSON), status (draft, in-progress, review, pending-approval, approved, completed), template reference
-- Templates: Reusable PRD structures (feature, epic, technical, product-launch categories) with isMeta field for AI-enhanced templates
-- PRD Versions: Complete version history with snapshot content
-- Shared PRDs: Team collaboration with permission levels
-- Comments: Discussion threads on PRDs with user attribution, timestamps, and optional section linking
-- Approvals: Workflow management with requester, reviewers list, status tracking, and completion audit trail
-- AI Preferences: User-specific AI workflow settings (iterativeMode, iterationCount 2-5, useFinalReview)
-- AI Usage: Cost tracking and analytics for Dual-AI system with model type, tier, token counts, and calculated costs
+The backend runs on Express.js with TypeScript, providing a RESTful API. Authentication is session-based, using Replit OAuth via OpenID Connect (OIDC) and a PostgreSQL-backed session store. Drizzle ORM provides type-safe database interactions with PostgreSQL (Neon serverless driver), following a schema-first design with migrations. The data model includes users, PRDs, templates, versions, shared PRDs, comments, and approvals.
 
 ### AI Integration
 
-**Dual-AI System (HRP-17 Implementation)**
-- **OpenRouter Integration**: Unified API access to 400+ LLM models through single API key
-- **Tiered Model Configuration**: 
-  - Development tier: Mistral-7B (generator) + Gemini Flash (reviewer) - Free/Low-cost testing
-  - Production tier: GPT-4o (generator) + Claude 3.5 Sonnet (reviewer) - High-quality output
-  - Premium tier: Role-swap for maximum quality validation
-- **Intelligent Fallback System**: Automatic tier degradation on failures with proper restoration
-- **Dual-AI Workflow Modes**: Users can choose between two AI-powered PRD generation workflows:
-  
-  **Simple Mode (Default)**: Generator → Reviewer → Improvement cycle
-  - Generator creates initial PRD content with structured markdown
-  - Reviewer provides critical analysis and generates improvement questions
-  - Generator refines content based on reviewer feedback
-  - Single iteration for fast, high-quality PRD generation
-  
-  **Iterative Mode (Advanced)**: Multi-iteration refinement with Q&A cycles
-  - AI #1 (Generator): Creates PRD content and asks clarifying questions about requirements
-  - AI #2 (Answerer): Provides best-practice answers using product management expertise
-  - Repeat N times (user-configurable 2-5 iterations) to progressively refine PRD
-  - Optional AI #3 (Final Reviewer): Quality check and final improvements
-  - Achieves 34x+ content expansion with deep requirement analysis
-  - User settings: iterativeMode (on/off), iterationCount (2-5), useFinalReview (on/off)
-  - Progress tracking: Real-time UI updates showing current iteration (e.g., "Iteration 2/3")
-  
-- **Cost Tracking**: Automatic logging of AI usage to `aiUsage` table with token counts and cost calculation
+NEXORA employs a Dual-AI System (HRP-17) primarily through OpenRouter, providing access to over 400 LLM models with tiered configurations (Development, Production, Premium) and an intelligent fallback system. Users can choose between two AI-powered PRD generation workflows:
 
-**Legacy Claude AI Integration**
-- Anthropic SDK for single-model content generation
-- Uses claude-sonnet-4-20250514 model
-- System prompt optimized for professional PRD content generation
-- Supports both new content creation and iterative improvement
-- 4000 token max output for comprehensive PRD sections
+*   **Simple Mode (Default)**: A single iteration cycle where a Generator creates content, a Reviewer analyzes it, and the Generator refines it.
+*   **Iterative Mode (Advanced)**: Multi-iteration refinement (2-5 user-configurable iterations) where a Generator creates content and asks clarifying questions, and an Answerer provides expert responses. An optional Final Reviewer performs a quality check. This mode aims for deep requirement analysis and significant content expansion.
 
-**Content Generation Strategy**
-- Structured markdown output with proper headings and organization
-- Context-aware improvements using existing content
-- Template-based scaffolding combined with AI enhancement
-- Professional PM language and actionable requirements focus
+The platform also supports legacy Anthropic Claude AI integration (claude-sonnet-4-20250514) for single-model content generation. AI usage is tracked for cost analysis. Content generation focuses on structured markdown output, context-aware improvements, and template-based scaffolding with professional product management language.
 
 ### Linear Integration
 
-**Architecture**
-- Linear SDK (@linear/sdk) for API interactions
-- OAuth-based authentication via Replit Connectors
-- Automatic token refresh when expired
-- Direct export of PRDs as Linear issues/projects
-
-**Implementation Pattern**
-- Uncached client instances (tokens expire, must be recreated per request)
-- Connection status checking before operations
-- Title and description mapping from PRD to Linear issue
+Integration with Linear uses the @linear/sdk and Replit Connectors for OAuth-based authentication. It allows direct export of PRDs as Linear issues or projects, mapping PRD titles and descriptions.
 
 ### Collaboration Features
 
-**Comment System**
-- Real-time commenting on PRDs with user attribution
-- CommentsPanel component in Editor sidebar showing threaded discussions
-- User avatars, timestamps with relative formatting (via date-fns)
-- Optional section-level comments for inline discussions
-- API endpoints: GET/POST /api/prds/:id/comments with user info enrichment
-
-**Approval Workflow**
-- Multi-reviewer approval requests with status tracking
-- ApprovalDialog for reviewer selection and approval management
-- Status states: pending, approved, rejected
-- Automatic PRD status updates (pending-approval → approved/review)
-- Reviewer authorization checks ensuring only designated reviewers can respond
-- Complete audit trail with requester, reviewers, completion timestamps
-- API endpoints: GET /api/prds/:id/approval, POST /api/prds/:id/approval/request, POST /api/prds/:id/approval/respond
+*   **Comment System**: Real-time commenting on PRDs with user attribution, timestamps, and optional section-level linking, displayed in an Editor sidebar panel.
+*   **Approval Workflow**: A multi-reviewer approval process with status tracking (pending, approved, rejected), reviewer selection, and an audit trail. PRD statuses update automatically based on approval actions.
 
 ### Export System
 
-**Multi-Format Export**
-- PDF export using jsPDF library with markdown parsing and proper formatting
-- Word (.docx) export using docx library with structured document generation
-- Markdown export as plain text download
-- CLAUDE.md export - AI development guidelines extracted from PRD content
-- Export dropdown in Editor toolbar with all format options
+NEXORA supports multi-format export for PRDs:
 
-**CLAUDE.md Generator**
-- Intelligent content extraction from PRD text
-- Extracts tech stack, architecture patterns, API endpoints, components, user stories
-- Generates structured development guidelines for AI agents
-- Regex-based pattern matching for technical terms and structures
-- Output format: Markdown with sections for Overview, Tech Stack, Architecture, APIs, Components, Requirements, Testing
+*   **PDF**: Generated using jsPDF with markdown parsing and formatting.
+*   **Word (.docx)**: Generated using the docx library for structured documents.
+*   **Markdown**: Plain text download.
+*   **CLAUDE.md**: An intelligent generator extracts technical details (tech stack, architecture, APIs, components, user stories) from the PRD to create structured development guidelines for AI agents.
 
-**Export Architecture**
-- Backend: POST /api/prds/:id/export endpoint handling all formats
-- PDF/Word: Binary responses with appropriate MIME types and Content-Disposition headers
-- Markdown/CLAUDE.md: JSON response with content field
-- Frontend: Blob creation and automatic download via temporary anchor elements
-- Server-side utilities in exportUtils.ts for PDF/Word generation
-- Server-side utilities in claudemdGenerator.ts for CLAUDE.md generation
-
-**Content Processing**
-- Markdown parsing for headings (H1, H2, H3), bullet points, and paragraphs
-- Automatic page breaks in PDF generation
-- Proper document structure in Word exports with heading levels
-- Title and description formatting with distinct styling
+Export functionality is handled server-side, providing binary or JSON responses for download.
 
 ### Error Tracking & Monitoring
 
-**Error Logging System**
-- Frontend ErrorBoundary captures React errors and logs to backend
-- Backend endpoint: POST /api/errors for error reporting
-- Structured error logging with message, stack trace, component stack, timestamp, user agent
-- Console logging in development; ready for production integration with Sentry/Datadog/LogRocket
-- User-friendly error UI with reload and home navigation options
-
-**Enhanced Error Handling** (Updated: Nov 16, 2025)
-- **OpenRouter API Errors**: Detailed messages for rate limits (429), insufficient credits (402), authentication failures (401/403), model unavailability (503/504), and connection issues
-- **Anthropic Claude Errors**: Specific handling for API key issues, rate limits, billing problems, overload situations, and token limit errors with actionable guidance
-- **Linear Integration Errors**: Clear messages for workspace limits, authentication failures, and team configuration issues with links to Linear support
-- **Export Errors**: Format-specific error messages (PDF, Word, Markdown, CLAUDE.md) explaining content size/formatting issues
-- **AI Generation Errors**: Passes through detailed error messages from AI services to help users understand and resolve API configuration issues
-- All error messages include specific problem descriptions and actionable solutions (e.g., links to get API keys, upgrade plans, or adjust settings)
+Frontend errors are captured by `ErrorBoundary` and logged to the backend. The system includes enhanced error handling for external services like OpenRouter, Anthropic Claude, and Linear, providing detailed, actionable messages for common issues such as rate limits, authentication failures, and API errors.
 
 ## External Dependencies
 
 ### Third-Party Services
 
-**Replit Platform**
-- Replit Auth (OIDC) for user authentication
-- Replit Connectors for Linear OAuth integration
-- Environment variables: REPL_ID, REPL_IDENTITY, WEB_REPL_RENEWAL
-- Development-only plugins: cartographer, dev-banner, runtime-error-modal
-
-**AI Services**
-- **OpenRouter** (Dual-AI System - Primary)
-  - Unified API for 400+ LLM models
-  - Requires OPENROUTER_API_KEY environment variable
-  - Get free API key at: https://openrouter.ai/keys
-  - Supports GPT-4o, Claude 3.5 Sonnet, Mistral, Gemini, and many more
-  - Automatic fallback between model tiers
-- **Anthropic AI** (Legacy Single-Model)
-  - Claude API for PRD content generation
-  - Requires ANTHROPIC_API_KEY environment variable
-  - Model: claude-sonnet-4-20250514
-
-**Linear**
-- Linear API for issue/project management
-- OAuth authentication managed through Replit Connectors
-- Requires Linear connector to be configured in Replit
+*   **Replit Platform**: Replit Auth (OIDC) for user authentication and Replit Connectors for Linear OAuth.
+*   **OpenRouter**: Primary AI service for the Dual-AI system, providing access to various LLMs via a single API key (requires `OPENROUTER_API_KEY`).
+*   **Anthropic AI**: Legacy AI service for Claude API (requires `ANTHROPIC_API_KEY`).
+*   **Linear**: Issue/project management API integrated via Replit Connectors.
 
 ### Database
 
-**Neon PostgreSQL**
-- Serverless PostgreSQL with WebSocket support
-- Requires DATABASE_URL environment variable
-- Connection pooling via @neondatabase/serverless
-- Session storage table required for authentication
+*   **Neon PostgreSQL**: Serverless PostgreSQL database (requires `DATABASE_URL`).
 
 ### UI Libraries
 
-**Core UI Framework**
-- @radix-ui/* components for accessible primitives (20+ component packages)
-- shadcn/ui configuration with "new-york" style preset
-- Tailwind CSS with custom design system variables
-- Inter font for UI, JetBrains Mono for code content
-
-**Supporting Libraries**
-- date-fns for date formatting
-- react-hook-form with zod resolvers for form validation
-- cmdk for command palette patterns
-- class-variance-authority for component variants
-- jspdf for PDF document generation
-- docx for Word document generation
+*   **@radix-ui/**: Accessible UI primitives.
+*   **shadcn/ui**: Component library built on Radix UI.
+*   **Tailwind CSS**: Utility-first CSS framework.
+*   **date-fns**: Date formatting utilities.
+*   **react-hook-form** & **zod**: Form validation.
+*   **jspdf**: PDF generation.
+*   **docx**: Word document generation.
 
 ### Development Tools
 
-**Type Safety & Validation**
-- TypeScript with strict mode enabled
-- Zod for runtime validation and schema inference
-- Drizzle Kit for database migrations and schema management
-
-**Build & Development**
-- Vite with React plugin
-- tsx for TypeScript execution in development
-- esbuild for production server bundling
-- PostCSS with Tailwind CSS and Autoprefixer
+*   **TypeScript**: For type safety.
+*   **Zod**: Runtime validation.
+*   **Drizzle Kit**: Database migrations.
+*   **Vite**: Build tool.

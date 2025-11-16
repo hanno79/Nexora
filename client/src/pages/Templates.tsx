@@ -6,10 +6,11 @@ import { Badge } from "@/components/ui/badge";
 import { TopBar } from "@/components/TopBar";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import type { Template } from "@shared/schema";
+import type { Template, User } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
+import { resolveLanguage } from "@/lib/i18n";
 
 const templateIcons: Record<string, any> = {
   feature: FileText,
@@ -27,15 +28,23 @@ export default function Templates() {
     queryKey: ["/api/templates"],
   });
 
+  const { data: user } = useQuery<User | null>({
+    queryKey: ["/api/auth/user"],
+  });
+
   const createPrdMutation = useMutation({
     mutationFn: async (templateId: string) => {
       const template = templates?.find(t => t.id === templateId);
+      // Use user's default content language or fallback to English
+      const contentLanguage = resolveLanguage(user?.defaultContentLanguage);
+      
       const res = await apiRequest("POST", "/api/prds", {
         title: "Untitled PRD",
         description: "",
         content: template?.content || "{}",
         templateId,
         status: "draft",
+        language: contentLanguage,
       });
       return await res.json();
     },

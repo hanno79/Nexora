@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Save, Check, Link2, Sun, Moon, Monitor, Brain, RefreshCw } from "lucide-react";
+import { Save, Check, Link2, Sun, Moon, Monitor, Brain, RefreshCw, Languages } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,16 +16,20 @@ import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/components/ThemeProvider";
+import { useTranslation } from "@/lib/i18n";
 
 export default function Settings() {
   const { user } = useAuth();
   const { toast } = useToast();
   const { theme, setTheme } = useTheme();
+  const { t } = useTranslation();
   
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
+  const [uiLanguage, setUiLanguage] = useState("auto");
+  const [defaultContentLanguage, setDefaultContentLanguage] = useState("auto");
   const [generatorModel, setGeneratorModel] = useState("openai/gpt-4o");
   const [reviewerModel, setReviewerModel] = useState("anthropic/claude-3.5-sonnet");
   const [aiTier, setAiTier] = useState<"development" | "production" | "premium">("production");
@@ -39,6 +43,8 @@ export default function Settings() {
       setLastName(user.lastName || "");
       setCompany(user.company || "");
       setRole(user.role || "");
+      setUiLanguage(user.uiLanguage || "auto");
+      setDefaultContentLanguage(user.defaultContentLanguage || "auto");
     }
   }, [user]);
 
@@ -99,6 +105,42 @@ export default function Settings() {
       toast({
         title: "Error",
         description: error.message || "Failed to update profile",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateLanguageSettingsMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("PATCH", "/api/settings/language", {
+        uiLanguage,
+        defaultContentLanguage,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+      toast({
+        title: t.settings.changesSaved,
+        description: t.settings.changesSaved,
+      });
+      // Reload to apply UI language change
+      setTimeout(() => window.location.reload(), 500);
+    },
+    onError: (error: Error) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/api/login";
+        }, 500);
+        return;
+      }
+      toast({
+        title: t.common.error,
+        description: error.message || t.settings.changesFailed,
         variant: "destructive",
       });
     },
@@ -294,6 +336,67 @@ export default function Settings() {
                   </div>
                 </RadioGroup>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Language Settings */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Languages className="w-5 h-5" />
+                {t.settings.language}
+              </CardTitle>
+              <CardDescription>
+                Configure interface and content languages separately
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="ui-language">{t.settings.uiLanguage}</Label>
+                  <Select value={uiLanguage} onValueChange={setUiLanguage}>
+                    <SelectTrigger id="ui-language" data-testid="select-ui-language">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">{t.languages.auto}</SelectItem>
+                      <SelectItem value="en">{t.languages.en}</SelectItem>
+                      <SelectItem value="de">{t.languages.de}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {t.settings.uiLanguageDesc}
+                  </p>
+                </div>
+
+                <Separator />
+
+                <div className="space-y-2">
+                  <Label htmlFor="content-language">{t.settings.contentLanguage}</Label>
+                  <Select value={defaultContentLanguage} onValueChange={setDefaultContentLanguage}>
+                    <SelectTrigger id="content-language" data-testid="select-content-language">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">{t.languages.auto}</SelectItem>
+                      <SelectItem value="en">{t.languages.en}</SelectItem>
+                      <SelectItem value="de">{t.languages.de}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {t.settings.contentLanguageDesc}
+                  </p>
+                </div>
+              </div>
+
+              <Button
+                onClick={() => updateLanguageSettingsMutation.mutate()}
+                disabled={updateLanguageSettingsMutation.isPending}
+                data-testid="button-save-language-settings"
+              >
+                <Save className="w-4 h-4 mr-2" />
+                {updateLanguageSettingsMutation.isPending ? "Saving..." : t.settings.saveChanges}
+              </Button>
             </CardContent>
           </Card>
 

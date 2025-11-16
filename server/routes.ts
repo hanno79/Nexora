@@ -104,6 +104,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Language Settings routes
+  app.patch('/api/settings/language', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      
+      // Validate language settings
+      const languageSchema = z.object({
+        uiLanguage: z.enum(['auto', 'en', 'de']).default('auto'),
+        defaultContentLanguage: z.enum(['auto', 'en', 'de']).default('auto'),
+      });
+      
+      const validated = languageSchema.parse(req.body);
+      
+      await db.update(users)
+        .set({ 
+          uiLanguage: validated.uiLanguage,
+          defaultContentLanguage: validated.defaultContentLanguage,
+          updatedAt: new Date()
+        })
+        .where(eq(users.id, userId));
+      
+      res.json(validated);
+    } catch (error: any) {
+      console.error("Error updating language settings:", error);
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid language settings. Supported values: 'auto', 'en', 'de'" });
+      }
+      res.status(500).json({ message: "Failed to update language settings" });
+    }
+  });
+
   // Dashboard routes
   app.get('/api/dashboard/stats', isAuthenticated, async (req: any, res) => {
     try {
