@@ -140,18 +140,59 @@ class OpenRouterClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
+        let errorData: any = {};
+        
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {
+          // If not JSON, use plain text
+          errorData = { message: errorText };
+        }
+        
+        // Handle specific error types with user-friendly messages
+        if (response.status === 401 || response.status === 403) {
+          throw new Error('OpenRouter API key is invalid or unauthorized. Please check your OPENROUTER_API_KEY in settings or get a new key at https://openrouter.ai/keys');
+        }
+        
+        if (response.status === 429) {
+          throw new Error('Rate limit exceeded. OpenRouter has temporarily limited your requests. Please wait a few minutes and try again, or upgrade your OpenRouter plan at https://openrouter.ai/settings/limits');
+        }
+        
+        if (response.status === 402 || errorText.includes('insufficient') || errorText.includes('credit')) {
+          throw new Error('Insufficient credits in your OpenRouter account. Please add credits at https://openrouter.ai/settings/credits or switch to a free model in Settings.');
+        }
+        
+        if (response.status === 400 && errorText.includes('max_tokens')) {
+          throw new Error(`The requested content is too long for model ${modelName}. Try splitting your PRD into smaller sections.`);
+        }
+        
+        if (response.status === 503 || response.status === 504) {
+          throw new Error(`Model ${modelName} is temporarily unavailable or overloaded. The system will automatically try a backup model.`);
+        }
+        
+        // Generic error with model name
+        throw new Error(`AI model error (${modelName}): ${errorData.message || errorText}. Status: ${response.status}`);
       }
 
       const data: OpenRouterResponse = await response.json();
       
+      if (!data.choices || !data.choices[0]?.message?.content) {
+        throw new Error(`Model ${modelName} returned an empty response. Please try again.`);
+      }
+      
       return {
-        content: data.choices[0]?.message?.content || '',
+        content: data.choices[0].message.content,
         usage: data.usage,
         model: data.model
       };
     } catch (error: any) {
       console.error(`Error calling ${modelName}:`, error.message);
+      
+      // Network errors
+      if (error.message.includes('fetch failed') || error.message.includes('ECONNREFUSED')) {
+        throw new Error('Cannot connect to OpenRouter API. Please check your internet connection and try again.');
+      }
+      
       throw error;
     }
   }

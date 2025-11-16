@@ -49,9 +49,36 @@ When generating content:
       return content.text;
     }
     
-    throw new Error('Unexpected response format from Claude');
+    throw new Error('Claude AI returned an unexpected response format. Please try again.');
   } catch (error: any) {
     console.error('Error generating PRD content:', error);
-    throw new Error(`Failed to generate PRD content: ${error.message}`);
+    
+    // Handle specific Anthropic API errors
+    if (error.status === 401 || error.message?.includes('authentication')) {
+      throw new Error('Anthropic API key is invalid. Please check your ANTHROPIC_API_KEY in environment variables or get a new key at https://console.anthropic.com/settings/keys');
+    }
+    
+    if (error.status === 429 || error.message?.includes('rate_limit')) {
+      throw new Error('Rate limit exceeded for Claude AI. Please wait a few minutes and try again, or upgrade your Anthropic plan at https://console.anthropic.com/settings/plans');
+    }
+    
+    if (error.status === 402 || error.message?.includes('credit') || error.message?.includes('billing')) {
+      throw new Error('Insufficient credits in your Anthropic account. Please add credits at https://console.anthropic.com/settings/billing or switch to OpenRouter models in Settings.');
+    }
+    
+    if (error.status === 400 && error.message?.includes('max_tokens')) {
+      throw new Error('The requested content is too long for Claude AI. Try splitting your PRD into smaller sections.');
+    }
+    
+    if (error.status === 503 || error.status === 504 || error.message?.includes('overload')) {
+      throw new Error('Claude AI is temporarily overloaded. Please try again in a few moments or switch to OpenRouter models in Settings.');
+    }
+    
+    if (error.message?.includes('fetch failed') || error.message?.includes('ECONNREFUSED')) {
+      throw new Error('Cannot connect to Anthropic API. Please check your internet connection and try again.');
+    }
+    
+    // Generic fallback with specific error info
+    throw new Error(`Failed to generate PRD content with Claude AI: ${error.message || 'Unknown error'}. Try using OpenRouter models in Settings for more reliability.`);
   }
 }

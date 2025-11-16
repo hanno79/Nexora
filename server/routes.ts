@@ -752,9 +752,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else {
         res.status(400).json({ message: "Unsupported export format" });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error exporting PRD:", error);
-      res.status(500).json({ message: "Failed to export PRD" });
+      
+      // Provide specific error messages based on export format
+      let errorMessage = "Failed to export PRD";
+      
+      if (format === 'pdf') {
+        errorMessage = `Failed to generate PDF: ${error.message || 'Unknown error'}. The content might be too large or contain unsupported characters.`;
+      } else if (format === 'word') {
+        errorMessage = `Failed to generate Word document: ${error.message || 'Unknown error'}. The content might be too large or contain unsupported formatting.`;
+      } else if (format === 'claudemd') {
+        errorMessage = `Failed to generate CLAUDE.md: ${error.message || 'Unknown error'}. Please ensure the PRD contains valid technical content.`;
+      } else if (format === 'markdown') {
+        errorMessage = `Failed to generate Markdown: ${error.message || 'Unknown error'}.`;
+      } else {
+        errorMessage = error.message || "Failed to export PRD";
+      }
+      
+      res.status(500).json({ message: errorMessage });
     }
   });
 
