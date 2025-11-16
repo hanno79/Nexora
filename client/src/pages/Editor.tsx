@@ -122,7 +122,7 @@ export default function Editor() {
       }
       toast({
         title: "Error",
-        description: "Failed to save PRD",
+        description: error.message || "Failed to save PRD",
         variant: "destructive",
       });
     },
@@ -165,7 +165,7 @@ export default function Editor() {
     }).catch((error) => {
       toast({
         title: "Error",
-        description: "Failed to save generated content",
+        description: error.message || "Failed to save generated content",
         variant: "destructive",
       });
       console.error('Failed to save Dual-AI content:', error);
@@ -253,8 +253,8 @@ export default function Editor() {
         return;
       }
       toast({
-        title: "Error",
-        description: "Failed to export PRD",
+        title: "Export Failed",
+        description: error.message || "Failed to export PRD",
         variant: "destructive",
       });
     },
@@ -287,8 +287,8 @@ export default function Editor() {
         return;
       }
       toast({
-        title: "Error",
-        description: "Failed to export to Linear",
+        title: "Linear Export Failed",
+        description: error.message || "Failed to export to Linear",
         variant: "destructive",
       });
     },

@@ -98,7 +98,7 @@ export default function Settings() {
       }
       toast({
         title: "Error",
-        description: "Failed to update profile",
+        description: error.message || "Failed to update profile",
         variant: "destructive",
       });
     },
@@ -136,7 +136,7 @@ export default function Settings() {
       }
       toast({
         title: "Error",
-        description: "Failed to update AI preferences",
+        description: error.message || "Failed to update AI preferences",
         variant: "destructive",
       });
     },
