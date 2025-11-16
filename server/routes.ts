@@ -5,6 +5,7 @@ import { setupAuth, isAuthenticated } from "./replitAuth";
 import { insertPrdSchema, users, aiPreferencesSchema } from "@shared/schema";
 import { generatePRDContent } from "./anthropic";
 import { exportToLinear, checkLinearConnection } from "./linearHelper";
+import { exportToDart, checkDartConnection } from "./dartHelper";
 import { generatePDF, generateWord } from "./exportUtils";
 import { generateClaudeMD } from "./claudemdGenerator";
 import { initializeTemplates } from "./initTemplates";
@@ -934,6 +935,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ connected });
     } catch (error) {
       console.error("Error checking Linear status:", error);
+      res.json({ connected: false });
+    }
+  });
+
+  // Dart AI integration routes
+  app.post('/api/dart/export', isAuthenticated, async (req: any, res) => {
+    try {
+      const { prdId, title, content } = req.body;
+      
+      if (!title || !prdId) {
+        return res.status(400).json({ message: "Title and PRD ID are required" });
+      }
+      
+      const result = await exportToDart(title, content || "");
+      
+      // Update PRD with Dart AI doc details
+      await storage.updatePrd(prdId, {
+        dartDocId: result.docId,
+        dartDocUrl: result.url,
+      });
+      
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error exporting to Dart AI:", error);
+      res.status(500).json({ message: error.message || "Failed to export to Dart AI" });
+    }
+  });
+
+  app.get('/api/dart/status', isAuthenticated, async (req: any, res) => {
+    try {
+      const connected = await checkDartConnection();
+      res.json({ connected });
+    } catch (error) {
+      console.error("Error checking Dart AI status:", error);
       res.json({ connected: false });
     }
   });
