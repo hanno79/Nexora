@@ -29,7 +29,25 @@ The platform also supports legacy Anthropic Claude AI integration (claude-sonnet
 
 ### Linear Integration
 
-Integration with Linear uses the @linear/sdk and Replit Connectors for OAuth-based authentication. It allows direct export of PRDs as Linear issues or projects, mapping PRD titles and descriptions.
+Integration with Linear uses the @linear/sdk and Replit Connectors for OAuth-based authentication. It allows direct export of PRDs as Linear issues or projects, mapping PRD titles and descriptions. Export mutations automatically invalidate TanStack Query cache to ensure UI reflects updated linkage metadata (linearIssueId, linearIssueUrl).
+
+### Dart AI Integration
+
+Integration with Dart AI enables direct export of PRDs as Dart AI documents for enhanced collaboration and documentation. The integration uses:
+
+*   **Authentication**: Bearer token authentication via `DART_AI_API_KEY` environment variable (stored in Replit Secrets).
+*   **API Client**: `server/dartHelper.ts` provides `exportToDart()`, `checkDartConnection()`, and `getDartDoc()` functions.
+*   **Backend Routes**: 
+    *   `POST /api/dart/export`: Exports PRD to Dart AI and persists `dartDocId` and `dartDocUrl` to the database.
+    *   `GET /api/dart/status`: Checks Dart AI connection status.
+*   **Frontend Integration**: 
+    *   Export button in Editor UI (desktop and mobile)
+    *   Connection status display in Settings page
+    *   All strings localized via `t.integrations.dart.*` (English/German)
+    *   Export mutations automatically invalidate TanStack Query cache to ensure UI reflects updated linkage metadata (dartDocId, dartDocUrl).
+*   **Database Fields**: PRDs table includes `dartDocId` (varchar) and `dartDocUrl` (varchar) fields for tracking exported documents.
+
+The Dart AI integration follows the same architectural pattern as Linear integration, ensuring consistency across external service integrations.
 
 ### Collaboration Features
 
@@ -59,6 +77,7 @@ Frontend errors are captured by `ErrorBoundary` and logged to the backend. The s
 *   **OpenRouter**: Primary AI service for the Dual-AI system, providing access to various LLMs via a single API key (requires `OPENROUTER_API_KEY`).
 *   **Anthropic AI**: Legacy AI service for Claude API (requires `ANTHROPIC_API_KEY`).
 *   **Linear**: Issue/project management API integrated via Replit Connectors.
+*   **Dart AI**: Collaboration and documentation platform integrated via Bearer token authentication (requires `DART_AI_API_KEY`).
 
 ### Database
 
