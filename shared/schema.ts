@@ -83,6 +83,7 @@ export const prds = pgTable("prds", {
   linearIssueUrl: varchar("linear_issue_url"), // Linear issue URL if exported
   dartDocId: varchar("dart_doc_id"), // Dart AI doc ID if exported
   dartDocUrl: varchar("dart_doc_url"), // Dart AI doc URL if exported
+  dartFolder: varchar("dart_folder"), // Dart AI folder/dartboard where doc is stored
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

@@ -100,8 +100,9 @@ async function dartApiRequest(
  */
 export async function exportToDart(
   title: string,
-  content: string
-): Promise<{ docId: string; url: string }> {
+  content: string,
+  folder?: string
+): Promise<{ docId: string; url: string; folder: string }> {
   try {
     // Create a new doc in Dart AI
     // Dart AI API requires an "item" wrapper object
@@ -109,7 +110,7 @@ export async function exportToDart(
       item: {
         title: title,
         text: content, // Dart AI uses 'text' field for markdown content
-        folder: 'General/Docs', // Default folder for NEXORA exports
+        folder: folder || 'General/Docs', // Use selected folder or default
       }
     };
 
@@ -119,6 +120,7 @@ export async function exportToDart(
     // Response format: { "item": { "id": "...", "htmlUrl": "...", ... } }
     const docId = response.item?.id;
     const htmlUrl = response.item?.htmlUrl;
+    const docFolder = response.item?.folder;
     
     if (!docId) {
       console.error('Dart API response:', response);
@@ -131,6 +133,7 @@ export async function exportToDart(
     return {
       docId,
       url,
+      folder: docFolder || folder || 'General/Docs',
     };
   } catch (error: any) {
     console.error('Error exporting to Dart AI:', error);
@@ -199,5 +202,28 @@ export async function getDartDoc(docId: string): Promise<any> {
   } catch (error: any) {
     console.error('Error fetching Dart AI doc:', error);
     throw new Error(`Failed to fetch Dart AI doc: ${error.message}`);
+  }
+}
+
+/**
+ * Get list of available Dartboards and Folders from Dart AI
+ * Returns dartboards and folders available in user's workspace
+ */
+export async function getDartboards(): Promise<{ dartboards: string[]; folders: string[] }> {
+  try {
+    // Get user config which includes available dartboards and folders
+    const response = await dartApiRequest('/config', 'GET');
+    
+    // Response format: { "dartboards": ["Space/Dartboard", ...], "folders": ["Space/Folder", ...], ... }
+    const dartboards = response.dartboards || [];
+    const folders = response.folders || [];
+    
+    return {
+      dartboards,
+      folders,
+    };
+  } catch (error: any) {
+    console.error('Error fetching Dart AI dartboards:', error);
+    throw new Error(`Failed to fetch Dart AI dartboards: ${error.message}`);
   }
 }

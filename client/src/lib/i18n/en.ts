@@ -172,6 +172,17 @@ export const en = {
       notConnected: "Not connected",
       configure: "Configure",
       helpText: "Add DART_AI_API_KEY to your Replit Secrets to enable Dart AI integration.",
+      exportDialog: {
+        title: "Export to Dart AI",
+        description: "Select where to save this PRD in Dart AI",
+        selectFolder: "Select Folder/Dartboard",
+        selectPlaceholder: "Choose a folder...",
+        noFoldersFound: "No folders found",
+        createHint: "If your project doesn't appear in the list, please create a new Space or Folder in Dart AI first.",
+        exporting: "Exporting...",
+        exportButton: "Export to Dart AI",
+        loadingFolders: "Loading folders...",
+      },
     },
   },
 };

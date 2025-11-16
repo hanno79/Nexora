@@ -5,7 +5,7 @@ import { setupAuth, isAuthenticated } from "./replitAuth";
 import { insertPrdSchema, users, aiPreferencesSchema } from "@shared/schema";
 import { generatePRDContent } from "./anthropic";
 import { exportToLinear, checkLinearConnection } from "./linearHelper";
-import { exportToDart, checkDartConnection } from "./dartHelper";
+import { exportToDart, checkDartConnection, getDartboards } from "./dartHelper";
 import { generatePDF, generateWord } from "./exportUtils";
 import { generateClaudeMD } from "./claudemdGenerator";
 import { initializeTemplates } from "./initTemplates";
@@ -940,20 +940,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Dart AI integration routes
+  app.get('/api/dart/dartboards', isAuthenticated, async (req: any, res) => {
+    try {
+      const result = await getDartboards();
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error fetching Dart AI dartboards:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch Dart AI dartboards" });
+    }
+  });
+
   app.post('/api/dart/export', isAuthenticated, async (req: any, res) => {
     try {
-      const { prdId, title, content } = req.body;
+      const { prdId, title, content, folder } = req.body;
       
       if (!title || !prdId) {
         return res.status(400).json({ message: "Title and PRD ID are required" });
       }
       
-      const result = await exportToDart(title, content || "");
+      const result = await exportToDart(title, content || "", folder);
       
       // Update PRD with Dart AI doc details
       await storage.updatePrd(prdId, {
         dartDocId: result.docId,
         dartDocUrl: result.url,
+        dartFolder: result.folder,
       });
       
       res.json(result);
