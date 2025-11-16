@@ -104,27 +104,29 @@ export async function exportToDart(
 ): Promise<{ docId: string; url: string }> {
   try {
     // Create a new doc in Dart AI
-    // According to API docs: POST /docs creates a new doc
+    // Dart AI API requires an "item" wrapper object
     const payload = {
-      data: {
+      item: {
         title: title,
         text: content, // Dart AI uses 'text' field for markdown content
+        folder: 'General/Docs', // Default folder for NEXORA exports
       }
     };
 
     const response = await dartApiRequest('/docs', 'POST', payload);
     
-    // Extract doc ID and construct URL
-    const docId = response.data?.duid || response.data?.id;
+    // Extract doc ID from response
+    // Response format: { "item": { "id": "...", "htmlUrl": "...", ... } }
+    const docId = response.item?.id;
+    const htmlUrl = response.item?.htmlUrl;
     
     if (!docId) {
       console.error('Dart API response:', response);
       throw new Error('Dart AI did not return a doc ID. Response may have changed.');
     }
 
-    // Construct the doc URL
-    // Based on Dart AI's URL pattern: https://app.dartai.com/doc/<docId>
-    const url = `https://app.dartai.com/doc/${docId}`;
+    // Use the htmlUrl from response or construct fallback
+    const url = htmlUrl || `https://app.dartai.com/o/${docId}`;
 
     return {
       docId,
@@ -179,16 +181,18 @@ export async function getDartDoc(docId: string): Promise<any> {
   try {
     const response = await dartApiRequest(`/docs/${docId}`, 'GET');
     
-    const doc = response.data;
+    // Response format: { "item": { "id": "...", "title": "...", "text": "...", ... } }
+    const doc = response.item;
     if (!doc) {
       throw new Error(`Doc ${docId} not found`);
     }
 
     return {
-      id: doc.duid || doc.id,
+      id: doc.id,
       title: doc.title,
       text: doc.text,
-      url: `https://app.dartai.com/doc/${doc.duid || doc.id}`,
+      url: doc.htmlUrl || `https://app.dartai.com/o/${doc.id}`,
+      folder: doc.folder,
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
     };

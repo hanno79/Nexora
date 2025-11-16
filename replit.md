@@ -36,7 +36,10 @@ Integration with Linear uses the @linear/sdk and Replit Connectors for OAuth-bas
 Integration with Dart AI enables direct export of PRDs as Dart AI documents for enhanced collaboration and documentation. The integration uses:
 
 *   **Authentication**: Bearer token authentication via `DART_AI_API_KEY` environment variable (stored in Replit Secrets).
+    *   Header format: `Authorization: Bearer ${token}` (required despite `dsa_` token prefix)
 *   **API Client**: `server/dartHelper.ts` provides `exportToDart()`, `checkDartConnection()`, and `getDartDoc()` functions.
+    *   Request format: `{ item: { title, text, folder } }` (uses `item` wrapper object)
+    *   Response format: `{ item: { id, htmlUrl, title, folder, text } }`
 *   **Backend Routes**: 
     *   `POST /api/dart/export`: Exports PRD to Dart AI and persists `dartDocId` and `dartDocUrl` to the database.
     *   `GET /api/dart/status`: Checks Dart AI connection status.
@@ -46,6 +49,7 @@ Integration with Dart AI enables direct export of PRDs as Dart AI documents for 
     *   All strings localized via `t.integrations.dart.*` (English/German)
     *   Export mutations automatically invalidate TanStack Query cache to ensure UI reflects updated linkage metadata (dartDocId, dartDocUrl).
 *   **Database Fields**: PRDs table includes `dartDocId` (varchar) and `dartDocUrl` (varchar) fields for tracking exported documents.
+*   **Status**: ✅ Fully functional and tested (E2E verified November 16, 2025)
 
 The Dart AI integration follows the same architectural pattern as Linear integration, ensuring consistency across external service integrations.
 
