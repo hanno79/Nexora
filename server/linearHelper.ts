@@ -75,7 +75,22 @@ export async function exportToLinear(title: string, description: string): Promis
     };
   } catch (error: any) {
     console.error('Error exporting to Linear:', error);
-    throw new Error(`Failed to export to Linear: ${error.message}`);
+    
+    // Handle specific Linear error types
+    if (error.type === 'UsageLimitExceeded' || error.message?.includes('usage limit exceeded')) {
+      throw new Error('Linear workspace has reached the free issue limit. Please upgrade your Linear plan or contact sales@linear.app for a trial.');
+    }
+    
+    if (error.message?.includes('authentication') || error.message?.includes('unauthorized')) {
+      throw new Error('Linear authentication failed. Please reconnect your Linear account.');
+    }
+    
+    if (error.message?.includes('team')) {
+      throw new Error('No Linear team found. Please create a team in Linear first.');
+    }
+    
+    // Generic error fallback
+    throw new Error(`Failed to export to Linear: ${error.message || 'Unknown error'}`);
   }
 }
 
