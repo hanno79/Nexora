@@ -752,9 +752,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Export routes
   app.post('/api/prds/:id/export', isAuthenticated, async (req: any, res) => {
+    const { format } = req.body;
     try {
       const { id } = req.params;
-      const { format } = req.body;
       const prd = await storage.getPrd(id);
       
       if (!prd) {

@@ -24,6 +24,7 @@ import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { VersionHistory } from "@/components/VersionHistory";
 import { SharePRDDialog } from "@/components/SharePRDDialog";
 import { DualAiDialog } from "@/components/DualAiDialog";
+import { DartExportDialog } from "@/components/DartExportDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import {
@@ -59,6 +60,7 @@ export default function Editor() {
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [showDualAiDialog, setShowDualAiDialog] = useState(false);
+  const [showDartExportDialog, setShowDartExportDialog] = useState(false);
   const [showMobileSheet, setShowMobileSheet] = useState(false);
   const [mobileSheetTab, setMobileSheetTab] = useState<"comments" | "versions">("comments");
 
@@ -298,43 +300,7 @@ export default function Editor() {
     },
   });
 
-  const dartExportMutation = useMutation({
-    mutationFn: async () => {
-      return await apiRequest("POST", "/api/dart/export", {
-        prdId,
-        title,
-        content,
-      });
-    },
-    onSuccess: () => {
-      // Invalidate PRD queries to refresh the UI with updated dartDocId/dartDocUrl
-      queryClient.invalidateQueries({ queryKey: ["/api/prds"] });
-      queryClient.invalidateQueries({ queryKey: [`/api/prds/${prdId}`] });
-      
-      toast({
-        title: "Success",
-        description: "Exported to Dart AI successfully",
-      });
-    },
-    onError: (error: Error) => {
-      if (isUnauthorizedError(error)) {
-        toast({
-          title: "Unauthorized",
-          description: "You are logged out. Logging in again...",
-          variant: "destructive",
-        });
-        setTimeout(() => {
-          window.location.href = "/api/login";
-        }, 500);
-        return;
-      }
-      toast({
-        title: "Dart AI Export Failed",
-        description: error.message || "Failed to export to Dart AI",
-        variant: "destructive",
-      });
-    },
-  });
+  // Dart Export is now handled by DartExportDialog component
 
   if (isLoading) {
     return (
@@ -465,7 +431,7 @@ export default function Editor() {
                     <Send className="w-4 h-4 mr-2" />
                     Export to Linear
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => dartExportMutation.mutate()} data-testid="menu-export-dart">
+                  <DropdownMenuItem onClick={() => setShowDartExportDialog(true)} data-testid="menu-export-dart">
                     <Send className="w-4 h-4 mr-2" />
                     Export to Dart AI
                   </DropdownMenuItem>
@@ -499,7 +465,7 @@ export default function Editor() {
                     <Send className="w-4 h-4 mr-2" />
                     Export to Linear
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => dartExportMutation.mutate()} data-testid="menu-export-dart-mobile">
+                  <DropdownMenuItem onClick={() => setShowDartExportDialog(true)} data-testid="menu-export-dart-mobile">
                     <Send className="w-4 h-4 mr-2" />
                     Export to Dart AI
                   </DropdownMenuItem>
@@ -648,6 +614,14 @@ export default function Editor() {
             onOpenChange={setShowDualAiDialog}
             currentContent={content}
             onContentGenerated={handleDualAiContentGenerated}
+          />
+          
+          <DartExportDialog
+            open={showDartExportDialog}
+            onOpenChange={setShowDartExportDialog}
+            prdId={prdId}
+            title={title}
+            content={content}
           />
           
           {/* Mobile Comments/Versions Sheet */}
