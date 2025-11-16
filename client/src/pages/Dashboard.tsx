@@ -14,6 +14,7 @@ import type { Prd } from "@shared/schema";
 import { formatDistance } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
+import { useTranslation } from "@/lib/i18n";
 
 interface DashboardStats {
   totalPrds: number;
@@ -28,6 +29,7 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showOnboarding, setShowOnboarding] = useState(false);
   const { toast } = useToast();
+  const { t } = useTranslation();
 
   // Check if user has completed onboarding
   useEffect(() => {
@@ -74,7 +76,7 @@ export default function Dashboard() {
         {/* Header */}
         <div className="flex items-center justify-between mb-6 sm:mb-8 gap-3">
           <div className="min-w-0 flex-1">
-            <h1 className="text-2xl sm:text-3xl font-semibold mb-1 sm:mb-2">Dashboard</h1>
+            <h1 className="text-2xl sm:text-3xl font-semibold mb-1 sm:mb-2">{t.dashboard.title}</h1>
             <p className="text-sm sm:text-base text-muted-foreground">
               Overview of your product requirement documents
             </p>
@@ -85,7 +87,7 @@ export default function Dashboard() {
             data-testid="button-new-prd"
           >
             <Plus className="w-4 h-4" />
-            New PRD
+            {t.dashboard.newPrd}
           </Button>
           <Button 
             onClick={() => navigate("/templates")}
@@ -115,7 +117,7 @@ export default function Dashboard() {
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Total PRDs
+                    {t.dashboard.totalPrds}
                   </CardTitle>
                   <FileText className="w-4 h-4 text-muted-foreground" />
                 </div>
@@ -131,7 +133,7 @@ export default function Dashboard() {
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-medium text-muted-foreground">
-                    In Progress
+                    {t.dashboard.inProgress}
                   </CardTitle>
                   <Clock className="w-4 h-4 text-blue-600" />
                 </div>
@@ -147,7 +149,7 @@ export default function Dashboard() {
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Completed
+                    {t.dashboard.completed}
                   </CardTitle>
                   <CheckCircle2 className="w-4 h-4 text-green-600" />
                 </div>
@@ -201,9 +203,9 @@ export default function Dashboard() {
           ) : (
             <EmptyState
               icon={FileText}
-              title="No PRDs yet"
-              description="Create your first Product Requirement Document to get started"
-              actionLabel="Create PRD"
+              title={t.dashboard.noPrds}
+              description={t.dashboard.createFirst}
+              actionLabel={t.dashboard.newPrd}
               onAction={() => navigate("/templates")}
             />
           )
@@ -232,7 +234,7 @@ export default function Dashboard() {
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <FileText className="w-4 h-4" />
                     <span>
-                      Updated {formatDistance(new Date(prd.updatedAt!), new Date(), { addSuffix: true })}
+                      {t.dashboard.updated} {formatDistance(new Date(prd.updatedAt!), new Date(), { addSuffix: true })}
                     </span>
                   </div>
                 </CardHeader>
