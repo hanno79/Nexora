@@ -42,7 +42,7 @@ export function DartExportDialog({
   const { t } = useTranslation();
   const [selectedFolder, setSelectedFolder] = useState<string>("");
 
-  const { data: dartboards, isLoading: loadingDartboards } = useQuery<{
+  const { data: dartboards, isLoading: loadingDartboards, isError: dartboardsError } = useQuery<{
     dartboards: string[];
     folders: string[];
   }>({
@@ -117,6 +117,13 @@ export function DartExportDialog({
                 {t.integrations.dart.exportDialog.loadingFolders}
               </span>
             </div>
+          ) : dartboardsError ? (
+            <Alert variant="destructive">
+              <Info className="w-4 h-4" />
+              <AlertDescription className="text-sm">
+                {t.errors.loadFailed}. {t.integrations.dart.helpText}
+              </AlertDescription>
+            </Alert>
           ) : (
             <>
               <div className="space-y-2">
