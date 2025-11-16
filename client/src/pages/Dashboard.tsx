@@ -78,7 +78,7 @@ export default function Dashboard() {
           <div className="min-w-0 flex-1">
             <h1 className="text-2xl sm:text-3xl font-semibold mb-1 sm:mb-2">{t.dashboard.title}</h1>
             <p className="text-sm sm:text-base text-muted-foreground">
-              Overview of your product requirement documents
+              {t.dashboard.subtitle}
             </p>
           </div>
           <Button 
@@ -165,7 +165,7 @@ export default function Dashboard() {
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Exported to Linear
+                    {t.dashboard.exportedToLinear}
                   </CardTitle>
                   <Send className="w-4 h-4 text-purple-600" />
                 </div>
@@ -182,11 +182,11 @@ export default function Dashboard() {
         {/* Filters */}
         <Tabs value={statusFilter} onValueChange={setStatusFilter} className="mb-8">
           <TabsList>
-            <TabsTrigger value="all" data-testid="tab-all">All</TabsTrigger>
-            <TabsTrigger value="draft" data-testid="tab-draft">Draft</TabsTrigger>
-            <TabsTrigger value="in-progress" data-testid="tab-in-progress">In Progress</TabsTrigger>
-            <TabsTrigger value="review" data-testid="tab-review">Review</TabsTrigger>
-            <TabsTrigger value="completed" data-testid="tab-completed">Completed</TabsTrigger>
+            <TabsTrigger value="all" data-testid="tab-all">{t.dashboard.filters.all}</TabsTrigger>
+            <TabsTrigger value="draft" data-testid="tab-draft">{t.dashboard.filters.draft}</TabsTrigger>
+            <TabsTrigger value="in-progress" data-testid="tab-in-progress">{t.dashboard.filters.inProgress}</TabsTrigger>
+            <TabsTrigger value="review" data-testid="tab-review">{t.dashboard.filters.review}</TabsTrigger>
+            <TabsTrigger value="completed" data-testid="tab-completed">{t.dashboard.filters.completed}</TabsTrigger>
           </TabsList>
         </Tabs>
 
@@ -197,8 +197,8 @@ export default function Dashboard() {
           searchQuery || statusFilter !== "all" ? (
             <EmptyState
               icon={SearchIcon}
-              title="No PRDs found"
-              description="Try adjusting your filters or search query"
+              title={t.dashboard.noPrdsFound}
+              description={t.dashboard.adjustFilters}
             />
           ) : (
             <EmptyState

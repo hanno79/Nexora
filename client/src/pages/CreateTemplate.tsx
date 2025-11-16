@@ -11,6 +11,7 @@ import { Card } from "@/components/ui/card";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
+import { useTranslation } from "@/lib/i18n";
 
 interface Section {
   id: string;
@@ -21,6 +22,7 @@ interface Section {
 export default function CreateTemplate() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { t } = useTranslation();
   
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -31,8 +33,8 @@ export default function CreateTemplate() {
   const addSection = () => {
     const newSection: Section = {
       id: Date.now().toString(),
-      title: "New Section",
-      content: "Section content...",
+      title: t.templates.create.sectionTitlePlaceholder,
+      content: t.templates.create.sectionContentPlaceholder,
     };
     setSections([...sections, newSection]);
   };
@@ -59,7 +61,7 @@ export default function CreateTemplate() {
   const saveTemplateMutation = useMutation({
     mutationFn: async () => {
       if (!name.trim()) {
-        throw new Error("Template name is required");
+        throw new Error(t.templates.create.nameRequired);
       }
       
       const content = JSON.stringify({
@@ -79,8 +81,8 @@ export default function CreateTemplate() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/templates"] });
       toast({
-        title: "Success",
-        description: "Template created successfully",
+        title: t.common.success,
+        description: t.templates.create.success,
       });
       navigate("/templates");
     },
@@ -97,8 +99,8 @@ export default function CreateTemplate() {
         return;
       }
       toast({
-        title: "Error",
-        description: error.message || "Failed to create template",
+        title: t.common.error,
+        description: error.message || t.templates.create.error,
         variant: "destructive",
       });
     },
@@ -120,9 +122,9 @@ export default function CreateTemplate() {
             <ArrowLeft className="w-4 h-4" />
           </Button>
           <div className="flex-1">
-            <h1 className="text-3xl font-semibold">Create Custom Template</h1>
+            <h1 className="text-3xl font-semibold">{t.templates.create.title}</h1>
             <p className="text-muted-foreground mt-1">
-              Design your own PRD template with custom sections
+              {t.templates.create.subtitle}
             </p>
           </div>
           <Button
@@ -131,7 +133,7 @@ export default function CreateTemplate() {
             data-testid="button-save-template"
           >
             <Save className="w-4 h-4 mr-2" />
-            {saveTemplateMutation.isPending ? "Saving..." : "Save Template"}
+            {saveTemplateMutation.isPending ? t.templates.create.saving : t.templates.create.save}
           </Button>
         </div>
 
@@ -139,10 +141,10 @@ export default function CreateTemplate() {
           {/* Template Details */}
           <Card className="p-6 space-y-4">
             <div>
-              <Label htmlFor="templateName">Template Name *</Label>
+              <Label htmlFor="templateName">{t.templates.create.nameLabel}</Label>
               <Input
                 id="templateName"
-                placeholder="e.g., Mobile App Feature PRD"
+                placeholder={t.templates.create.namePlaceholder}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 data-testid="input-template-name"
@@ -151,10 +153,10 @@ export default function CreateTemplate() {
             </div>
 
             <div>
-              <Label htmlFor="templateDescription">Description</Label>
+              <Label htmlFor="templateDescription">{t.templates.create.descriptionLabel}</Label>
               <Textarea
                 id="templateDescription"
-                placeholder="Brief description of when to use this template"
+                placeholder={t.templates.create.descriptionPlaceholder}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 data-testid="input-template-description"
@@ -167,7 +169,7 @@ export default function CreateTemplate() {
           {/* Sections */}
           <div>
             <div className="flex items-center justify-between mb-4">
-              <Label className="text-base font-semibold">Template Sections</Label>
+              <Label className="text-base font-semibold">{t.templates.create.sectionsTitle}</Label>
               <Button
                 variant="outline"
                 size="sm"
@@ -175,7 +177,7 @@ export default function CreateTemplate() {
                 data-testid="button-add-section"
               >
                 <Plus className="w-4 h-4 mr-2" />
-                Add Section
+                {t.templates.create.addSection}
               </Button>
             </div>
 
@@ -208,13 +210,13 @@ export default function CreateTemplate() {
 
                     <div className="flex-1 space-y-3">
                       <Input
-                        placeholder="Section Title"
+                        placeholder={t.templates.create.sectionTitlePlaceholder}
                         value={section.title}
                         onChange={(e) => updateSection(section.id, 'title', e.target.value)}
                         data-testid={`input-section-title-${section.id}`}
                       />
                       <Textarea
-                        placeholder="Default section content or instructions..."
+                        placeholder={t.templates.create.sectionContentPlaceholder}
                         value={section.content}
                         onChange={(e) => updateSection(section.id, 'content', e.target.value)}
                         data-testid={`input-section-content-${section.id}`}
@@ -240,12 +242,12 @@ export default function CreateTemplate() {
 
           {/* Help Text */}
           <div className="text-sm text-muted-foreground bg-muted p-4 rounded-lg">
-            <p className="font-medium mb-2">Tips for creating templates:</p>
+            <p className="font-medium mb-2">{t.templates.create.tipsTitle}</p>
             <ul className="list-disc list-inside space-y-1">
-              <li>Add sections that reflect your team's PRD structure</li>
-              <li>Provide helpful placeholder content or instructions</li>
-              <li>Reorder sections by using the grip icons</li>
-              <li>Templates are private - only you can see and use them</li>
+              <li>{t.templates.create.tip1}</li>
+              <li>{t.templates.create.tip2}</li>
+              <li>{t.templates.create.tip3}</li>
+              <li>{t.templates.create.tip4}</li>
             </ul>
           </div>
         </div>
