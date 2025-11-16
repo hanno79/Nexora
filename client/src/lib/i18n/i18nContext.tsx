@@ -2,8 +2,7 @@ import { createContext, useContext, useState, useEffect, ReactNode } from 'react
 import { en, Translations } from './en';
 import { de } from './de';
 import { resolveLanguage } from './languageDetector';
-import { useQuery } from '@tanstack/react-query';
-import type { User } from '@shared/schema';
+import { useAuth } from '@/hooks/useAuth';
 
 const translations: Record<string, Translations> = {
   en,
@@ -20,13 +19,7 @@ const I18nContext = createContext<I18nContextType | undefined>(undefined);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [language, setLanguageState] = useState<string>(() => resolveLanguage('auto'));
-  
-  // Fetch user to get their preferred UI language (only if authenticated)
-  const { data: user } = useQuery<User | null>({
-    queryKey: ['/api/auth/user'],
-    retry: false,
-    enabled: false, // Don't auto-fetch, will be triggered by auth state
-  });
+  const { user } = useAuth();
   
   // Update language when user data loads or changes
   useEffect(() => {
