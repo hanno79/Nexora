@@ -587,7 +587,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(result);
     } catch (error: any) {
       console.error("Error in Dual-AI generation:", error);
-      res.status(500).json({ message: error.message || "Failed to generate with Dual-AI" });
+      
+      // Pass through the detailed error message from OpenRouter/AI services
+      const errorMessage = error.message || "Failed to generate PRD with AI. Please try again or check your API settings.";
+      res.status(500).json({ message: errorMessage });
     }
   });
 
@@ -623,7 +626,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(review);
     } catch (error: any) {
       console.error("Error in AI review:", error);
-      res.status(500).json({ message: error.message || "Failed to review content" });
+      
+      // Pass through the detailed error message from AI services
+      const errorMessage = error.message || "Failed to review PRD content. Please try again or check your API settings.";
+      res.status(500).json({ message: errorMessage });
     }
   });
 
@@ -704,7 +710,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(result);
     } catch (error: any) {
       console.error("Error in iterative AI generation:", error);
-      res.status(500).json({ message: error.message || "Failed to generate with iterative AI" });
+      
+      // Pass through the detailed error message from AI services
+      const errorMessage = error.message || "Failed to generate PRD with iterative AI workflow. Please try again or check your API settings.";
+      res.status(500).json({ message: errorMessage });
     }
   });
 
