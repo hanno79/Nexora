@@ -153,6 +153,27 @@ export const en = {
     exportFailed: "Export failed",
     generateFailed: "AI generation failed",
   },
+
+  integrations: {
+    linear: {
+      title: "Linear Integration",
+      description: "Connect your Linear workspace to export PRDs as issues",
+      workspace: "Linear Workspace",
+      connected: "Connected",
+      notConnected: "Not connected",
+      configure: "Configure",
+      helpText: "Linear integration is pre-configured. You can export PRDs directly from the editor.",
+    },
+    dart: {
+      title: "Dart AI Integration",
+      description: "Connect Dart AI to export PRDs as intelligent docs",
+      workspace: "Dart AI Workspace",
+      connected: "Connected",
+      notConnected: "Not connected",
+      configure: "Configure",
+      helpText: "Add DART_AI_API_KEY to your Replit Secrets to enable Dart AI integration.",
+    },
+  },
 };
 
 export type Translations = typeof en;

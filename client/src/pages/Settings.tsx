@@ -551,9 +551,9 @@ export default function Settings() {
           {/* Linear Integration */}
           <Card>
             <CardHeader>
-              <CardTitle>Linear Integration</CardTitle>
+              <CardTitle>{t.integrations.linear.title}</CardTitle>
               <CardDescription>
-                Connect your Linear workspace to export PRDs as issues
+                {t.integrations.linear.description}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -563,25 +563,25 @@ export default function Settings() {
                     <Link2 className="w-5 h-5 text-primary" />
                   </div>
                   <div>
-                    <p className="font-medium">Linear Workspace</p>
+                    <p className="font-medium">{t.integrations.linear.workspace}</p>
                     <p className="text-sm text-muted-foreground">
-                      {linearStatus?.connected ? "Connected" : "Not connected"}
+                      {linearStatus?.connected ? t.integrations.linear.connected : t.integrations.linear.notConnected}
                     </p>
                   </div>
                 </div>
                 {linearStatus?.connected ? (
                   <div className="flex items-center gap-2 text-green-600 dark:text-green-500">
                     <Check className="w-5 h-5" />
-                    <span className="text-sm font-medium">Connected</span>
+                    <span className="text-sm font-medium">{t.integrations.linear.connected}</span>
                   </div>
                 ) : (
                   <Button variant="outline" size="sm" disabled data-testid="button-connect-linear">
-                    Configure
+                    {t.integrations.linear.configure}
                   </Button>
                 )}
               </div>
               <p className="text-xs text-muted-foreground">
-                Linear integration is pre-configured. You can export PRDs directly from the editor.
+                {t.integrations.linear.helpText}
               </p>
             </CardContent>
           </Card>
@@ -589,9 +589,9 @@ export default function Settings() {
           {/* Dart AI Integration */}
           <Card>
             <CardHeader>
-              <CardTitle>Dart AI Integration</CardTitle>
+              <CardTitle>{t.integrations.dart.title}</CardTitle>
               <CardDescription>
-                Connect Dart AI to export PRDs as intelligent docs
+                {t.integrations.dart.description}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -601,25 +601,25 @@ export default function Settings() {
                     <Brain className="w-5 h-5 text-primary" />
                   </div>
                   <div>
-                    <p className="font-medium">Dart AI Workspace</p>
+                    <p className="font-medium">{t.integrations.dart.workspace}</p>
                     <p className="text-sm text-muted-foreground">
-                      {dartStatus?.connected ? "Connected" : "Not connected"}
+                      {dartStatus?.connected ? t.integrations.dart.connected : t.integrations.dart.notConnected}
                     </p>
                   </div>
                 </div>
                 {dartStatus?.connected ? (
                   <div className="flex items-center gap-2 text-green-600 dark:text-green-500">
                     <Check className="w-5 h-5" />
-                    <span className="text-sm font-medium">Connected</span>
+                    <span className="text-sm font-medium">{t.integrations.dart.connected}</span>
                   </div>
                 ) : (
                   <Button variant="outline" size="sm" disabled data-testid="button-connect-dart">
-                    Configure
+                    {t.integrations.dart.configure}
                   </Button>
                 )}
               </div>
               <p className="text-xs text-muted-foreground">
-                Add DART_AI_API_KEY to your Replit Secrets to enable Dart AI integration.
+                {t.integrations.dart.helpText}
               </p>
             </CardContent>
           </Card>

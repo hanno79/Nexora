@@ -155,4 +155,25 @@ export const de: Translations = {
     exportFailed: "Export fehlgeschlagen",
     generateFailed: "KI-Generierung fehlgeschlagen",
   },
+
+  integrations: {
+    linear: {
+      title: "Linear-Integration",
+      description: "Verbinden Sie Ihren Linear-Workspace, um PRDs als Issues zu exportieren",
+      workspace: "Linear-Workspace",
+      connected: "Verbunden",
+      notConnected: "Nicht verbunden",
+      configure: "Konfigurieren",
+      helpText: "Die Linear-Integration ist vorkonfiguriert. Sie können PRDs direkt aus dem Editor exportieren.",
+    },
+    dart: {
+      title: "Dart AI-Integration",
+      description: "Verbinden Sie Dart AI, um PRDs als intelligente Dokumente zu exportieren",
+      workspace: "Dart AI-Workspace",
+      connected: "Verbunden",
+      notConnected: "Nicht verbunden",
+      configure: "Konfigurieren",
+      helpText: "Fügen Sie DART_AI_API_KEY zu Ihren Replit Secrets hinzu, um die Dart AI-Integration zu aktivieren.",
+    },
+  },
 };

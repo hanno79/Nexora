@@ -269,6 +269,10 @@ export default function Editor() {
       });
     },
     onSuccess: () => {
+      // Invalidate PRD queries to refresh the UI with updated linearIssueId/linearIssueUrl
+      queryClient.invalidateQueries({ queryKey: ["/api/prds"] });
+      queryClient.invalidateQueries({ queryKey: [`/api/prds/${prdId}`] });
+      
       toast({
         title: "Success",
         description: "Exported to Linear successfully",
@@ -303,6 +307,10 @@ export default function Editor() {
       });
     },
     onSuccess: () => {
+      // Invalidate PRD queries to refresh the UI with updated dartDocId/dartDocUrl
+      queryClient.invalidateQueries({ queryKey: ["/api/prds"] });
+      queryClient.invalidateQueries({ queryKey: [`/api/prds/${prdId}`] });
+      
       toast({
         title: "Success",
         description: "Exported to Dart AI successfully",
