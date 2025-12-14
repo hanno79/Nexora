@@ -929,12 +929,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Version not found" });
       }
       
-      // Restore complete state from version
+      // Use the current version count as the version number
+      // (restoring doesn't create a new version, it just updates the current PRD)
+      const currentVersionNumber = versions.length > 0 ? `v${versions.length}` : null;
+      const status = version.status as 'draft' | 'in-progress' | 'review' | 'pending-approval' | 'approved' | 'completed';
+      
+      // Sync the header metadata in the restored content with the current version number
+      const syncedContent = syncPrdHeaderMetadata(
+        version.content,
+        currentVersionNumber,
+        status
+      );
+      
+      // Restore complete state from version (with synced header)
       const updatedPrd = await storage.updatePrd(prdId, {
         title: version.title,
         description: version.description,
-        content: version.content,
-        status: version.status as 'draft' | 'in-progress' | 'review' | 'pending-approval' | 'approved' | 'completed',
+        content: syncedContent,
+        status: status,
       });
       
       res.json(updatedPrd);
