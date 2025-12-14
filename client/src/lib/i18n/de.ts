@@ -180,7 +180,7 @@ export const de: Translations = {
         selectFolder: "Ordner auswählen",
         selectPlaceholder: "Ordner wählen...",
         noFoldersFound: "Keine Ordner gefunden",
-        createHint: "💡 Tipp: PRDs werden in Ordnern gespeichert. Erstellen Sie Ordner in Dart AI (wie 'NEXORA/Docs' oder 'NEXORA/PRDs'), dann erscheinen sie hier. Organisieren Sie Ordner unter Ihren Dartboards für die beste Struktur!",
+        createHint: "💡 Tipp: PRDs werden in Ordnern gespeichert. Erstellen Sie einen Ordner in Dart AI (wie '{projectName}/Docs'), dann erscheint er hier.",
         exporting: "Exportiere...",
         exportButton: "Nach Dart AI exportieren",
         loadingFolders: "Lade Ordner...",

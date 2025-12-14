@@ -155,7 +155,7 @@ export function DartExportDialog({
               <Alert>
                 <Info className="w-4 h-4" />
                 <AlertDescription className="text-sm">
-                  {t.integrations.dart.exportDialog.createHint}
+                  {t.integrations.dart.exportDialog.createHint.replace('{projectName}', title || 'MyProject')}
                 </AlertDescription>
               </Alert>
             </>

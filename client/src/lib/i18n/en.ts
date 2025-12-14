@@ -178,7 +178,7 @@ export const en = {
         selectFolder: "Select Folder",
         selectPlaceholder: "Choose a folder...",
         noFoldersFound: "No folders found",
-        createHint: "💡 Tip: PRDs are saved in Folders. Create folders in Dart AI (like 'NEXORA/Docs' or 'NEXORA/PRDs'), then they'll appear here. Organize folders under your Dartboards for best structure!",
+        createHint: "💡 Tip: PRDs are saved in Folders. Create a folder in Dart AI (like '{projectName}/Docs'), then it will appear here.",
         exporting: "Exporting...",
         exportButton: "Export to Dart AI",
         loadingFolders: "Loading folders...",
