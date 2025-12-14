@@ -392,6 +392,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.delete('/api/prds/:id/versions/:versionId', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id, versionId } = req.params;
+      const userId = req.user.claims.sub;
+      
+      const prd = await storage.getPrd(id);
+      if (!prd) {
+        return res.status(404).json({ message: "PRD not found" });
+      }
+      
+      // Check if user owns the PRD or has edit permission
+      if (prd.userId !== userId) {
+        const shares = await storage.getPrdShares(id);
+        const userShare = shares.find(s => s.sharedWith === userId && s.permission === 'edit');
+        if (!userShare) {
+          return res.status(403).json({ message: "You don't have permission to delete versions for this PRD" });
+        }
+      }
+      
+      const version = await storage.getPrdVersion(versionId);
+      if (!version) {
+        return res.status(404).json({ message: "Version not found" });
+      }
+      
+      if (version.prdId !== id) {
+        return res.status(400).json({ message: "Version does not belong to this PRD" });
+      }
+      
+      const versions = await storage.getPrdVersions(id);
+      if (versions.length > 0 && versions[0].id === versionId) {
+        return res.status(400).json({ message: "Cannot delete the current (latest) version" });
+      }
+      
+      await storage.deletePrdVersion(versionId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting version:", error);
+      res.status(500).json({ message: "Failed to delete version" });
+    }
+  });
+
   // Share routes
   app.post('/api/prds/:id/share', isAuthenticated, async (req: any, res) => {
     try {

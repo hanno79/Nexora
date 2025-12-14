@@ -46,7 +46,9 @@ export interface IStorage {
   
   // Version operations
   getPrdVersions(prdId: string): Promise<PrdVersion[]>;
+  getPrdVersion(id: string): Promise<PrdVersion | undefined>;
   createPrdVersion(version: InsertPrdVersion): Promise<PrdVersion>;
+  deletePrdVersion(id: string): Promise<void>;
   
   // Sharing operations
   getSharedPrds(userId: string): Promise<SharedPrd[]>;
@@ -191,9 +193,18 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(prdVersions.createdAt));
   }
 
+  async getPrdVersion(id: string): Promise<PrdVersion | undefined> {
+    const [version] = await db.select().from(prdVersions).where(eq(prdVersions.id, id));
+    return version;
+  }
+
   async createPrdVersion(versionData: InsertPrdVersion): Promise<PrdVersion> {
     const [version] = await db.insert(prdVersions).values(versionData).returning();
     return version;
+  }
+
+  async deletePrdVersion(id: string): Promise<void> {
+    await db.delete(prdVersions).where(eq(prdVersions.id, id));
   }
 
   // Sharing operations
