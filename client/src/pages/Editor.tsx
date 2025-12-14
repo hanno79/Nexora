@@ -197,7 +197,8 @@ export default function Editor() {
       } else {
         // For markdown and claudemd - JSON response with content
         const response = await apiRequest("POST", `/api/prds/${prdId}/export`, { format });
-        return { data: response, format };
+        const data = await response.json();
+        return { data, format };
       }
     },
     onSuccess: (result: any) => {
