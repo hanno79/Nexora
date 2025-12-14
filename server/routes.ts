@@ -13,6 +13,56 @@ import { db } from "./db";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 
+/**
+ * Synchronizes PRD content header metadata with actual PRD data.
+ * Updates Version and Status fields in the document if they exist.
+ * Supports both English and German field names and values.
+ */
+function syncPrdHeaderMetadata(
+  content: string,
+  versionNumber: string | null,
+  status: string
+): string {
+  let updatedContent = content;
+
+  // Map status to display format (with proper capitalization)
+  const statusDisplayMap: Record<string, { en: string; de: string }> = {
+    'draft': { en: 'Draft', de: 'Entwurf' },
+    'in-progress': { en: 'In Progress', de: 'In Bearbeitung' },
+    'review': { en: 'Review', de: 'Review' },
+    'pending-approval': { en: 'Pending Approval', de: 'Ausstehende Genehmigung' },
+    'approved': { en: 'Approved', de: 'Genehmigt' },
+    'completed': { en: 'Completed', de: 'Abgeschlossen' }
+  };
+
+  const statusDisplay = statusDisplayMap[status] || { en: status, de: status };
+
+  // Detect document language by checking for German status values
+  const germanStatusValues = ['Entwurf', 'In Bearbeitung', 'Ausstehende Genehmigung', 'Genehmigt', 'Abgeschlossen'];
+  const isGermanDocument = germanStatusValues.some(val => content.includes(val));
+  const statusValue = isGermanDocument ? statusDisplay.de : statusDisplay.en;
+
+  // Update Version field if present
+  // Matches patterns like: Version: 0.5, Version: v8, Version : 1.0, **Version:** 2.0
+  // Supports optional 'v' prefix and preserves any trailing annotations in parentheses
+  if (versionNumber) {
+    updatedContent = updatedContent.replace(
+      /(\*{0,2}Version\*{0,2}\s*:\s*)(?:v\s*)?[\d.]+(\s*\([^)]*\))?/gi,
+      `$1${versionNumber}$2`
+    );
+  }
+
+  // Update Status field if present
+  // Matches patterns like: Status: Draft, Status: Entwurf, **Status:** In Progress
+  // Matches until end of line or next field to avoid over-matching
+  updatedContent = updatedContent.replace(
+    /(\*{0,2}Status\*{0,2}\s*:\s*)([\w\s\-äöüÄÖÜß]+?)(\n|$)/gi,
+    `$1${statusValue}$3`
+  );
+
+  return updatedContent;
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Initialize templates
   await initializeTemplates();
@@ -214,7 +264,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "PRD not found" });
       }
       
-      const updated = await storage.updatePrd(id, req.body);
+      // If content is being updated, synchronize header metadata
+      let updateData = { ...req.body };
+      if (updateData.content) {
+        // Get current version count to determine version number
+        const versions = await storage.getPrdVersions(id);
+        const versionNumber = versions.length > 0 ? `v${versions.length}` : null;
+        const status = updateData.status || prd.status;
+        
+        // Sync the header metadata in the content
+        updateData.content = syncPrdHeaderMetadata(
+          updateData.content,
+          versionNumber,
+          status
+        );
+      }
+      
+      const updated = await storage.updatePrd(id, updateData);
       res.json(updated);
     } catch (error) {
       console.error("Error updating PRD:", error);
