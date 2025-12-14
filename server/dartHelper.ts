@@ -196,10 +196,11 @@ export async function updateDartDoc(
   content: string
 ): Promise<{ docId: string; url: string }> {
   try {
-    // Dart AI Update uses same format as create - wrapped in "item"
-    // Only include fields that need to be updated
+    // Dart AI Update requires the doc ID inside the item object
+    // Error was: "item.id: This field is required."
     const payload = {
       item: {
+        id: docId,  // Required for updates!
         title: title,
         text: content,
       }
