@@ -167,13 +167,14 @@ export function VersionHistory({ prdId }: VersionHistoryProps) {
                 </div>
                 
                 {index !== 0 && (
-                  <div className="flex items-center gap-1">
+                  <div className="flex flex-col items-center gap-0.5 shrink-0">
                     <Button
                       size="icon"
                       variant="ghost"
                       onClick={() => handleRestoreClick(version)}
                       disabled={restoreMutation.isPending || deleteMutation.isPending}
                       data-testid={`button-restore-${version.id}`}
+                      className="h-7 w-7"
                     >
                       <RotateCcw className="w-3 h-3" />
                     </Button>
@@ -183,7 +184,7 @@ export function VersionHistory({ prdId }: VersionHistoryProps) {
                       onClick={() => handleDeleteClick(version)}
                       disabled={restoreMutation.isPending || deleteMutation.isPending}
                       data-testid={`button-delete-${version.id}`}
-                      className="text-destructive hover:text-destructive"
+                      className="h-7 w-7 text-destructive hover:text-destructive"
                     >
                       <Trash2 className="w-3 h-3" />
                     </Button>
