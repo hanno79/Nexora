@@ -177,6 +177,54 @@ export async function checkDartConnection(): Promise<boolean> {
 }
 
 /**
+ * Update an existing Dart AI doc
+ * Uses PUT endpoint to sync content changes
+ */
+export async function updateDartDoc(
+  docId: string,
+  title: string,
+  content: string
+): Promise<{ docId: string; url: string }> {
+  try {
+    // Update existing doc in Dart AI
+    const payload = {
+      item: {
+        title: title,
+        text: content,
+      }
+    };
+
+    const response = await dartApiRequest(`/docs/${docId}`, 'PUT', payload);
+    
+    // Extract doc info from response
+    const updatedDoc = response.item;
+    if (!updatedDoc) {
+      console.error('Dart API response:', response);
+      throw new Error('Dart AI did not return updated doc info.');
+    }
+
+    const url = updatedDoc.htmlUrl || `https://app.dartai.com/o/${docId}`;
+
+    return {
+      docId: updatedDoc.id || docId,
+      url,
+    };
+  } catch (error: any) {
+    console.error('Error updating Dart AI doc:', error);
+    
+    if (error.message?.includes('authentication') || error.message?.includes('API key')) {
+      throw new Error('Dart AI authentication failed. Please check your DART_AI_API_KEY secret.');
+    }
+    
+    if (error.message?.includes('404') || error.message?.includes('not found')) {
+      throw new Error('Document not found in Dart AI. It may have been deleted.');
+    }
+    
+    throw new Error(`Failed to update Dart AI doc: ${error.message || 'Unknown error'}`);
+  }
+}
+
+/**
  * Get a Dart AI doc by ID
  * Optional utility function for future enhancements
  */

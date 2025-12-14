@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Info, Loader2 } from "lucide-react";
+import { Info, Loader2, RefreshCw } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/lib/i18n/useTranslation";
@@ -29,6 +29,8 @@ interface DartExportDialogProps {
   prdId: string;
   title: string;
   content: string;
+  dartDocId?: string | null;
+  dartDocUrl?: string | null;
 }
 
 export function DartExportDialog({
@@ -37,17 +39,22 @@ export function DartExportDialog({
   prdId,
   title,
   content,
+  dartDocId,
+  dartDocUrl,
 }: DartExportDialogProps) {
   const { toast } = useToast();
   const { t } = useTranslation();
   const [selectedFolder, setSelectedFolder] = useState<string>("");
+  
+  // Check if this is an update (already exported) or new export
+  const isUpdate = !!dartDocId;
 
   const { data: dartboards, isLoading: loadingDartboards, isError: dartboardsError } = useQuery<{
     dartboards: string[];
     folders: string[];
   }>({
     queryKey: ["/api/dart/dartboards"],
-    enabled: open,
+    enabled: open && !isUpdate, // Only fetch folders for new exports
   });
 
   const exportMutation = useMutation({
@@ -61,11 +68,12 @@ export function DartExportDialog({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/prds"] });
-      queryClient.invalidateQueries({ queryKey: [`/api/prds/${prdId}`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
       
       toast({
-        title: "Success",
-        description: "Exported to Dart AI successfully",
+        title: t.common.success,
+        description: t.integrations.dart.exportDialog.exportSuccess,
       });
       
       onOpenChange(false);
@@ -84,16 +92,62 @@ export function DartExportDialog({
         return;
       }
       toast({
-        title: "Dart AI Export Failed",
+        title: t.errors.exportFailed,
         description: error.message || "Failed to export to Dart AI",
         variant: "destructive",
       });
     },
   });
 
-  const handleExport = () => {
-    exportMutation.mutate();
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("PUT", "/api/dart/update", {
+        prdId,
+        docId: dartDocId,
+        title,
+        content,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/prds"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId] });
+      
+      toast({
+        title: t.common.success,
+        description: t.integrations.dart.exportDialog.updateSuccess,
+      });
+      
+      onOpenChange(false);
+    },
+    onError: (error: Error) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/api/login";
+        }, 500);
+        return;
+      }
+      toast({
+        title: t.errors.exportFailed,
+        description: error.message || "Failed to update Dart AI doc",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleAction = () => {
+    if (isUpdate) {
+      updateMutation.mutate();
+    } else {
+      exportMutation.mutate();
+    }
   };
+  
+  const isPending = exportMutation.isPending || updateMutation.isPending;
 
   // Only show folders (Dart AI docs can only be saved in folders, not dartboards)
   const allOptions = (dartboards?.folders || []).map(folder => ({ 
@@ -105,14 +159,35 @@ export function DartExportDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="dialog-dart-export">
         <DialogHeader>
-          <DialogTitle>{t.integrations.dart.exportDialog.title}</DialogTitle>
+          <DialogTitle>
+            {isUpdate ? t.integrations.dart.exportDialog.updateTitle : t.integrations.dart.exportDialog.title}
+          </DialogTitle>
           <DialogDescription>
-            {t.integrations.dart.exportDialog.description}
+            {isUpdate ? t.integrations.dart.exportDialog.updateDescription : t.integrations.dart.exportDialog.description}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {loadingDartboards ? (
+          {isUpdate ? (
+            // Update mode - show simple confirmation with link to existing doc
+            <Alert>
+              <RefreshCw className="w-4 h-4" />
+              <AlertDescription className="text-sm">
+                {t.integrations.dart.exportDialog.updateHint}
+                {dartDocUrl && (
+                  <a 
+                    href={dartDocUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="ml-1 text-primary hover:underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {t.integrations.dart.exportDialog.viewDoc}
+                  </a>
+                )}
+              </AlertDescription>
+            </Alert>
+          ) : loadingDartboards ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
               <span className="ml-2 text-sm text-muted-foreground">
@@ -166,20 +241,25 @@ export function DartExportDialog({
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
-            disabled={exportMutation.isPending}
+            disabled={isPending}
             data-testid="button-cancel-dart-export"
           >
             {t.common.cancel}
           </Button>
           <Button
-            onClick={handleExport}
-            disabled={!selectedFolder || exportMutation.isPending || loadingDartboards}
+            onClick={handleAction}
+            disabled={(!isUpdate && !selectedFolder) || isPending || (!isUpdate && loadingDartboards)}
             data-testid="button-confirm-dart-export"
           >
-            {exportMutation.isPending ? (
+            {isPending ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                {t.integrations.dart.exportDialog.exporting}
+                {isUpdate ? t.integrations.dart.exportDialog.updating : t.integrations.dart.exportDialog.exporting}
+              </>
+            ) : isUpdate ? (
+              <>
+                <RefreshCw className="w-4 h-4 mr-2" />
+                {t.integrations.dart.exportDialog.updateButton}
               </>
             ) : (
               t.integrations.dart.exportDialog.exportButton

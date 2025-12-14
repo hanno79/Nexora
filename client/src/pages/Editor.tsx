@@ -43,6 +43,7 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
+import { useTranslation } from "@/lib/i18n";
 import type { Prd } from "@shared/schema";
 import { formatDistance } from "date-fns";
 
@@ -50,6 +51,7 @@ export default function Editor() {
   const [, params] = useRoute("/editor/:id");
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { t } = useTranslation();
   const prdId = params?.id;
 
   const [title, setTitle] = useState("");
@@ -433,7 +435,7 @@ export default function Editor() {
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setShowDartExportDialog(true)} data-testid="menu-export-dart">
                     <Send className="w-4 h-4 mr-2" />
-                    Export to Dart AI
+                    {prd?.dartDocId ? t.editor.dartUpdate : t.editor.dartExport}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -467,7 +469,7 @@ export default function Editor() {
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setShowDartExportDialog(true)} data-testid="menu-export-dart-mobile">
                     <Send className="w-4 h-4 mr-2" />
-                    Export to Dart AI
+                    {prd?.dartDocId ? t.editor.dartUpdate : t.editor.dartExport}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -622,6 +624,8 @@ export default function Editor() {
             prdId={prdId}
             title={title}
             content={content}
+            dartDocId={prd?.dartDocId}
+            dartDocUrl={prd?.dartDocUrl}
           />
           
           {/* Mobile Comments/Versions Sheet */}

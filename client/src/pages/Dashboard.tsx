@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Plus, FileText, Search as SearchIcon, Clock, CheckCircle2, Send } from "lucide-react";
+import { Plus, FileText, Search as SearchIcon, Clock, CheckCircle2, Send, Sparkles, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TopBar } from "@/components/TopBar";
 import { EmptyState } from "@/components/EmptyState";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Badge } from "@/components/ui/badge";
 import { OnboardingDialog } from "@/components/OnboardingDialog";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -21,6 +22,7 @@ interface DashboardStats {
   inProgress: number;
   completed: number;
   exportedToLinear: number;
+  exportedToDart: number;
 }
 
 export default function Dashboard() {
@@ -101,8 +103,8 @@ export default function Dashboard() {
 
         {/* Stats Cards */}
         {statsLoading ? (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-8">
-            {[1, 2, 3, 4].map((i) => (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5 mb-8">
+            {[1, 2, 3, 4, 5].map((i) => (
               <Card key={i}>
                 <CardHeader className="pb-2">
                   <div className="h-4 bg-muted rounded animate-pulse w-24 mb-2" />
@@ -112,7 +114,7 @@ export default function Dashboard() {
             ))}
           </div>
         ) : stats && (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-8">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5 mb-8">
             <Card data-testid="stat-total-prds">
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
@@ -161,7 +163,7 @@ export default function Dashboard() {
               </CardContent>
             </Card>
 
-            <Card data-testid="stat-exported">
+            <Card data-testid="stat-exported-linear">
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -171,8 +173,24 @@ export default function Dashboard() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-semibold" data-testid="value-exported">
+                <div className="text-2xl font-semibold" data-testid="value-exported-linear">
                   {stats.exportedToLinear}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card data-testid="stat-exported-dart">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    {t.dashboard.exportedToDart}
+                  </CardTitle>
+                  <Sparkles className="w-4 h-4 text-orange-500" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-semibold" data-testid="value-exported-dart">
+                  {stats.exportedToDart}
                 </div>
               </CardContent>
             </Card>
@@ -230,6 +248,32 @@ export default function Dashboard() {
                     </div>
                     <StatusBadge status={prd.status as any} />
                   </div>
+                  
+                  {/* Export Status Badges */}
+                  {(prd.linearIssueId || prd.dartDocId) && (
+                    <div className="flex flex-wrap gap-2">
+                      {prd.linearIssueId && (
+                        <Badge 
+                          variant="secondary" 
+                          className="text-xs gap-1"
+                          data-testid={`badge-linear-${prd.id}`}
+                        >
+                          <Send className="w-3 h-3" />
+                          Linear
+                        </Badge>
+                      )}
+                      {prd.dartDocId && (
+                        <Badge 
+                          variant="secondary" 
+                          className="text-xs gap-1"
+                          data-testid={`badge-dart-${prd.id}`}
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          Dart AI
+                        </Badge>
+                      )}
+                    </div>
+                  )}
                   
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <FileText className="w-4 h-4" />

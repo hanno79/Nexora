@@ -5,7 +5,7 @@ import { setupAuth, isAuthenticated } from "./replitAuth";
 import { insertPrdSchema, users, aiPreferencesSchema } from "@shared/schema";
 import { generatePRDContent } from "./anthropic";
 import { exportToLinear, checkLinearConnection } from "./linearHelper";
-import { exportToDart, checkDartConnection, getDartboards } from "./dartHelper";
+import { exportToDart, updateDartDoc, checkDartConnection, getDartboards } from "./dartHelper";
 import { generatePDF, generateWord } from "./exportUtils";
 import { generateClaudeMD } from "./claudemdGenerator";
 import { initializeTemplates } from "./initTemplates";
@@ -148,6 +148,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         inProgress: prds.filter(p => p.status === 'in-progress').length,
         completed: prds.filter(p => p.status === 'completed').length,
         exportedToLinear: prds.filter(p => p.linearIssueId).length,
+        exportedToDart: prds.filter(p => p.dartDocId).length,
       };
       
       res.json(stats);
@@ -981,6 +982,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error checking Dart AI status:", error);
       res.json({ connected: false });
+    }
+  });
+
+  // Dart AI update endpoint - sync existing doc with current PRD content
+  app.put('/api/dart/update', isAuthenticated, async (req: any, res) => {
+    try {
+      const { prdId, docId, title, content } = req.body;
+      
+      if (!docId || !prdId) {
+        return res.status(400).json({ message: "Document ID and PRD ID are required" });
+      }
+      
+      const result = await updateDartDoc(docId, title || "Untitled", content || "");
+      
+      // Update PRD with latest Dart AI doc URL (might have changed)
+      await storage.updatePrd(prdId, {
+        dartDocUrl: result.url,
+      });
+      
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error updating Dart AI doc:", error);
+      res.status(500).json({ message: error.message || "Failed to update Dart AI doc" });
     }
   });
 
