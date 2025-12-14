@@ -62,6 +62,12 @@ async function dartApiRequest(
     }
 
     if (!response.ok) {
+      // Log full error response for debugging
+      console.error(`Dart AI API error ${response.status}:`, JSON.stringify(data, null, 2));
+      console.error('Request URL:', url);
+      console.error('Request method:', method);
+      if (body) console.error('Request body:', JSON.stringify(body, null, 2));
+      
       // Handle specific HTTP error codes
       if (response.status === 401) {
         throw new Error('Dart AI authentication failed. Please check your API key.');
@@ -79,7 +85,9 @@ async function dartApiRequest(
         throw new Error('Dart AI server error. Please try again later.');
       }
       
-      throw new Error(data.message || data.error || `Dart AI API error: ${response.status}`);
+      // For 400 errors, include the full error details
+      const errorDetail = data.detail || data.message || data.error || JSON.stringify(data);
+      throw new Error(`Dart AI API error ${response.status}: ${errorDetail}`);
     }
 
     return data;
@@ -179,6 +187,8 @@ export async function checkDartConnection(): Promise<boolean> {
 /**
  * Update an existing Dart AI doc
  * Uses PUT endpoint to sync content changes
+ * Note: Dart AI Update uses WrappedDocUpdate format - same as create with item wrapper
+ * Based on API docs: PUT /docs/{id} with { item: { title?, text? } }
  */
 export async function updateDartDoc(
   docId: string,
@@ -186,7 +196,8 @@ export async function updateDartDoc(
   content: string
 ): Promise<{ docId: string; url: string }> {
   try {
-    // Update existing doc in Dart AI
+    // Dart AI Update uses same format as create - wrapped in "item"
+    // Only include fields that need to be updated
     const payload = {
       item: {
         title: title,
@@ -194,13 +205,23 @@ export async function updateDartDoc(
       }
     };
 
+    console.log('Dart AI Update - docId:', docId);
+    console.log('Dart AI Update - payload:', JSON.stringify(payload, null, 2));
+
     const response = await dartApiRequest(`/docs/${docId}`, 'PUT', payload);
+    
+    console.log('Dart AI Update response:', JSON.stringify(response, null, 2));
     
     // Extract doc info from response
     const updatedDoc = response.item;
     if (!updatedDoc) {
-      console.error('Dart API response:', response);
-      throw new Error('Dart AI did not return updated doc info.');
+      // If no item in response, the update may have succeeded but with different response format
+      // Try to construct the URL from the docId
+      console.log('No item in response, using docId for URL');
+      return {
+        docId: docId,
+        url: `https://app.dartai.com/o/${docId}`,
+      };
     }
 
     const url = updatedDoc.htmlUrl || `https://app.dartai.com/o/${docId}`;
@@ -211,6 +232,7 @@ export async function updateDartDoc(
     };
   } catch (error: any) {
     console.error('Error updating Dart AI doc:', error);
+    console.error('Error details:', error.message);
     
     if (error.message?.includes('authentication') || error.message?.includes('API key')) {
       throw new Error('Dart AI authentication failed. Please check your DART_AI_API_KEY secret.');
@@ -218,6 +240,11 @@ export async function updateDartDoc(
     
     if (error.message?.includes('404') || error.message?.includes('not found')) {
       throw new Error('Document not found in Dart AI. It may have been deleted.');
+    }
+    
+    // If 400 error, try to provide more context
+    if (error.message?.includes('400')) {
+      throw new Error('Dart AI rejected the update request. The document format may be invalid or the document may no longer exist.');
     }
     
     throw new Error(`Failed to update Dart AI doc: ${error.message || 'Unknown error'}`);
