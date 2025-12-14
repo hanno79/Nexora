@@ -8,6 +8,7 @@ import {
   ITERATIVE_GENERATOR_PROMPT,
   BEST_PRACTICE_ANSWERER_PROMPT,
   FINAL_REVIEWER_PROMPT,
+  getLanguageInstruction,
   type DualAiRequest,
   type DualAiResponse,
   type GeneratorResponse,
@@ -22,7 +23,8 @@ import { eq } from 'drizzle-orm';
 export class DualAiService {
   async generatePRD(request: DualAiRequest, userId?: string): Promise<DualAiResponse> {
     // Create fresh client per request to prevent cross-user contamination
-    const client = await this.createClientWithUserPreferences(userId);
+    const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
+    const langInstruction = getLanguageInstruction(contentLanguage);
     
     const { userInput, existingContent, mode } = request;
 
@@ -44,7 +46,7 @@ export class DualAiService {
 
       const genResult = await client.callWithFallback(
         'generator',
-        GENERATOR_SYSTEM_PROMPT,
+        GENERATOR_SYSTEM_PROMPT + langInstruction,
         generatorPrompt,
         8000  // Increased for comprehensive PRDs
       );
@@ -73,7 +75,7 @@ export class DualAiService {
 
     const reviewResult = await client.callWithFallback(
       'reviewer',
-      REVIEWER_SYSTEM_PROMPT,
+      REVIEWER_SYSTEM_PROMPT + langInstruction,
       reviewerPrompt,
       3000  // Increased for detailed review with 5-10 questions
     );
@@ -100,7 +102,7 @@ export class DualAiService {
 
       const improveResult = await client.callWithFallback(
         'generator',
-        IMPROVEMENT_SYSTEM_PROMPT,
+        IMPROVEMENT_SYSTEM_PROMPT + langInstruction,
         improvementPrompt,
         10000  // Increased significantly for complete PRD improvements (2-3x original length)
       );
@@ -139,7 +141,8 @@ export class DualAiService {
 
   async reviewOnly(prdContent: string, userId?: string): Promise<ReviewerResponse> {
     // Create fresh client per request to prevent cross-user contamination
-    const client = await this.createClientWithUserPreferences(userId);
+    const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
+    const langInstruction = getLanguageInstruction(contentLanguage);
     
     console.log('🔍 Reviewing existing PRD...');
     
@@ -147,7 +150,7 @@ export class DualAiService {
 
     const reviewResult = await client.callWithFallback(
       'reviewer',
-      REVIEWER_SYSTEM_PROMPT,
+      REVIEWER_SYSTEM_PROMPT + langInstruction,
       reviewerPrompt,
       3000  // Increased for detailed review with 5-10 questions
     );
@@ -170,7 +173,8 @@ export class DualAiService {
     userId?: string
   ): Promise<IterativeResponse> {
     // Create fresh client per request to prevent cross-user contamination
-    const client = await this.createClientWithUserPreferences(userId);
+    const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
+    const langInstruction = getLanguageInstruction(contentLanguage);
     
     console.log(`🔄 Starting iterative workflow: ${iterationCount} iterations, final review: ${useFinalReview}`);
     
@@ -191,7 +195,7 @@ export class DualAiService {
       
       const genResult = await client.callWithFallback(
         'generator',
-        ITERATIVE_GENERATOR_PROMPT,
+        ITERATIVE_GENERATOR_PROMPT + langInstruction,
         generatorPrompt,
         8000  // Enough for PRD + questions
       );
@@ -210,7 +214,7 @@ export class DualAiService {
       
       const answerResult = await client.callWithFallback(
         'reviewer',  // Using reviewer model for answerer role
-        BEST_PRACTICE_ANSWERER_PROMPT,
+        BEST_PRACTICE_ANSWERER_PROMPT + langInstruction,
         answererPrompt,
         4000  // Enough for detailed answers
       );
@@ -242,7 +246,7 @@ export class DualAiService {
       
       const reviewResult = await client.callWithFallback(
         'reviewer',
-        FINAL_REVIEWER_PROMPT,
+        FINAL_REVIEWER_PROMPT + langInstruction,
         finalReviewerPrompt,
         6000  // Enough for comprehensive review
       );
@@ -317,30 +321,40 @@ export class DualAiService {
     return `${currentPRD}\n\n---\n\n## Final Review Feedback\n\n${reviewContent}`;
   }
 
-  private async createClientWithUserPreferences(userId?: string): Promise<OpenRouterClient> {
+  private async createClientWithUserPreferences(userId?: string): Promise<{ client: OpenRouterClient; contentLanguage: string | null }> {
     const client = getOpenRouterClient();
+    let contentLanguage: string | null = null;
 
     if (userId) {
-      const userPrefs = await db.select({ aiPreferences: users.aiPreferences })
+      const userPrefs = await db.select({ 
+        aiPreferences: users.aiPreferences,
+        defaultContentLanguage: users.defaultContentLanguage
+      })
         .from(users)
         .where(eq(users.id, userId))
         .limit(1);
       
-      if (userPrefs[0]?.aiPreferences) {
-        const prefs = userPrefs[0].aiPreferences as any;
-        if (prefs.generatorModel) {
-          client.setPreferredModel('generator', prefs.generatorModel);
-        }
-        if (prefs.reviewerModel) {
-          client.setPreferredModel('reviewer', prefs.reviewerModel);
-        }
-        if (prefs.tier) {
-          client.setPreferredTier(prefs.tier);
+      if (userPrefs[0]) {
+        // Get content language preference
+        contentLanguage = userPrefs[0].defaultContentLanguage || null;
+        
+        // Get AI model preferences
+        if (userPrefs[0].aiPreferences) {
+          const prefs = userPrefs[0].aiPreferences as any;
+          if (prefs.generatorModel) {
+            client.setPreferredModel('generator', prefs.generatorModel);
+          }
+          if (prefs.reviewerModel) {
+            client.setPreferredModel('reviewer', prefs.reviewerModel);
+          }
+          if (prefs.tier) {
+            client.setPreferredTier(prefs.tier);
+          }
         }
       }
     }
 
-    return client;
+    return { client, contentLanguage };
   }
 
   private extractQuestions(reviewText: string): string[] {

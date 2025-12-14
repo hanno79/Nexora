@@ -1,6 +1,27 @@
 // Dual-AI System Prompts based on HRP-17 Specification
 // ALL PROMPTS IN ENGLISH for international SaaS platform
 
+/**
+ * Get language instruction to prepend to system prompts
+ * This ensures AI responds in the user's preferred language
+ */
+export function getLanguageInstruction(language: string | null | undefined): string {
+  if (!language || language === 'auto') {
+    return '\n\n**LANGUAGE INSTRUCTION**: Respond in the same language as the input content. If the input is in German, respond in German. If in English, respond in English.';
+  }
+  
+  if (language === 'de') {
+    return '\n\n**LANGUAGE INSTRUCTION**: Du MUSST auf DEUTSCH antworten. Alle Inhalte, Überschriften, Beschreibungen und Texte müssen in deutscher Sprache verfasst sein. Technische Fachbegriffe können auf Englisch bleiben, aber alle Erklärungen und Beschreibungen müssen auf Deutsch sein.';
+  }
+  
+  if (language === 'en') {
+    return '\n\n**LANGUAGE INSTRUCTION**: You MUST respond in ENGLISH. All content, headings, descriptions, and text must be written in English.';
+  }
+  
+  // Fallback for other languages
+  return `\n\n**LANGUAGE INSTRUCTION**: Respond in ${language} language.`;
+}
+
 export const GENERATOR_SYSTEM_PROMPT = `You are an experienced Product Manager and PRD expert with cutting-edge AI capabilities.
 Your task is to create a COMPLETE, DETAILED, professional Product Requirements Document based on user input.
 
@@ -45,11 +66,10 @@ TARGET AUDIENCE: Junior-level developers and no-code tools (Lovable, Claude, v0.
 STYLE: Clear, precise, actionable, detailed, no hallucinations
 
 IMPORTANT:
-- ALWAYS write in English by default
-- Write in user's language ONLY if they explicitly write in that language
 - ALL 12 sections MUST be present
 - Each section must contain substantial details
-- Minimum 2000 words for a complete PRD`;
+- Minimum 2000 words for a complete PRD
+- LANGUAGE: Follow the language instruction provided below`;
 
 export const REVIEWER_SYSTEM_PROMPT = `You are an experienced Tech Lead and Business Analyst with cutting-edge AI capabilities.
 Your task is to CRITICALLY evaluate PRDs and identify ALL missing elements.
@@ -92,11 +112,10 @@ OUTPUT FORMAT:
 4. Concrete Improvement Suggestions (which sections/details need to be added)
 
 IMPORTANT:
-- ALWAYS respond in English by default
-- Respond in user's language ONLY if PRD is written in that language
 - Be VERY critical - better too much than too little questioning
 - Identify ALL gaps and missing details
-- Think from developer, business AND user perspective`;
+- Think from developer, business AND user perspective
+- LANGUAGE: Follow the language instruction provided below`;
 
 export const IMPROVEMENT_SYSTEM_PROMPT = `You are an experienced Product Manager.
 You have already created a PRD and now received CRITICAL FEEDBACK from the Tech Lead.
@@ -138,8 +157,8 @@ IMPORTANT:
 - The final PRD should be 2-3x longer than the original
 - ALL problems identified in the review MUST be solved
 - Maintain professional Markdown structure
-- ALWAYS write in English by default (match user's language if they wrote in another language)
 - Be concrete, not vague - use numbers, examples, details
+- LANGUAGE: Follow the language instruction provided below
 
 OUTPUT: The COMPLETELY revised PRD in Markdown with ALL sections substantially filled out`;
 
@@ -185,11 +204,10 @@ QUALITY of questions:
 - Avoid redundant questions
 
 IMPORTANT:
-- ALWAYS write in English by default
-- Write in user's language ONLY if input is in that language
 - Ask only 3-5 questions per iteration (not too many!)
 - Focus on the most important gaps first
-- The revised PRD should grow and improve step by step`;
+- The revised PRD should grow and improve step by step
+- LANGUAGE: Follow the language instruction provided below`;
 
 export const BEST_PRACTICE_ANSWERER_PROMPT = `You are an experienced Tech Lead and Product Strategy Consultant.
 Your task is to answer concrete PRD questions with BEST PRACTICES.
@@ -250,11 +268,10 @@ Implementation via NextAuth.js or Supabase Auth for easy session management."
 ---
 
 IMPORTANT:
-- ALWAYS respond in English by default
-- Respond in user's language ONLY if questions are in that language
 - Be CONCRETE and ACTIONABLE
 - Provide EXAMPLES and TOOL RECOMMENDATIONS
-- Avoid vague advice like "depends on..." - make decisions!`;
+- Avoid vague advice like "depends on..." - make decisions!
+- LANGUAGE: Follow the language instruction provided below`;
 
 export const FINAL_REVIEWER_PROMPT = `You are a Senior Product Manager with 10+ years of experience.
 Your task is to review the final PRD at the highest level and polish it.
@@ -321,10 +338,9 @@ QUALITY CRITERIA:
 - Prioritize by impact
 
 IMPORTANT:
-- ALWAYS respond in English by default
-- Respond in user's language ONLY if PRD is in that language
 - Be HONEST but CONSTRUCTIVE
-- The goal is a production-ready PRD`;
+- The goal is a production-ready PRD
+- LANGUAGE: Follow the language instruction provided below`;
 
 interface DualAiRequest {
   userInput: string;
