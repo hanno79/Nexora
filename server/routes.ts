@@ -783,11 +783,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      const { initialContent, iterationCount, useFinalReview, prdId } = req.body;
+      // Support both old format (initialContent) and new format (existingContent + additionalRequirements + mode)
+      const { initialContent, existingContent, additionalRequirements, mode, iterationCount, useFinalReview, prdId } = req.body;
       const userId = req.user.claims.sub;
       
-      if (!initialContent) {
-        return res.status(400).json({ message: "Initial content is required" });
+      // Detect which format is being used
+      const hasExistingContent = existingContent && existingContent.trim().length > 0;
+      const hasAdditionalReqs = additionalRequirements && additionalRequirements.trim().length > 0;
+      const hasLegacyContent = initialContent && initialContent.trim().length > 0;
+      const isNewFormat = mode !== undefined || hasExistingContent || hasAdditionalReqs;
+      
+      // Need at least some content to work with
+      if (!hasExistingContent && !hasAdditionalReqs && !hasLegacyContent) {
+        return res.status(400).json({ message: "Content is required - provide either existing content, additional requirements, or initial content" });
       }
       
       // Validate iteration count (2-5)
@@ -796,9 +804,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Iteration count must be between 2 and 5" });
       }
       
+      // Determine content and mode:
+      // NEW FORMAT: explicit mode + existingContent + additionalRequirements
+      // LEGACY FORMAT: initialContent treated as existing content for improvement
+      let finalExistingContent: string;
+      let finalAdditionalReqs: string | undefined;
+      let finalMode: 'improve' | 'generate';
+      
+      if (isNewFormat) {
+        // New format: use explicit mode and separated fields
+        finalExistingContent = existingContent || '';
+        finalAdditionalReqs = hasAdditionalReqs ? additionalRequirements : undefined;
+        // Use explicit mode if provided, otherwise infer from content presence
+        if (mode) {
+          finalMode = mode === 'improve' ? 'improve' : 'generate';
+        } else {
+          // No explicit mode but has new format fields - infer from content
+          finalMode = hasExistingContent ? 'improve' : 'generate';
+        }
+      } else {
+        // Legacy format: treat initialContent as existing PRD content
+        // Legacy clients sending initialContent expect it to be used as the base
+        finalExistingContent = initialContent;
+        finalAdditionalReqs = undefined;
+        // Legacy: if content looks substantial, treat as improvement
+        finalMode = initialContent.trim().length > 50 ? 'improve' : 'generate';
+      }
+      
       const service = getDualAiService();
       const result = await service.generateIterative(
-        initialContent,
+        finalExistingContent,
+        finalAdditionalReqs,
+        finalMode,
         iterations,
         useFinalReview || false,
         userId

@@ -125,14 +125,18 @@ export function DualAiDialog({
     setTotalIterations(iterationCount);
     setCurrentIteration(0);
     
-    // Priority: userInput first, then currentContent as fallback
-    const initialInput = userInput.trim() || currentContent || '';
+    // Determine if this is an improvement run (has existing content) or new generation
+    const hasExistingPRD = currentContent && currentContent.trim().length > 0;
     
+    // NEW: Always pass existing content as base, userInput as additional requirements
+    // This ensures subsequent runs BUILD UPON existing content instead of replacing it
     const response = await fetch('/api/ai/generate-iterative', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        initialContent: initialInput,
+        existingContent: hasExistingPRD ? currentContent : undefined,  // Pass existing PRD content
+        additionalRequirements: userInput.trim() || undefined,  // New requirements to add
+        mode: hasExistingPRD ? 'improve' : 'generate',  // Explicit mode for backend
         iterationCount,
         useFinalReview
       })

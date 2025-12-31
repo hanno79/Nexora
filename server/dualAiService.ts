@@ -40,9 +40,29 @@ export class DualAiService {
     if (mode !== 'review-only') {
       console.log('🤖 Step 1: Generating PRD with AI Generator...');
       
-      const generatorPrompt = existingContent
-        ? `Verbessere folgendes PRD basierend auf neuem Input:\n\nBISHERIGES PRD:\n${existingContent}\n\nNEUER INPUT:\n${userInput}`
-        : `Erstelle ein vollständiges PRD basierend auf:\n\n${userInput}`;
+      let generatorPrompt: string;
+      if (existingContent) {
+        // IMPROVEMENT MODE: Explicitly instruct to preserve and build upon existing content
+        generatorPrompt = `IMPORTANT: You are IMPROVING an existing PRD. Do NOT start from scratch!
+
+CRITICAL RULES:
+- PRESERVE the existing structure and all sections
+- KEEP all existing content - do not remove or replace it
+- ADD new content based on the user's input
+- EXPAND existing sections with more details where relevant
+- Only MODIFY content if it directly contradicts the new requirements
+
+EXISTING PRD (PRESERVE THIS):
+${existingContent}
+
+USER'S ADDITIONAL REQUIREMENTS/IMPROVEMENTS:
+${userInput}
+
+Create an improved version that incorporates the new requirements while keeping all existing content intact.`;
+      } else {
+        // NEW GENERATION MODE: Create from scratch
+        generatorPrompt = `Erstelle ein vollständiges PRD basierend auf:\n\n${userInput}`;
+      }
 
       const genResult = await client.callWithFallback(
         'generator',
@@ -167,7 +187,9 @@ export class DualAiService {
   }
 
   async generateIterative(
-    initialContent: string,
+    existingContent: string,
+    additionalRequirements: string | undefined,
+    mode: 'improve' | 'generate',
     iterationCount: number = 3,
     useFinalReview: boolean = false,
     userId?: string
@@ -176,10 +198,19 @@ export class DualAiService {
     const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
     const langInstruction = getLanguageInstruction(contentLanguage);
     
+    // Use explicit mode from client - no heuristics needed
+    const isImprovement = mode === 'improve';
+    const trimmedContent = existingContent?.trim() || '';
+    
     console.log(`🔄 Starting iterative workflow: ${iterationCount} iterations, final review: ${useFinalReview}`);
+    console.log(`📝 Mode: ${isImprovement ? 'IMPROVEMENT (building upon existing content)' : 'NEW GENERATION'}`);
+    console.log(`📄 Existing content length: ${trimmedContent.length} characters`);
+    if (additionalRequirements) {
+      console.log(`➕ Additional requirements provided: ${additionalRequirements.substring(0, 100)}...`);
+    }
     
     const iterations: IterationData[] = [];
-    let currentPRD = initialContent;
+    let currentPRD = existingContent || '';
     const modelsUsed = new Set<string>();
     
     // Iterative Q&A Loop
@@ -189,9 +220,45 @@ export class DualAiService {
       // Step 1: AI #1 (Generator) - Creates PRD draft + asks questions
       console.log(`🤖 AI #1: Generating PRD draft and identifying gaps...`);
       
-      const generatorPrompt = i === 1
-        ? `INITIAL INPUT:\n${initialContent}\n\nCreate an initial PRD draft and ask questions about open points.`
-        : `CURRENT PRD:\n${currentPRD}\n\nImprove the PRD further and ask questions about remaining gaps.`;
+      let generatorPrompt: string;
+      
+      if (i === 1) {
+        if (isImprovement) {
+          // IMPROVEMENT MODE: Build upon existing content
+          generatorPrompt = `IMPORTANT: You are IMPROVING an EXISTING PRD. Do NOT start from scratch!
+
+EXISTING PRD (PRESERVE THIS STRUCTURE AND CONTENT):
+${existingContent}
+
+${additionalRequirements ? `ADDITIONAL REQUIREMENTS TO INTEGRATE:
+${additionalRequirements}
+
+Your task:
+1. KEEP all existing sections and their content
+2. ADD the new requirements into the appropriate existing sections
+3. ENHANCE and EXPAND existing content where relevant
+4. Do NOT remove or replace existing content unless it contradicts the new requirements
+5. Ask questions about any unclear aspects of the new requirements` : `Your task:
+1. KEEP all existing sections and their content  
+2. ENHANCE and EXPAND existing content with more details
+3. Identify gaps and missing information
+4. Ask questions to improve specific sections`}`;
+        } else {
+          // NEW GENERATION MODE: Start fresh
+          generatorPrompt = `INITIAL INPUT:\n${additionalRequirements || existingContent}\n\nCreate an initial PRD draft and ask questions about open points.`;
+        }
+      } else {
+        // Subsequent iterations: Always improve current state
+        generatorPrompt = `CURRENT PRD (DO NOT DISCARD - BUILD UPON IT):
+${currentPRD}
+
+Your task:
+1. PRESERVE all existing sections and content
+2. INTEGRATE any answered questions from previous iterations
+3. EXPAND sections that are still incomplete
+4. Ask questions about remaining gaps only
+5. Make the PRD more detailed and comprehensive`
+      }
       
       const genResult = await client.callWithFallback(
         'generator',
