@@ -156,6 +156,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deletePrd(id: string): Promise<void> {
+    // Delete all related data first (versions, comments, approvals, shares)
+    await db.delete(prdVersions).where(eq(prdVersions.prdId, id));
+    await db.delete(comments).where(eq(comments.prdId, id));
+    await db.delete(approvals).where(eq(approvals.prdId, id));
+    await db.delete(sharedPrds).where(eq(sharedPrds.prdId, id));
+    // Finally delete the PRD itself
     await db.delete(prds).where(eq(prds.id, id));
   }
 

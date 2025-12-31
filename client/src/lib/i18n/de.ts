@@ -65,6 +65,14 @@ export const de: Translations = {
     aiSettings: "KI-Einstellungen",
     contentLanguage: "Inhaltssprache",
     selectLanguage: "Sprache wählen",
+    delete: "Löschen",
+    deleteConfirmTitle: "PRD löschen",
+    deleteConfirmDescription: "Sind Sie sicher, dass Sie dieses PRD löschen möchten? Dies entfernt das Dokument dauerhaft inklusive aller Versionen, Kommentare und Freigaben. Diese Aktion kann nicht rückgängig gemacht werden.",
+    deleteConfirmButton: "Löschen",
+    deleteCancel: "Abbrechen",
+    deleteSuccess: "PRD gelöscht",
+    deleteSuccessDescription: "Das PRD und alle zugehörigen Daten wurden gelöscht.",
+    deleteFailed: "Fehler beim Löschen des PRD",
   },
   
   settings: {

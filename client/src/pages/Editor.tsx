@@ -11,7 +11,8 @@ import {
   Send,
   CheckCircle2,
   Share2,
-  MessageSquare
+  MessageSquare,
+  Trash2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,6 +41,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
@@ -65,6 +76,7 @@ export default function Editor() {
   const [showDartExportDialog, setShowDartExportDialog] = useState(false);
   const [showMobileSheet, setShowMobileSheet] = useState(false);
   const [mobileSheetTab, setMobileSheetTab] = useState<"comments" | "versions">("comments");
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   const { data: prd, isLoading } = useQuery<Prd>({
     queryKey: ["/api/prds", prdId],
@@ -127,6 +139,40 @@ export default function Editor() {
       toast({
         title: "Error",
         description: error.message || "Failed to save PRD",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("DELETE", `/api/prds/${prdId}`);
+    },
+    onSuccess: () => {
+      // Invalidate both list and detail caches to prevent stale data
+      queryClient.invalidateQueries({ queryKey: ["/api/prds"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId] });
+      toast({
+        title: t.editor.deleteSuccess,
+        description: t.editor.deleteSuccessDescription,
+      });
+      navigate("/");
+    },
+    onError: (error: Error) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/api/login";
+        }, 500);
+        return;
+      }
+      toast({
+        title: "Error",
+        description: error.message || t.editor.deleteFailed,
         variant: "destructive",
       });
     },
@@ -494,6 +540,27 @@ export default function Editor() {
               >
                 <Save className="w-4 h-4" />
               </Button>
+
+              {/* Delete Button */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowDeleteDialog(true)}
+                data-testid="button-delete"
+                className="hidden sm:inline-flex text-destructive hover:text-destructive hover:bg-destructive/10"
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                {t.editor.delete}
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setShowDeleteDialog(true)}
+                data-testid="button-delete-mobile"
+                className="sm:hidden h-9 w-9 text-destructive hover:text-destructive hover:bg-destructive/10"
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
               
               {/* Mobile Comments/Versions Button */}
               {prdId && (
@@ -655,6 +722,33 @@ export default function Editor() {
               </div>
             </SheetContent>
           </Sheet>
+
+          {/* Delete Confirmation Dialog */}
+          <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle data-testid="text-delete-confirm-title">
+                  {t.editor.deleteConfirmTitle}
+                </AlertDialogTitle>
+                <AlertDialogDescription data-testid="text-delete-confirm-description">
+                  {t.editor.deleteConfirmDescription}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel data-testid="button-delete-cancel">
+                  {t.editor.deleteCancel}
+                </AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => deleteMutation.mutate()}
+                  disabled={deleteMutation.isPending}
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  data-testid="button-delete-confirm"
+                >
+                  {deleteMutation.isPending ? "..." : t.editor.deleteConfirmButton}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </>
       )}
     </div>

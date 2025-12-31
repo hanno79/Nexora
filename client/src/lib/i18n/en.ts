@@ -63,6 +63,14 @@ export const en = {
     aiSettings: "AI Settings",
     contentLanguage: "Content Language",
     selectLanguage: "Select Language",
+    delete: "Delete",
+    deleteConfirmTitle: "Delete PRD",
+    deleteConfirmDescription: "Are you sure you want to delete this PRD? This will permanently remove the document including all versions, comments, and approvals. This action cannot be undone.",
+    deleteConfirmButton: "Delete",
+    deleteCancel: "Cancel",
+    deleteSuccess: "PRD deleted",
+    deleteSuccessDescription: "The PRD and all related data have been deleted.",
+    deleteFailed: "Failed to delete PRD",
   },
   
   settings: {
