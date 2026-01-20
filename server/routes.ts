@@ -972,7 +972,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "PRD not found" });
       }
       
-      if (prd.userId !== req.user.id) {
+      if (prd.userId !== req.user.claims.sub) {
         return res.status(403).json({ message: "Access denied" });
       }
       
@@ -995,7 +995,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "PRD not found" });
       }
       
-      if (prd.userId !== req.user.id) {
+      if (prd.userId !== req.user.claims.sub) {
         return res.status(403).json({ message: "Access denied" });
       }
       
