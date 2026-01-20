@@ -895,6 +895,145 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Guided AI Workflow routes (User-involved PRD generation)
+  const { getGuidedAiService } = await import('./guidedAiService');
+  
+  // Start guided workflow - returns initial analysis + questions
+  app.post('/api/ai/guided-start', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!isOpenRouterConfigured()) {
+        return res.status(503).json({ 
+          message: getOpenRouterConfigError()
+        });
+      }
+      
+      const { projectIdea } = req.body;
+      const userId = req.user.claims.sub;
+      
+      if (!projectIdea || projectIdea.trim().length < 10) {
+        return res.status(400).json({ message: "Please provide a project idea (at least 10 characters)" });
+      }
+      
+      const service = getGuidedAiService();
+      const result = await service.startGuidedWorkflow(projectIdea, userId);
+      
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error starting guided workflow:", error);
+      res.status(500).json({ message: error.message || "Failed to start guided workflow" });
+    }
+  });
+  
+  // Process user answers - returns refined plan + optional follow-up questions
+  app.post('/api/ai/guided-answer', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!isOpenRouterConfigured()) {
+        return res.status(503).json({ 
+          message: getOpenRouterConfigError()
+        });
+      }
+      
+      const { sessionId, answers, questions } = req.body;
+      const userId = req.user.claims.sub;
+      
+      if (!sessionId) {
+        return res.status(400).json({ message: "Session ID is required" });
+      }
+      
+      if (!answers || !Array.isArray(answers) || answers.length === 0) {
+        return res.status(400).json({ message: "At least one answer is required" });
+      }
+      
+      if (!questions || !Array.isArray(questions)) {
+        return res.status(400).json({ message: "Questions array is required for context" });
+      }
+      
+      const service = getGuidedAiService();
+      const result = await service.processAnswers(sessionId, answers, questions, userId);
+      
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error processing guided answers:", error);
+      res.status(500).json({ message: error.message || "Failed to process answers" });
+    }
+  });
+  
+  // Finalize PRD generation after guided workflow
+  app.post('/api/ai/guided-finalize', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!isOpenRouterConfigured()) {
+        return res.status(503).json({ 
+          message: getOpenRouterConfigError()
+        });
+      }
+      
+      const { sessionId, prdId } = req.body;
+      const userId = req.user.claims.sub;
+      
+      if (!sessionId) {
+        return res.status(400).json({ message: "Session ID is required" });
+      }
+      
+      const service = getGuidedAiService();
+      const result = await service.finalizePRD(sessionId, userId);
+      
+      // Log AI usage
+      if (result.modelsUsed.length > 0) {
+        await logAiUsage(
+          userId,
+          'generator',
+          result.modelsUsed[0],
+          'production',
+          { prompt_tokens: 0, completion_tokens: result.tokensUsed, total_tokens: result.tokensUsed },
+          prdId
+        );
+      }
+      
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error finalizing guided PRD:", error);
+      res.status(500).json({ message: error.message || "Failed to finalize PRD" });
+    }
+  });
+  
+  // Skip guided workflow and generate PRD directly
+  app.post('/api/ai/guided-skip', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!isOpenRouterConfigured()) {
+        return res.status(503).json({ 
+          message: getOpenRouterConfigError()
+        });
+      }
+      
+      const { projectIdea, prdId } = req.body;
+      const userId = req.user.claims.sub;
+      
+      if (!projectIdea || projectIdea.trim().length < 10) {
+        return res.status(400).json({ message: "Please provide a project idea (at least 10 characters)" });
+      }
+      
+      const service = getGuidedAiService();
+      const result = await service.skipToFinalize(projectIdea, userId);
+      
+      // Log AI usage
+      if (result.modelsUsed.length > 0) {
+        await logAiUsage(
+          userId,
+          'generator',
+          result.modelsUsed[0],
+          'production',
+          { prompt_tokens: 0, completion_tokens: result.tokensUsed, total_tokens: result.tokensUsed },
+          prdId
+        );
+      }
+      
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error in skip-to-finalize:", error);
+      res.status(500).json({ message: error.message || "Failed to generate PRD" });
+    }
+  });
+
   // Export routes
   app.post('/api/prds/:id/export', isAuthenticated, async (req: any, res) => {
     const { format } = req.body;

@@ -3,12 +3,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { Sparkles, Brain, CheckCircle2, AlertCircle, Repeat, Zap } from 'lucide-react';
+import { Sparkles, Brain, CheckCircle2, AlertCircle, Repeat, Zap, MessageSquare } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
+import { GuidedAiDialog } from './GuidedAiDialog';
 
 interface DualAiDialogProps {
   open: boolean;
@@ -30,12 +31,13 @@ export function DualAiDialog({
   const [reviewerModel, setReviewerModel] = useState('');
   const [error, setError] = useState('');
   
-  // Iterative mode settings
-  const [workflowMode, setWorkflowMode] = useState<'simple' | 'iterative'>('simple');
+  // Workflow mode: simple, iterative, or guided (new)
+  const [workflowMode, setWorkflowMode] = useState<'simple' | 'iterative' | 'guided'>('simple');
   const [iterationCount, setIterationCount] = useState(3);
   const [useFinalReview, setUseFinalReview] = useState(false);
   const [currentIteration, setCurrentIteration] = useState(0);
   const [totalIterations, setTotalIterations] = useState(0);
+  const [showGuidedDialog, setShowGuidedDialog] = useState(false);
 
   // Load user AI preferences to set default workflow mode
   useEffect(() => {
@@ -229,32 +231,46 @@ export function DualAiDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {/* Workflow Mode Toggle */}
-          <div className="flex items-center justify-between p-4 rounded-lg border bg-card">
-            <div className="space-y-0.5">
-              <div className="flex items-center gap-2">
-                <Label htmlFor="workflow-mode" className="text-base font-medium">Workflow Mode</Label>
-                {workflowMode === 'iterative' && (
-                  <Badge variant="secondary" className="text-xs">
-                    <Zap className="w-3 h-3 mr-1" />
-                    Advanced
-                  </Badge>
-                )}
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {workflowMode === 'simple' 
-                  ? 'Simple: Generator → Reviewer → Improvement' 
-                  : `Iterative: ${iterationCount}x Q&A refinement cycles`
-                }
-              </p>
+          {/* Workflow Mode Selection */}
+          <div className="space-y-3">
+            <Label className="text-base font-medium">Workflow Mode</Label>
+            <div className="grid grid-cols-3 gap-2">
+              <Button
+                variant={workflowMode === 'simple' ? 'default' : 'outline'}
+                className="flex flex-col h-auto py-3"
+                onClick={() => setWorkflowMode('simple')}
+                disabled={isGenerating}
+                data-testid="button-mode-simple"
+              >
+                <Sparkles className="w-4 h-4 mb-1" />
+                <span className="text-xs">Simple</span>
+              </Button>
+              <Button
+                variant={workflowMode === 'iterative' ? 'default' : 'outline'}
+                className="flex flex-col h-auto py-3"
+                onClick={() => setWorkflowMode('iterative')}
+                disabled={isGenerating}
+                data-testid="button-mode-iterative"
+              >
+                <Zap className="w-4 h-4 mb-1" />
+                <span className="text-xs">Iterative</span>
+              </Button>
+              <Button
+                variant={workflowMode === 'guided' ? 'default' : 'outline'}
+                className="flex flex-col h-auto py-3"
+                onClick={() => setWorkflowMode('guided')}
+                disabled={isGenerating}
+                data-testid="button-mode-guided"
+              >
+                <MessageSquare className="w-4 h-4 mb-1" />
+                <span className="text-xs">Guided</span>
+              </Button>
             </div>
-            <Switch
-              id="workflow-mode"
-              checked={workflowMode === 'iterative'}
-              onCheckedChange={(checked) => setWorkflowMode(checked ? 'iterative' : 'simple')}
-              disabled={isGenerating}
-              data-testid="switch-workflow-mode"
-            />
+            <p className="text-xs text-muted-foreground">
+              {workflowMode === 'simple' && 'Generator creates PRD → Reviewer analyzes → Automatic improvement'}
+              {workflowMode === 'iterative' && `${iterationCount}x question-answer refinement cycles for deeper analysis`}
+              {workflowMode === 'guided' && 'Answer simple questions to help AI understand your needs better'}
+            </p>
           </div>
 
           {/* Iterative Mode Settings */}
@@ -373,32 +389,64 @@ export function DualAiDialog({
           >
             Cancel
           </Button>
-          <Button 
-            onClick={handleGenerate}
-            disabled={isGenerating || (!userInput.trim() && !currentContent)}
-            data-testid="button-dual-ai-generate"
-          >
-            {isGenerating ? (
-              <>
-                <Brain className="w-4 h-4 mr-2 animate-pulse" />
-                Generating...
-              </>
-            ) : (
-              <>
-                {workflowMode === 'iterative' ? (
-                  <Repeat className="w-4 h-4 mr-2" />
-                ) : (
-                  <Sparkles className="w-4 h-4 mr-2" />
-                )}
-                {workflowMode === 'iterative' 
-                  ? `Generate (${iterationCount}x iterations)` 
-                  : (currentContent ? 'Improve with Dual-AI' : 'Generate with Dual-AI')
-                }
-              </>
-            )}
-          </Button>
+          {workflowMode === 'guided' ? (
+            <Button 
+              onClick={() => {
+                setShowGuidedDialog(true);
+              }}
+              disabled={!userInput.trim()}
+              data-testid="button-dual-ai-guided"
+            >
+              <MessageSquare className="w-4 h-4 mr-2" />
+              Start Guided Session
+            </Button>
+          ) : (
+            <Button 
+              onClick={handleGenerate}
+              disabled={isGenerating || (!userInput.trim() && !currentContent)}
+              data-testid="button-dual-ai-generate"
+            >
+              {isGenerating ? (
+                <>
+                  <Brain className="w-4 h-4 mr-2 animate-pulse" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  {workflowMode === 'iterative' ? (
+                    <Repeat className="w-4 h-4 mr-2" />
+                  ) : (
+                    <Sparkles className="w-4 h-4 mr-2" />
+                  )}
+                  {workflowMode === 'iterative' 
+                    ? `Generate (${iterationCount}x iterations)` 
+                    : (currentContent ? 'Improve with Dual-AI' : 'Generate with Dual-AI')
+                  }
+                </>
+              )}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
+
+      {/* Guided AI Dialog - opened when guided mode is selected */}
+      <GuidedAiDialog
+        open={showGuidedDialog}
+        onOpenChange={(isOpen) => {
+          setShowGuidedDialog(isOpen);
+          if (!isOpen) {
+            onOpenChange(false);
+            resetState();
+          }
+        }}
+        onContentGenerated={(content, response) => {
+          onContentGenerated(content, response);
+          setShowGuidedDialog(false);
+          onOpenChange(false);
+          resetState();
+        }}
+        initialProjectIdea={userInput}
+      />
     </Dialog>
   );
 }

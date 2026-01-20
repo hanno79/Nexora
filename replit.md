@@ -20,12 +20,13 @@ The backend runs on Express.js with TypeScript, providing a RESTful API. Authent
 
 ### AI Integration
 
-NEXORA employs a Dual-AI System (HRP-17) primarily through OpenRouter, providing access to over 400 LLM models with tiered configurations (Development, Production, Premium) and an intelligent fallback system. Users can choose between two AI-powered PRD generation workflows:
+NEXORA employs a Dual-AI System (HRP-17) primarily through OpenRouter, providing access to over 400 LLM models with tiered configurations (Development, Production, Premium) and an intelligent fallback system. Users can choose between three AI-powered PRD generation workflows:
 
 *   **Simple Mode (Default)**: A single iteration cycle where a Generator creates content, a Reviewer analyzes it, and the Generator refines it.
 *   **Iterative Mode (Advanced)**: Multi-iteration refinement (2-5 user-configurable iterations) where a Generator creates content and asks clarifying questions, and an Answerer provides expert responses. An optional Final Reviewer performs a quality check. This mode aims for deep requirement analysis and significant content expansion.
+*   **Guided Mode (Interactive)**: A user-involved workflow that asks 3-5 non-technical, feature-focused questions with multiple-choice answers (inspired by Claude Code's question pattern). Users can select from predefined options or provide custom text. The workflow runs up to 3 question rounds (with skip option) and generates a comprehensive PRD incorporating user preferences. Key files: `server/guidedAiService.ts`, `server/guidedAiPrompts.ts`, `client/src/components/GuidedAiDialog.tsx`.
 
-The platform also supports legacy Anthropic Claude AI integration (claude-sonnet-4-20250514) for single-model content generation. AI usage is tracked for cost analysis. Content generation focuses on structured markdown output, context-aware improvements, and template-based scaffolding with professional product management language.
+The platform also supports legacy Anthropic Claude AI integration (claude-sonnet-4-20250514) for single-model content generation. AI usage is tracked for cost analysis. Content generation focuses on structured markdown output, context-aware improvements, and template-based scaffolding with professional product management language. All prompts are designed to be feature-focused and non-technical, with testable acceptance criteria for every feature.
 
 ### Linear Integration
 
