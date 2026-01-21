@@ -48,6 +48,7 @@ export const aiPreferencesSchema = z.object({
   iterativeMode: z.boolean().optional(), // Toggle between Simple and Iterative workflow
   iterationCount: z.number().min(2).max(5).optional().default(3), // Number of Q&A iterations (2-5)
   useFinalReview: z.boolean().optional(), // Enable AI #3 final review in iterative mode
+  guidedQuestionRounds: z.number().min(1).max(10).optional().default(3), // Number of question rounds in Guided mode (1-10)
 });
 
 export type AiPreferences = z.infer<typeof aiPreferencesSchema>;

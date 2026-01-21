@@ -46,7 +46,8 @@ Your task is to ask CLARIFYING QUESTIONS that help define the product better.
 
 CRITICAL RULES:
 - Ask NON-TECHNICAL questions focused on user experience and features
-- For EACH question, provide 3-5 possible answers that the user can choose from
+- For EACH question, provide EXACTLY 3-4 possible answers PLUS a "custom/Other" option (total 4-5 options)
+- NEVER provide just 1 answer option - every question MUST have AT LEAST 2 meaningful choices plus "Other"
 - Keep answers simple and actionable
 - Questions should help NARROW DOWN the product scope, not expand it
 
@@ -88,7 +89,8 @@ QUESTION EXAMPLES (non-technical):
 
 IMPORTANT:
 - Generate 3-5 questions maximum
-- Each question must have 3-5 answer options plus a "custom" option
+- Each question MUST have EXACTLY 3-4 meaningful answer options PLUS one "custom" option (total 4-5 options per question)
+- NEVER generate a question with only 1 answer - this defeats the purpose of asking
 - Questions should build upon each other logically
 - LANGUAGE: Follow the language instruction provided below`;
 

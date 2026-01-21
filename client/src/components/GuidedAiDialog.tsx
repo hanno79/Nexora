@@ -337,7 +337,7 @@ export function GuidedAiDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[95vw] max-w-[700px] max-h-[85vh] sm:max-h-[90vh] overflow-hidden flex flex-col p-4 sm:p-6" data-testid="dialog-guided-ai">
+      <DialogContent className="w-[95vw] max-w-[700px] h-[90vh] sm:h-auto sm:max-h-[85vh] overflow-hidden flex flex-col p-4 sm:p-6" data-testid="dialog-guided-ai">
         <DialogHeader className="flex-shrink-0 space-y-1 sm:space-y-2">
           <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
             <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5 text-primary flex-shrink-0" />
@@ -356,7 +356,7 @@ export function GuidedAiDialog({
         <Progress value={getProgressPercentage()} className="h-1.5 sm:h-2 flex-shrink-0" />
 
         <ScrollArea className="flex-1 min-h-0 pr-2 sm:pr-4 -mr-2 sm:-mr-4">
-          <div className="space-y-3 sm:space-y-4 py-2 sm:py-4">
+          <div className="space-y-3 sm:space-y-4 py-2 sm:py-4 pb-16 sm:pb-8">
             {/* Step: Input */}
             {step === 'input' && (
               <div className="space-y-4">

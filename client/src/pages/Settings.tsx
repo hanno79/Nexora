@@ -36,6 +36,7 @@ export default function Settings() {
   const [iterativeMode, setIterativeMode] = useState(false);
   const [iterationCount, setIterationCount] = useState(3);
   const [useFinalReview, setUseFinalReview] = useState(false);
+  const [guidedQuestionRounds, setGuidedQuestionRounds] = useState(3);
 
   useEffect(() => {
     if (user) {
@@ -63,6 +64,7 @@ export default function Settings() {
     iterativeMode?: boolean;
     iterationCount?: number;
     useFinalReview?: boolean;
+    guidedQuestionRounds?: number;
   }>({
     queryKey: ["/api/settings/ai"],
   });
@@ -75,6 +77,7 @@ export default function Settings() {
       setIterativeMode(aiPreferences.iterativeMode || false);
       setIterationCount(aiPreferences.iterationCount || 3);
       setUseFinalReview(aiPreferences.useFinalReview || false);
+      setGuidedQuestionRounds(aiPreferences.guidedQuestionRounds || 3);
     }
   }, [aiPreferences]);
 
@@ -159,6 +162,7 @@ export default function Settings() {
         iterativeMode,
         iterationCount,
         useFinalReview,
+        guidedQuestionRounds,
       });
     },
     onSuccess: () => {
@@ -535,6 +539,36 @@ export default function Settings() {
                     </div>
                   </div>
                 )}
+
+                <Separator className="my-4" />
+
+                {/* Guided Mode Settings */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Brain className="w-4 h-4" />
+                    <Label className="text-base">Guided Mode Settings</Label>
+                  </div>
+                  <div className="space-y-3 pl-6 border-l-2 border-primary/20">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="guided-question-rounds">
+                        Question Rounds: {guidedQuestionRounds}
+                      </Label>
+                    </div>
+                    <Slider
+                      id="guided-question-rounds"
+                      min={1}
+                      max={10}
+                      step={1}
+                      value={[guidedQuestionRounds]}
+                      onValueChange={(value) => setGuidedQuestionRounds(value[0])}
+                      className="w-full"
+                      data-testid="slider-guided-question-rounds"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum number of question rounds in Guided Mode (1-10 rounds)
+                    </p>
+                  </div>
+                </div>
               </div>
 
               <Button

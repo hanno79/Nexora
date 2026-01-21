@@ -147,8 +147,9 @@ export class GuidedAiService {
     context.featureOverview = refinementResult.content;
     console.log(`✅ Refinement complete (${refinementResult.usage.completion_tokens} tokens)`);
 
-    // Decide if we need more questions (max 3 rounds)
-    const maxRounds = 3;
+    // Decide if we need more questions (use user's configured max rounds)
+    const userPrefs = await this.getUserPreferences(userId);
+    const maxRounds = userPrefs?.guidedQuestionRounds || 3;
     context.roundNumber++;
 
     if (context.roundNumber <= maxRounds) {
@@ -287,9 +288,14 @@ Generate a complete, professional PRD.`,
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
+        let questions = parsed.questions || [];
+        
+        // Validate and fix questions: ensure at least 2 meaningful options + custom
+        questions = this.ensureMinimumOptions(questions);
+        
         return {
           preliminaryPlan: parsed.preliminaryPlan || parsed.summary,
-          questions: parsed.questions || [],
+          questions,
         };
       }
     } catch (e) {
@@ -298,10 +304,11 @@ Generate a complete, professional PRD.`,
 
     // Fallback: Try to extract questions from text format
     const questions: GuidedQuestion[] = [];
-    const questionMatches = content.matchAll(/(?:\d+\.|#{1,3})\s*(.+\?)/g);
-    
+    const questionPattern = /(?:\d+\.|#{1,3})\s*(.+\?)/g;
+    let match;
     let questionNum = 1;
-    for (const match of questionMatches) {
+    
+    while ((match = questionPattern.exec(content)) !== null) {
       questions.push({
         id: `q${questionNum}`,
         question: match[1].trim(),
@@ -318,6 +325,57 @@ Generate a complete, professional PRD.`,
     }
 
     return { questions };
+  }
+
+  private ensureMinimumOptions(questions: GuidedQuestion[]): GuidedQuestion[] {
+    return questions.map(question => {
+      // Guard against missing/empty options array
+      if (!question.options || !Array.isArray(question.options)) {
+        question.options = [];
+      }
+      
+      // Filter out the custom/other option to count meaningful options
+      const meaningfulOptions = question.options.filter(
+        opt => opt.id !== 'custom' && opt.id !== 'other'
+      );
+      
+      // If we have less than 2 meaningful options, add default options
+      if (meaningfulOptions.length < 2) {
+        console.warn(`Question "${question.question}" has only ${meaningfulOptions.length} options, adding defaults`);
+        
+        const defaultOptions = [
+          { id: 'a', label: 'Yes', description: 'Include this in the product' },
+          { id: 'b', label: 'No', description: 'Skip this feature for now' },
+          { id: 'c', label: 'Maybe', description: 'Consider for a later phase' },
+        ];
+        
+        // Keep existing meaningful options and add from defaults as needed
+        const newOptions = [...meaningfulOptions];
+        let optionIndex = 0;
+        while (newOptions.length < 3 && optionIndex < defaultOptions.length) {
+          const defaultOpt = defaultOptions[optionIndex];
+          if (!newOptions.some(opt => opt.id === defaultOpt.id)) {
+            newOptions.push(defaultOpt);
+          }
+          optionIndex++;
+        }
+        
+        // Always add custom option at the end
+        newOptions.push({ id: 'custom', label: 'Other', description: 'Let me explain my preference...' });
+        
+        return { ...question, options: newOptions };
+      }
+      
+      // Ensure custom option exists
+      if (!question.options.some(opt => opt.id === 'custom' || opt.id === 'other')) {
+        return {
+          ...question,
+          options: [...question.options, { id: 'custom', label: 'Other', description: 'Let me explain my preference...' }]
+        };
+      }
+      
+      return question;
+    });
   }
 
   private generateSessionId(): string {
@@ -356,6 +414,26 @@ Generate a complete, professional PRD.`,
     }
 
     return { client, contentLanguage };
+  }
+
+  private async getUserPreferences(userId?: string): Promise<{ guidedQuestionRounds?: number } | null> {
+    if (!userId) return null;
+    
+    const userPrefs = await db.select({ 
+      aiPreferences: users.aiPreferences
+    })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    
+    if (userPrefs[0]?.aiPreferences) {
+      const prefs = userPrefs[0].aiPreferences as any;
+      return {
+        guidedQuestionRounds: prefs.guidedQuestionRounds || 3
+      };
+    }
+    
+    return null;
   }
 }
 
