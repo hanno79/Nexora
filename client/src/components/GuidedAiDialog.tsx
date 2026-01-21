@@ -337,13 +337,13 @@ export function GuidedAiDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-hidden flex flex-col" data-testid="dialog-guided-ai">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <MessageSquare className="w-5 h-5 text-primary" />
-            {getStepTitle()}
+      <DialogContent className="w-[95vw] max-w-[700px] max-h-[85vh] sm:max-h-[90vh] overflow-hidden flex flex-col p-4 sm:p-6" data-testid="dialog-guided-ai">
+        <DialogHeader className="flex-shrink-0 space-y-1 sm:space-y-2">
+          <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+            <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5 text-primary flex-shrink-0" />
+            <span>{getStepTitle()}</span>
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-xs sm:text-sm">
             {step === 'input' && 'Describe your project idea and we\'ll help you create a detailed PRD'}
             {step === 'analyzing' && 'AI is analyzing your project idea...'}
             {step === 'questions' && 'Answer these questions to refine your requirements'}
@@ -353,10 +353,10 @@ export function GuidedAiDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <Progress value={getProgressPercentage()} className="h-2" />
+        <Progress value={getProgressPercentage()} className="h-1.5 sm:h-2 flex-shrink-0" />
 
-        <ScrollArea className="flex-1 pr-4 -mr-4">
-          <div className="space-y-4 py-4">
+        <ScrollArea className="flex-1 min-h-0 pr-2 sm:pr-4 -mr-2 sm:-mr-4">
+          <div className="space-y-3 sm:space-y-4 py-2 sm:py-4">
             {/* Step: Input */}
             {step === 'input' && (
               <div className="space-y-4">
@@ -392,55 +392,57 @@ export function GuidedAiDialog({
 
             {/* Step: Questions */}
             {step === 'questions' && (
-              <div className="space-y-6">
-                {/* Feature Overview Preview */}
+              <div className="space-y-3 sm:space-y-4">
+                {/* Feature Overview Preview - more compact on mobile */}
                 {featureOverview && roundNumber === 1 && (
                   <Card className="bg-muted/50">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <Sparkles className="w-4 h-4" />
+                    <CardHeader className="p-3 sm:pb-2 sm:p-4">
+                      <CardTitle className="text-xs sm:text-sm flex items-center gap-2">
+                        <Sparkles className="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0" />
                         Initial Analysis
                       </CardTitle>
                     </CardHeader>
-                    <CardContent>
-                      <p className="text-sm text-muted-foreground line-clamp-4">
+                    <CardContent className="p-3 pt-0 sm:p-4 sm:pt-0">
+                      <p className="text-xs sm:text-sm text-muted-foreground line-clamp-3 sm:line-clamp-4">
                         {featureOverview.substring(0, 300)}...
                       </p>
                     </CardContent>
                   </Card>
                 )}
 
-                {/* Questions */}
+                {/* Questions - compact mobile layout */}
                 {questions.map((question, index) => (
                   <Card key={question.id} data-testid={`card-question-${question.id}`}>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-base">
+                    <CardHeader className="p-3 pb-2 sm:p-4 sm:pb-2">
+                      <CardTitle className="text-sm sm:text-base leading-tight">
                         {index + 1}. {question.question}
                       </CardTitle>
                       {question.context && (
-                        <CardDescription>{question.context}</CardDescription>
+                        <CardDescription className="text-xs sm:text-sm mt-1">{question.context}</CardDescription>
                       )}
                     </CardHeader>
-                    <CardContent className="space-y-3">
+                    <CardContent className="p-3 pt-0 sm:p-4 sm:pt-0 space-y-2 sm:space-y-3">
                       <RadioGroup
                         value={answers[question.id]?.selectedOptionId || ''}
                         onValueChange={(value) => updateAnswer(question.id, value)}
+                        className="space-y-2 sm:space-y-3"
                       >
                         {question.options.map((option) => (
-                          <div key={option.id} className="flex items-start space-x-3">
+                          <div key={option.id} className="flex items-start space-x-2 sm:space-x-3">
                             <RadioGroupItem 
                               value={option.id} 
                               id={`${question.id}-${option.id}`}
                               data-testid={`radio-${question.id}-${option.id}`}
+                              className="mt-0.5 flex-shrink-0"
                             />
-                            <div className="grid gap-0.5 flex-1">
+                            <div className="grid gap-0.5 flex-1 min-w-0">
                               <Label 
                                 htmlFor={`${question.id}-${option.id}`}
-                                className="font-medium cursor-pointer"
+                                className="font-medium cursor-pointer text-sm sm:text-base leading-tight"
                               >
                                 {option.label}
                               </Label>
-                              <p className="text-sm text-muted-foreground">
+                              <p className="text-xs sm:text-sm text-muted-foreground leading-snug">
                                 {option.description}
                               </p>
                             </div>
@@ -450,12 +452,13 @@ export function GuidedAiDialog({
 
                       {/* Custom text input when "Other" is selected */}
                       {answers[question.id]?.selectedOptionId === 'custom' && (
-                        <div className="mt-3 pl-7">
+                        <div className="mt-2 sm:mt-3 pl-5 sm:pl-7">
                           <Input
                             placeholder="Please explain your preference..."
                             value={answers[question.id]?.customText || ''}
                             onChange={(e) => updateAnswer(question.id, 'custom', e.target.value)}
                             data-testid={`input-custom-${question.id}`}
+                            className="text-sm"
                           />
                         </div>
                       )}
@@ -511,7 +514,7 @@ export function GuidedAiDialog({
           </div>
         </ScrollArea>
 
-        <DialogFooter className="flex-shrink-0 gap-2 sm:gap-2">
+        <DialogFooter className="flex-shrink-0 gap-2 pt-2 sm:pt-4 flex-wrap justify-end">
           {step === 'input' && (
             <>
               <Button
@@ -530,16 +533,18 @@ export function GuidedAiDialog({
                 disabled={projectIdea.trim().length < 10}
                 data-testid="button-skip-all"
               >
-                <SkipForward className="w-4 h-4 mr-2" />
-                Skip Questions
+                <SkipForward className="w-4 h-4 mr-1 sm:mr-2" />
+                <span className="hidden sm:inline">Skip Questions</span>
+                <span className="sm:hidden">Skip</span>
               </Button>
               <Button
                 onClick={handleStart}
                 disabled={projectIdea.trim().length < 10}
                 data-testid="button-start-guided"
               >
-                <ArrowRight className="w-4 h-4 mr-2" />
-                Start Guided Generation
+                <ArrowRight className="w-4 h-4 mr-1 sm:mr-2" />
+                <span className="hidden sm:inline">Start Guided Generation</span>
+                <span className="sm:hidden">Start</span>
               </Button>
             </>
           )}
@@ -561,15 +566,16 @@ export function GuidedAiDialog({
                 onClick={handleSkipQuestions}
                 data-testid="button-skip-questions"
               >
-                <SkipForward className="w-4 h-4 mr-2" />
-                Skip & Generate
+                <SkipForward className="w-4 h-4 mr-1 sm:mr-2" />
+                <span className="hidden sm:inline">Skip & Generate</span>
+                <span className="sm:hidden">Skip</span>
               </Button>
               <Button
                 onClick={handleSubmitAnswers}
                 disabled={Object.keys(answers).length === 0}
                 data-testid="button-submit-answers"
               >
-                <ArrowRight className="w-4 h-4 mr-2" />
+                <ArrowRight className="w-4 h-4 mr-1 sm:mr-2" />
                 Continue
               </Button>
             </>
