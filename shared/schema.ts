@@ -49,6 +49,7 @@ const tierDefaultsSchema = z.object({
 export const aiPreferencesSchema = z.object({
   generatorModel: z.string().optional(),
   reviewerModel: z.string().optional(),
+  fallbackModel: z.string().optional(),
   tier: z.enum(['development', 'production', 'premium']).optional(),
   tierDefaults: z.object({
     development: tierDefaultsSchema.optional(),

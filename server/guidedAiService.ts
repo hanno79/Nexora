@@ -406,6 +406,9 @@ Generate a complete, professional PRD.`,
           if (prefs.reviewerModel) {
             client.setPreferredModel('reviewer', prefs.reviewerModel);
           }
+          if (prefs.fallbackModel) {
+            client.setPreferredModel('fallback', prefs.fallbackModel);
+          }
           if (prefs.tier) {
             client.setPreferredTier(prefs.tier);
           }

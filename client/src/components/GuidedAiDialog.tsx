@@ -69,6 +69,7 @@ export function GuidedAiDialog({
   const [roundNumber, setRoundNumber] = useState(1);
   const [error, setError] = useState('');
   const [refinedPlan, setRefinedPlan] = useState('');
+  const [modelsUsed, setModelsUsed] = useState<string[]>([]);
 
   const resetState = () => {
     setProjectIdea('');
@@ -80,6 +81,7 @@ export function GuidedAiDialog({
     setRoundNumber(1);
     setError('');
     setRefinedPlan('');
+    setModelsUsed([]);
     setHasAutoStarted(false);
   };
 
@@ -244,6 +246,7 @@ export function GuidedAiDialog({
 
       const data = await response.json();
       setStep('done');
+      if (data.modelsUsed) setModelsUsed(data.modelsUsed);
       
       onContentGenerated(data.prdContent, {
         guided: true,
@@ -285,6 +288,7 @@ export function GuidedAiDialog({
 
       const data = await response.json();
       setStep('done');
+      if (data.modelsUsed) setModelsUsed(data.modelsUsed);
       
       onContentGenerated(data.prdContent, {
         guided: false,
@@ -501,6 +505,15 @@ export function GuidedAiDialog({
                 <CheckCircle2 className="w-12 h-12 text-green-500" />
                 <p className="font-medium">PRD Generated Successfully!</p>
                 <p className="text-sm text-muted-foreground">Your content has been added to the editor</p>
+                {modelsUsed.length > 0 && (
+                  <div className="flex flex-wrap items-center justify-center gap-1 mt-2" data-testid="text-models-used">
+                    {modelsUsed.map((m, i) => (
+                      <Badge key={i} variant="secondary" className="text-xs">
+                        {m.split('/')[1] || m}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

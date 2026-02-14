@@ -127,6 +127,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const preferences = user[0]?.aiPreferences || {
         generatorModel: 'google/gemini-2.5-flash',
         reviewerModel: 'anthropic/claude-sonnet-4',
+        fallbackModel: 'deepseek/deepseek-r1-0528:free',
         tier: 'production'
       };
       

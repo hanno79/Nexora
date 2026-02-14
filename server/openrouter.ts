@@ -63,7 +63,7 @@ class OpenRouterClient {
   private apiKey: string;
   private baseUrl = 'https://openrouter.ai/api/v1';
   private tier: keyof ModelConfig;
-  private preferredModels: { generator?: string; reviewer?: string } = {};
+  private preferredModels: { generator?: string; reviewer?: string; fallback?: string } = {};
 
   constructor(apiKey?: string, tier: keyof ModelConfig = 'production') {
     this.apiKey = apiKey || process.env.OPENROUTER_API_KEY || '';
@@ -82,11 +82,11 @@ class OpenRouterClient {
     return MODEL_TIERS[this.tier];
   }
 
-  setPreferredModel(type: 'generator' | 'reviewer', model: string | undefined): void {
+  setPreferredModel(type: 'generator' | 'reviewer' | 'fallback', model: string | undefined): void {
     this.preferredModels[type] = model;
   }
 
-  getPreferredModel(type: 'generator' | 'reviewer'): string | undefined {
+  getPreferredModel(type: 'generator' | 'reviewer' | 'fallback'): string | undefined {
     return this.preferredModels[type];
   }
 
@@ -207,62 +207,69 @@ class OpenRouterClient {
     systemPrompt: string,
     userPrompt: string,
     maxTokens: number = 4000
-  ): Promise<{ content: string; usage: any; model: string; tier: string }> {
+  ): Promise<{ content: string; usage: any; model: string; tier: string; usedFallback: boolean }> {
     const errors: string[] = [];
-    const triedModels = new Set<string>();
 
-    // Build ordered list of models to try:
-    // 1. User's preferred model (if set)
-    // 2. Current tier's default model
-    // 3. Fallback tier models (lower tiers)
-    const modelsToTry: Array<{ model: string; tier: string }> = [];
+    // Build deduplicated ordered list:
+    // 1) preferred model for this role
+    // 2) the other role's model (as secondary fallback)
+    // 3) explicit fallback model
+    // 4) tier defaults (only if nothing else configured)
+    const seen = new Set<string>();
+    const modelsToTry: Array<{ model: string; isPrimary: boolean }> = [];
 
-    const preferredModel = this.preferredModels[modelType];
-    if (preferredModel) {
-      modelsToTry.push({ model: preferredModel, tier: this.tier });
+    const addIfNew = (model: string | undefined, isPrimary: boolean) => {
+      if (model && !seen.has(model)) {
+        seen.add(model);
+        modelsToTry.push({ model, isPrimary });
+      }
+    };
+
+    const primary = this.preferredModels[modelType];
+    const secondary = this.preferredModels[modelType === 'generator' ? 'reviewer' : 'generator'];
+    const fallback = this.preferredModels.fallback;
+
+    addIfNew(primary, true);
+    addIfNew(secondary, false);
+    addIfNew(fallback, false);
+
+    // If no user models configured at all, use tier defaults
+    if (modelsToTry.length === 0) {
+      const tierModels = MODEL_TIERS[this.tier];
+      addIfNew(tierModels.generator, true);
+      addIfNew(tierModels.reviewer, false);
     }
 
-    const tiers: (keyof ModelConfig)[] = ['premium', 'production', 'development'];
-    const startIndex = tiers.indexOf(this.tier);
-    for (let i = startIndex; i < tiers.length; i++) {
-      const tierModels = MODEL_TIERS[tiers[i]];
-      const tierModel = modelType === 'generator' ? tierModels.generator : tierModels.reviewer;
-      modelsToTry.push({ model: tierModel, tier: tiers[i] });
-    }
-
-    for (const attempt of modelsToTry) {
-      if (triedModels.has(attempt.model)) continue;
-      triedModels.add(attempt.model);
+    for (let i = 0; i < modelsToTry.length; i++) {
+      const { model: attemptModel, isPrimary } = modelsToTry[i];
 
       try {
-        console.log(`Attempting ${modelType} with ${attempt.model} (${attempt.tier} tier)`);
+        console.log(`Attempting ${modelType} with ${attemptModel} (${isPrimary ? 'primary' : 'fallback'})`);
 
         const savedPreferred = this.preferredModels[modelType];
-        this.preferredModels[modelType] = attempt.model;
-        this.tier = attempt.tier as keyof ModelConfig;
+        this.preferredModels[modelType] = attemptModel;
 
         try {
           const result = await this.callModel(modelType, systemPrompt, userPrompt, maxTokens);
-          return { ...result, tier: attempt.tier };
+          const usedFallback = !isPrimary;
+          if (usedFallback) {
+            console.log(`⚠️ Fallback used: ${attemptModel} instead of ${primary || 'none'}`);
+          }
+          return { ...result, tier: this.tier, usedFallback };
         } finally {
           this.preferredModels[modelType] = savedPreferred;
-          this.tier = tiers[startIndex];
         }
       } catch (error: any) {
-        errors.push(`${attempt.model}: ${error.message}`);
-        console.warn(`${attempt.model} failed, trying fallback...`, error.message);
+        errors.push(`${attemptModel}: ${error.message}`);
+        console.warn(`${attemptModel} failed, trying next model...`, error.message);
       }
     }
 
-    const allNotFound = errors.every(e =>
-      e.includes('no longer available') || e.includes('No endpoints found') || e.includes('not found')
+    // All models failed - clear error for the user
+    const modelList = modelsToTry.map(m => m.model);
+    throw new Error(
+      `All ${modelList.length} configured AI models failed. Please go to Settings and verify your models are available on OpenRouter.\n\nModels tried:\n${errors.map((e, i) => `${i + 1}. ${e}`).join('\n')}`
     );
-    if (allNotFound) {
-      throw new Error(
-        `The selected AI models are no longer available on OpenRouter. Please go to Settings and update your Generator and Reviewer model selections to currently available models. Tried: ${Array.from(triedModels).join(', ')}`
-      );
-    }
-    throw new Error(`All AI models failed. Last errors: ${errors.slice(-2).join(' | ')}`);
   }
 }
 

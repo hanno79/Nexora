@@ -32,6 +32,7 @@ export default function Settings() {
   const [defaultContentLanguage, setDefaultContentLanguage] = useState("auto");
   const [generatorModel, setGeneratorModel] = useState("google/gemini-2.5-flash");
   const [reviewerModel, setReviewerModel] = useState("anthropic/claude-sonnet-4");
+  const [fallbackModel, setFallbackModel] = useState("deepseek/deepseek-r1-0528:free");
   const [aiTier, setAiTier] = useState<"development" | "production" | "premium">("production");
   const [modelFilter, setModelFilter] = useState<'all' | 'free' | 'paid'>('all');
   const [modelSearch, setModelSearch] = useState('');
@@ -85,6 +86,7 @@ export default function Settings() {
   const { data: aiPreferences } = useQuery<{
     generatorModel?: string;
     reviewerModel?: string;
+    fallbackModel?: string;
     tier?: "development" | "production" | "premium";
     tierDefaults?: {
       development?: { generator?: string; reviewer?: string };
@@ -103,6 +105,7 @@ export default function Settings() {
     if (aiPreferences) {
       setGeneratorModel(aiPreferences.generatorModel || "google/gemini-2.5-flash");
       setReviewerModel(aiPreferences.reviewerModel || "anthropic/claude-sonnet-4");
+      setFallbackModel(aiPreferences.fallbackModel || "deepseek/deepseek-r1-0528:free");
       setAiTier(aiPreferences.tier || "production");
       setTierDefaults(aiPreferences.tierDefaults || {});
       setIterativeMode(aiPreferences.iterativeMode || false);
@@ -122,20 +125,22 @@ export default function Settings() {
     return matchesFilter && matchesSearch;
   });
 
+  const tierFallbackDefaults: Record<string, string> = {
+    development: "meta-llama/llama-3.3-70b-instruct:free",
+    production: "deepseek/deepseek-r1-0528:free",
+    premium: "deepseek/deepseek-r1-0528:free",
+  };
+
   const handleTierChange = (value: "development" | "production" | "premium") => {
     setAiTier(value);
-    const userDefaults = tierDefaults[value];
     const systemDefaults = openRouterData?.tierDefaults?.[value];
-    if (userDefaults?.generator) {
-      setGeneratorModel(userDefaults.generator);
-    } else if (systemDefaults?.generator) {
+    if (systemDefaults?.generator) {
       setGeneratorModel(systemDefaults.generator);
     }
-    if (userDefaults?.reviewer) {
-      setReviewerModel(userDefaults.reviewer);
-    } else if (systemDefaults?.reviewer) {
+    if (systemDefaults?.reviewer) {
       setReviewerModel(systemDefaults.reviewer);
     }
+    setFallbackModel(tierFallbackDefaults[value] || "deepseek/deepseek-r1-0528:free");
   };
 
   const updateProfileMutation = useMutation({
@@ -215,6 +220,7 @@ export default function Settings() {
       return await apiRequest("PATCH", "/api/settings/ai", {
         generatorModel,
         reviewerModel,
+        fallbackModel,
         tier: aiTier,
         tierDefaults,
         iterativeMode,
@@ -570,6 +576,38 @@ export default function Settings() {
                   </p>
                 </div>
 
+                <div className="space-y-2">
+                  <Label htmlFor="fallback-model">Fallback Model</Label>
+                  <Select value={fallbackModel} onValueChange={setFallbackModel}>
+                    <SelectTrigger id="fallback-model" data-testid="select-fallback-model">
+                      <SelectValue placeholder={modelsLoading ? "Loading models..." : "Select a model"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {modelsLoading ? (
+                        <SelectItem value="loading" disabled>Loading models...</SelectItem>
+                      ) : filteredModels.length === 0 ? (
+                        <SelectItem value="none" disabled>No models found</SelectItem>
+                      ) : (
+                        filteredModels.map(m => (
+                          <SelectItem key={m.id} value={m.id}>
+                            {m.name}{m.isFree ? ' (Free)' : ''}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Last resort if both Generator and Reviewer models fail. A free model is recommended here.
+                  </p>
+                </div>
+
+                <div className="p-3 rounded-lg border bg-muted/30 space-y-2">
+                  <p className="text-sm font-medium">How fallback works</p>
+                  <p className="text-xs text-muted-foreground">
+                    If the primary model fails (e.g. temporarily unavailable), the system tries the other model, then the Fallback. If all 3 fail, you get a clear error message. The system will show you which model was actually used.
+                  </p>
+                </div>
+
                 <Separator className="my-4" />
 
                 <div className="space-y-2">
@@ -585,34 +623,8 @@ export default function Settings() {
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Selecting a tier applies saved model defaults. Also used as fallback if preferred models fail.
+                    Selecting a tier fills all 3 model slots with recommended defaults for that quality level.
                   </p>
-                </div>
-
-                <div className="p-3 rounded-lg border bg-muted/30 space-y-2">
-                  <p className="text-sm font-medium">Save Current Selection as Tier Default</p>
-                  <p className="text-xs text-muted-foreground">
-                    Save the current Generator and Reviewer models as defaults for the "{aiTier}" tier.
-                    Next time you select this tier, these models will be applied automatically.
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setTierDefaults(prev => ({
-                        ...prev,
-                        [aiTier]: { generator: generatorModel, reviewer: reviewerModel },
-                      }));
-                      toast({
-                        title: "Tier Defaults Updated",
-                        description: `Saved current models as defaults for ${aiTier} tier. Click "Save AI Preferences" to persist.`,
-                      });
-                    }}
-                    data-testid="button-save-tier-defaults"
-                  >
-                    <Save className="w-4 h-4 mr-2" />
-                    Set as {aiTier.charAt(0).toUpperCase() + aiTier.slice(1)} Default
-                  </Button>
                 </div>
               </div>
 
