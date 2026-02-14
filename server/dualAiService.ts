@@ -17,6 +17,7 @@ import {
   type IterationData
 } from './dualAiPrompts';
 import { generateFeatureList } from './services/llm/generateFeatureList';
+import { expandAllFeatures } from './services/llm/expandFeature';
 import { db } from './db';
 import { users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
@@ -97,6 +98,15 @@ Create an improved version that incorporates the new requirements while keeping 
         const featureResult = await generateFeatureList(userInput, vision, client);
         console.log(`🧩 Feature List (model: ${featureResult.model}, retried: ${featureResult.retried}):`);
         console.log(featureResult.featureList);
+
+        // Feature Expansion Engine (modular, parallel to monolithic PRD — testing phase)
+        try {
+          console.log('🏗️ Feature Expansion Engine: Starting modular expansion...');
+          const expansionResult = await expandAllFeatures(userInput, vision, featureResult.featureList, client);
+          console.log(`🏗️ Feature Expansion complete: ${expansionResult.expandedFeatures.length} features, ${expansionResult.totalTokens} tokens`);
+        } catch (expansionError: any) {
+          console.warn('⚠️ Feature Expansion Engine failed (non-blocking):', expansionError.message);
+        }
       } catch (error: any) {
         console.warn('⚠️ Feature Identification Layer failed (non-blocking):', error.message);
       }
@@ -293,7 +303,7 @@ Your task:
       modelsUsed.add(genResult.model);
       console.log(`✅ Generated ${genResult.usage.completion_tokens} tokens with ${genResult.model}`);
       
-      // Feature Identification Layer (first iteration only)
+      // Feature Identification Layer + Expansion Engine (first iteration only)
       if (i === 1) {
         try {
           console.log('🧩 Feature Identification Layer (iterative): Extracting atomic features...');
@@ -302,6 +312,15 @@ Your task:
           const featureResult = await generateFeatureList(inputText, vision, client);
           console.log(`🧩 Feature List (model: ${featureResult.model}, retried: ${featureResult.retried}):`);
           console.log(featureResult.featureList);
+
+          // Feature Expansion Engine (modular, parallel to monolithic PRD — testing phase)
+          try {
+            console.log('🏗️ Feature Expansion Engine (iterative): Starting modular expansion...');
+            const expansionResult = await expandAllFeatures(inputText, vision, featureResult.featureList, client);
+            console.log(`🏗️ Feature Expansion complete: ${expansionResult.expandedFeatures.length} features, ${expansionResult.totalTokens} tokens`);
+          } catch (expansionError: any) {
+            console.warn('⚠️ Feature Expansion Engine failed (non-blocking):', expansionError.message);
+          }
         } catch (error: any) {
           console.warn('⚠️ Feature Identification Layer failed (non-blocking):', error.message);
         }
