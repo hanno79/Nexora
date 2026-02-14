@@ -13,15 +13,15 @@ interface ModelConfig {
   premium: ModelTier;
 }
 
-// Model configuration with current best models (Feb 2025)
+// Model configuration with currently available models (verified Feb 2026)
 const MODEL_TIERS: ModelConfig = {
   development: {
-    generator: "meta-llama/llama-4-maverick:free",
-    reviewer: "qwen/qwen3-235b-a22b:free",
+    generator: "deepseek/deepseek-r1-0528:free",
+    reviewer: "meta-llama/llama-3.3-70b-instruct:free",
     cost: "$0/Million Tokens"
   },
   production: {
-    generator: "google/gemini-2.5-flash-preview",
+    generator: "google/gemini-2.5-flash",
     reviewer: "anthropic/claude-sonnet-4",
     cost: "~$0.10-0.30 pro PRD"
   },
@@ -208,59 +208,61 @@ class OpenRouterClient {
     userPrompt: string,
     maxTokens: number = 4000
   ): Promise<{ content: string; usage: any; model: string; tier: string }> {
+    const errors: string[] = [];
+    const triedModels = new Set<string>();
+
+    // Build ordered list of models to try:
+    // 1. User's preferred model (if set)
+    // 2. Current tier's default model
+    // 3. Fallback tier models (lower tiers)
+    const modelsToTry: Array<{ model: string; tier: string }> = [];
+
+    const preferredModel = this.preferredModels[modelType];
+    if (preferredModel) {
+      modelsToTry.push({ model: preferredModel, tier: this.tier });
+    }
+
     const tiers: (keyof ModelConfig)[] = ['premium', 'production', 'development'];
     const startIndex = tiers.indexOf(this.tier);
-    const originalTier = this.tier;
-    
-    // Try current tier and all lower tiers
     for (let i = startIndex; i < tiers.length; i++) {
-      const fallbackTier = tiers[i];
-      const fallbackModels = MODEL_TIERS[fallbackTier];
-      const attemptModel = modelType === 'generator' 
-        ? fallbackModels.generator 
-        : fallbackModels.reviewer;
+      const tierModels = MODEL_TIERS[tiers[i]];
+      const tierModel = modelType === 'generator' ? tierModels.generator : tierModels.reviewer;
+      modelsToTry.push({ model: tierModel, tier: tiers[i] });
+    }
+
+    for (const attempt of modelsToTry) {
+      if (triedModels.has(attempt.model)) continue;
+      triedModels.add(attempt.model);
 
       try {
-        console.log(`Attempting ${modelType} with ${attemptModel} (${fallbackTier} tier)`);
-        
-        // Temporarily switch tier for this call only
-        this.tier = fallbackTier;
-        
-        const result = await this.callModel(
-          modelType, 
-          systemPrompt, 
-          userPrompt, 
-          maxTokens
-        );
-        
-        // Success! Return result and restore tier
-        return {
-          ...result,
-          tier: fallbackTier
-        };
-      } catch (error: any) {
-        console.warn(`${attemptModel} failed, trying fallback...`, error.message);
-        
-        // If this is the last tier, restore original tier and throw
-        if (i === tiers.length - 1) {
-          this.tier = originalTier;
-          if (error.message.includes('no longer available') || error.message.includes('No endpoints found') || error.message.includes('not found')) {
-            throw new Error(`The selected AI models are no longer available on OpenRouter. Please go to Settings and update your Generator and Reviewer model selections to currently available models.`);
-          }
-          throw new Error(`All AI models failed. ${error.message}`);
+        console.log(`Attempting ${modelType} with ${attempt.model} (${attempt.tier} tier)`);
+
+        const savedPreferred = this.preferredModels[modelType];
+        this.preferredModels[modelType] = attempt.model;
+        this.tier = attempt.tier as keyof ModelConfig;
+
+        try {
+          const result = await this.callModel(modelType, systemPrompt, userPrompt, maxTokens);
+          return { ...result, tier: attempt.tier };
+        } finally {
+          this.preferredModels[modelType] = savedPreferred;
+          this.tier = tiers[startIndex];
         }
-        
-        // Continue to next tier
-        continue;
-      } finally {
-        // Always restore original tier to prevent cross-request contamination
-        this.tier = originalTier;
+      } catch (error: any) {
+        errors.push(`${attempt.model}: ${error.message}`);
+        console.warn(`${attempt.model} failed, trying fallback...`, error.message);
       }
     }
 
-    // Safety: restore tier even if loop exits abnormally
-    this.tier = originalTier;
-    throw new Error('All fallback attempts failed');
+    const allNotFound = errors.every(e =>
+      e.includes('no longer available') || e.includes('No endpoints found') || e.includes('not found')
+    );
+    if (allNotFound) {
+      throw new Error(
+        `The selected AI models are no longer available on OpenRouter. Please go to Settings and update your Generator and Reviewer model selections to currently available models. Tried: ${Array.from(triedModels).join(', ')}`
+      );
+    }
+    throw new Error(`All AI models failed. Last errors: ${errors.slice(-2).join(' | ')}`);
   }
 }
 

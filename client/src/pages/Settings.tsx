@@ -30,7 +30,7 @@ export default function Settings() {
   const [role, setRole] = useState("");
   const [uiLanguage, setUiLanguage] = useState("auto");
   const [defaultContentLanguage, setDefaultContentLanguage] = useState("auto");
-  const [generatorModel, setGeneratorModel] = useState("google/gemini-2.5-flash-preview");
+  const [generatorModel, setGeneratorModel] = useState("google/gemini-2.5-flash");
   const [reviewerModel, setReviewerModel] = useState("anthropic/claude-sonnet-4");
   const [aiTier, setAiTier] = useState<"development" | "production" | "premium">("production");
   const [modelFilter, setModelFilter] = useState<'all' | 'free' | 'paid'>('all');
@@ -101,7 +101,7 @@ export default function Settings() {
 
   useEffect(() => {
     if (aiPreferences) {
-      setGeneratorModel(aiPreferences.generatorModel || "google/gemini-2.5-flash-preview");
+      setGeneratorModel(aiPreferences.generatorModel || "google/gemini-2.5-flash");
       setReviewerModel(aiPreferences.reviewerModel || "anthropic/claude-sonnet-4");
       setAiTier(aiPreferences.tier || "production");
       setTierDefaults(aiPreferences.tierDefaults || {});

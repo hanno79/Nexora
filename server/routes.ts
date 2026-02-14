@@ -125,7 +125,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }).from(users).where(eq(users.id, userId)).limit(1);
       
       const preferences = user[0]?.aiPreferences || {
-        generatorModel: 'google/gemini-2.5-flash-preview',
+        generatorModel: 'google/gemini-2.5-flash',
         reviewerModel: 'anthropic/claude-sonnet-4',
         tier: 'production'
       };
