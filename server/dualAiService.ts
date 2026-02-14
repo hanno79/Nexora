@@ -18,6 +18,7 @@ import {
 } from './dualAiPrompts';
 import { generateFeatureList } from './services/llm/generateFeatureList';
 import { expandAllFeatures } from './services/llm/expandFeature';
+import { parsePRDToStructure, logStructureValidation } from './prdParser';
 import { db } from './db';
 import { users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
@@ -176,6 +177,14 @@ Create an improved version that incorporates the new requirements while keeping 
     // Apply cleanup to strip any LLM preamble/meta-commentary from final output
     const rawFinalContent = improvedVersion?.content || generatorResponse.content;
     const cleanedFinalContent = this.extractCleanPRD(rawFinalContent);
+
+    // Structured PRD representation (read-only, logging only)
+    try {
+      const structured = parsePRDToStructure(cleanedFinalContent);
+      logStructureValidation(structured);
+    } catch (parseError: any) {
+      console.warn('⚠️ PRD structure parsing failed (non-blocking):', parseError.message);
+    }
 
     return {
       finalContent: cleanedFinalContent,
@@ -393,6 +402,14 @@ Your task:
       (finalReview?.usage.total_tokens || 0);
     
     console.log(`\n✅ Iterative workflow complete! Total tokens: ${totalTokens}`);
+
+    // Structured PRD representation (read-only, logging only)
+    try {
+      const structured = parsePRDToStructure(currentPRD);
+      logStructureValidation(structured);
+    } catch (parseError: any) {
+      console.warn('⚠️ PRD structure parsing failed (non-blocking):', parseError.message);
+    }
     
     return {
       finalContent: currentPRD,
