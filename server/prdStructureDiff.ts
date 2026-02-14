@@ -91,3 +91,34 @@ export function logStructuralDrift(iteration: number, diff: StructuralDiff): str
 
   return warnings;
 }
+
+export function restoreRemovedFeatures(
+  previous: PRDStructure,
+  current: PRDStructure,
+  removedIds: string[]
+): PRDStructure {
+  const restoredIds: string[] = [];
+
+  for (const id of removedIds) {
+    const lostFeature = previous.features.find(f => f.id === id);
+    if (lostFeature) {
+      current.features.push({ ...lostFeature });
+      restoredIds.push(id);
+      console.warn(`🔧 Feature restored automatically: ${id} (${lostFeature.name})`);
+    }
+  }
+
+  if (restoredIds.length > 0) {
+    const prevOrder = previous.features.map(f => f.id);
+    current.features.sort((a, b) => {
+      const aIdx = prevOrder.indexOf(a.id);
+      const bIdx = prevOrder.indexOf(b.id);
+      if (aIdx === -1 && bIdx === -1) return 0;
+      if (aIdx === -1) return 1;
+      if (bIdx === -1) return -1;
+      return aIdx - bIdx;
+    });
+  }
+
+  return current;
+}

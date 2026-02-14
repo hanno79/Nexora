@@ -19,7 +19,8 @@ import {
 import { generateFeatureList } from './services/llm/generateFeatureList';
 import { expandAllFeatures } from './services/llm/expandFeature';
 import { parsePRDToStructure, logStructureValidation } from './prdParser';
-import { compareStructures, logStructuralDrift } from './prdStructureDiff';
+import { compareStructures, logStructuralDrift, restoreRemovedFeatures } from './prdStructureDiff';
+import { assembleStructureToMarkdown } from './prdAssembler';
 import type { PRDStructure } from './prdStructure';
 import { db } from './db';
 import { users } from '@shared/schema';
@@ -253,6 +254,7 @@ Create an improved version that incorporates the new requirements while keeping 
     const modelsUsed = new Set<string>();
     let previousStructure: PRDStructure | null = null;
     const allDriftWarnings: Map<number, string[]> = new Map();
+    const allPreservationActions: Map<number, string[]> = new Map();
     
     // Iterative Q&A Loop
     for (let i = 1; i <= iterationCount; i++) {
@@ -361,31 +363,41 @@ Your task:
       // Step 3: Extract clean PRD (without Q&A sections) and build iteration log
       const cleanPRD = this.extractCleanPRD(genResult.content);
 
-      // Structural drift detection (read-only, non-blocking)
+      // Structural drift detection + feature preservation (non-blocking)
+      let preservedPRD = cleanPRD;
       try {
-        const currentStructure = parsePRDToStructure(cleanPRD);
+        let currentStructure = parsePRDToStructure(cleanPRD);
         if (previousStructure) {
           const diff = compareStructures(previousStructure, currentStructure);
           const warnings = logStructuralDrift(i, diff);
           if (warnings.length > 0) {
             allDriftWarnings.set(i, warnings);
           }
+
+          if (diff.removedFeatures.length > 0) {
+            console.log(`🔧 Iteration ${i}: Restoring ${diff.removedFeatures.length} lost feature(s)...`);
+            currentStructure = restoreRemovedFeatures(previousStructure, currentStructure, diff.removedFeatures);
+            preservedPRD = assembleStructureToMarkdown(currentStructure);
+            allPreservationActions.set(i, [...diff.removedFeatures]);
+            console.log(`✅ Iteration ${i}: Feature preservation complete, PRD reassembled`);
+          }
         } else {
           logStructureValidation(currentStructure);
         }
         previousStructure = currentStructure;
-      } catch (driftError: any) {
-        console.warn(`⚠️ Structural drift detection failed for iteration ${i} (non-blocking):`, driftError.message);
+      } catch (preserveError: any) {
+        console.warn(`⚠️ Feature preservation failed for iteration ${i} (non-blocking, using cleanPRD):`, preserveError.message);
+        preservedPRD = cleanPRD;
       }
 
-      currentPRD = cleanPRD;
+      currentPRD = preservedPRD;
       
       iterations.push({
         iterationNumber: i,
         generatorOutput: genResult.content,
         answererOutput: answerResult.content,
         questions,
-        mergedPRD: cleanPRD,
+        mergedPRD: preservedPRD,
         tokensUsed: genResult.usage.total_tokens + answerResult.usage.total_tokens
       });
     }
@@ -417,7 +429,7 @@ Your task:
     }
     
     // Build iteration log document (separate from clean PRD)
-    const iterationLog = this.buildIterationLog(iterations, finalReview, allDriftWarnings);
+    const iterationLog = this.buildIterationLog(iterations, finalReview, allDriftWarnings, allPreservationActions);
     
     // Calculate totals
     const totalTokens = iterations.reduce((sum, iter) => sum + iter.tokensUsed, 0) +
@@ -555,7 +567,7 @@ Your task:
     return openPoints;
   }
 
-  private buildIterationLog(iterations: IterationData[], finalReview?: IterativeResponse['finalReview'], driftWarnings?: Map<number, string[]>): string {
+  private buildIterationLog(iterations: IterationData[], finalReview?: IterativeResponse['finalReview'], driftWarnings?: Map<number, string[]>, preservationActions?: Map<number, string[]>): string {
     const lines: string[] = [];
     lines.push('# Iteration Protocol');
     lines.push('');
@@ -595,6 +607,16 @@ Your task:
         lines.push('');
         for (const warning of iterWarnings) {
           lines.push(`- ${warning}`);
+        }
+        lines.push('');
+      }
+
+      const iterPreservations = preservationActions?.get(iter.iterationNumber);
+      if (iterPreservations && iterPreservations.length > 0) {
+        lines.push('### Feature Preservation Actions');
+        lines.push('');
+        for (const featureId of iterPreservations) {
+          lines.push(`- Restored: ${featureId}`);
         }
         lines.push('');
       }
