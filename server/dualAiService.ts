@@ -22,6 +22,7 @@ import { parsePRDToStructure, logStructureValidation } from './prdParser';
 import { compareStructures, logStructuralDrift, restoreRemovedFeatures } from './prdStructureDiff';
 import { assembleStructureToMarkdown } from './prdAssembler';
 import { enforceFeatureIntegrity, type IntegrityRestoration } from './prdFeatureValidator';
+import { detectTargetSection, regenerateSection } from './prdSectionRegenerator';
 import type { PRDStructure } from './prdStructure';
 import { db } from './db';
 import { users } from '@shared/schema';
@@ -257,20 +258,65 @@ Create an improved version that incorporates the new requirements while keeping 
     const allDriftWarnings: Map<number, string[]> = new Map();
     const allPreservationActions: Map<number, string[]> = new Map();
     const allIntegrityRestorations: Map<number, IntegrityRestoration[]> = new Map();
+    const allSectionRegens: Map<number, { section: string; feedbackSnippet: string }> = new Map();
     
     // Iterative Q&A Loop
     for (let i = 1; i <= iterationCount; i++) {
       console.log(`\n📝 Iteration ${i}/${iterationCount}`);
       
       // Step 1: AI #1 (Generator) - Creates PRD draft + asks questions
-      console.log(`🤖 AI #1: Generating PRD draft and identifying gaps...`);
-      
-      let generatorPrompt: string;
-      
-      if (i === 1) {
-        if (isImprovement) {
-          // IMPROVEMENT MODE: Build upon existing content
-          generatorPrompt = `IMPORTANT: You are IMPROVING an EXISTING PRD. Do NOT start from scratch!
+      // Try section-level regeneration first (iterations >= 2 only)
+      let genResult: { content: string; usage: any; model: string; tier: string; usedFallback: boolean } | null = null;
+
+      if (i >= 2 && previousStructure) {
+        try {
+          const prevIteration = iterations[iterations.length - 1];
+          const feedbackText = prevIteration.answererOutput;
+          const targetSection = detectTargetSection(feedbackText);
+
+          if (targetSection && typeof previousStructure[targetSection] === 'string') {
+            console.log(`🎯 Iteration ${i}: Section-level regeneration detected — targeting "${targetSection}"`);
+            const visionContext = previousStructure.systemVision || '';
+            const regenContent = await regenerateSection(
+              targetSection,
+              previousStructure,
+              feedbackText,
+              visionContext,
+              client,
+              langInstruction
+            );
+
+            const updatedStructure = { ...previousStructure, features: [...previousStructure.features] };
+            (updatedStructure as any)[targetSection] = regenContent;
+            const rebuiltMarkdown = assembleStructureToMarkdown(updatedStructure);
+
+            genResult = {
+              content: rebuiltMarkdown,
+              usage: { total_tokens: 0, prompt_tokens: 0, completion_tokens: 0 },
+              model: 'section-regen',
+              tier: 'section',
+              usedFallback: false
+            };
+            allSectionRegens.set(i, {
+              section: targetSection,
+              feedbackSnippet: feedbackText.substring(0, 150)
+            });
+            console.log(`✅ Iteration ${i}: Section-level regeneration complete for "${targetSection}"`);
+          }
+        } catch (sectionRegenError: any) {
+          console.warn(`⚠️ Section-level regeneration failed for iteration ${i} (falling back to full regen):`, sectionRegenError.message);
+          genResult = null;
+        }
+      }
+
+      if (!genResult) {
+        console.log(`🤖 AI #1: Generating PRD draft and identifying gaps...`);
+        
+        let generatorPrompt: string;
+        
+        if (i === 1) {
+          if (isImprovement) {
+            generatorPrompt = `IMPORTANT: You are IMPROVING an EXISTING PRD. Do NOT start from scratch!
 
 EXISTING PRD (PRESERVE THIS STRUCTURE AND CONTENT):
 ${existingContent}
@@ -288,14 +334,12 @@ Your task:
 2. ENHANCE and EXPAND existing content with more details
 3. Identify gaps and missing information
 4. Ask questions to improve specific sections`}`;
+          } else {
+            generatorPrompt = `INITIAL INPUT:\n${additionalRequirements || existingContent}\n\nCreate an initial PRD draft and ask questions about open points.`;
+          }
         } else {
-          // NEW GENERATION MODE: Start fresh
-          generatorPrompt = `INITIAL INPUT:\n${additionalRequirements || existingContent}\n\nCreate an initial PRD draft and ask questions about open points.`;
-        }
-      } else {
-        // Subsequent iterations: Incorporate previous answers and resolve open points
-        const prevIteration = iterations[iterations.length - 1];
-        generatorPrompt = `CURRENT PRD (DO NOT DISCARD - BUILD UPON IT):
+          const prevIteration = iterations[iterations.length - 1];
+          generatorPrompt = `CURRENT PRD (DO NOT DISCARD - BUILD UPON IT):
 ${currentPRD}
 
 ANSWERS FROM PREVIOUS ITERATION (MUST be incorporated into the PRD):
@@ -308,17 +352,18 @@ Your task:
 4. EXPAND sections that are still incomplete
 5. Ask questions about remaining gaps only (do NOT repeat already-answered questions)
 6. The final PRD must be self-contained — a reader should find all information IN the document, not in a separate Q&A section`
+        }
+        
+        genResult = await client.callWithFallback(
+          'generator',
+          ITERATIVE_GENERATOR_PROMPT + langInstruction,
+          generatorPrompt,
+          8000
+        );
+        
+        modelsUsed.add(genResult.model);
+        console.log(`✅ Generated ${genResult.usage.completion_tokens} tokens with ${genResult.model}`);
       }
-      
-      const genResult = await client.callWithFallback(
-        'generator',
-        ITERATIVE_GENERATOR_PROMPT + langInstruction,
-        generatorPrompt,
-        8000  // Enough for PRD + questions
-      );
-      
-      modelsUsed.add(genResult.model);
-      console.log(`✅ Generated ${genResult.usage.completion_tokens} tokens with ${genResult.model}`);
       
       // Feature Identification Layer + Expansion Engine (first iteration only)
       if (i === 1) {
@@ -443,7 +488,7 @@ Your task:
     }
     
     // Build iteration log document (separate from clean PRD)
-    const iterationLog = this.buildIterationLog(iterations, finalReview, allDriftWarnings, allPreservationActions, allIntegrityRestorations);
+    const iterationLog = this.buildIterationLog(iterations, finalReview, allDriftWarnings, allPreservationActions, allIntegrityRestorations, allSectionRegens);
     
     // Calculate totals
     const totalTokens = iterations.reduce((sum, iter) => sum + iter.tokensUsed, 0) +
@@ -581,7 +626,7 @@ Your task:
     return openPoints;
   }
 
-  private buildIterationLog(iterations: IterationData[], finalReview?: IterativeResponse['finalReview'], driftWarnings?: Map<number, string[]>, preservationActions?: Map<number, string[]>, integrityRestorations?: Map<number, IntegrityRestoration[]>): string {
+  private buildIterationLog(iterations: IterationData[], finalReview?: IterativeResponse['finalReview'], driftWarnings?: Map<number, string[]>, preservationActions?: Map<number, string[]>, integrityRestorations?: Map<number, IntegrityRestoration[]>, sectionRegens?: Map<number, { section: string; feedbackSnippet: string }>): string {
     const lines: string[] = [];
     lines.push('# Iteration Protocol');
     lines.push('');
@@ -595,6 +640,15 @@ Your task:
       lines.push(`## Iteration ${iter.iterationNumber}`);
       lines.push('');
       
+      const iterSectionRegen = sectionRegens?.get(iter.iterationNumber);
+      if (iterSectionRegen) {
+        lines.push('### Section-Level Regeneration Applied');
+        lines.push('');
+        lines.push(`- Section: ${iterSectionRegen.section}`);
+        lines.push(`- Feedback: ${iterSectionRegen.feedbackSnippet}...`);
+        lines.push('');
+      }
+
       // Extract and log open points from this iteration
       const openPoints = this.extractOpenPoints(iter.generatorOutput);
       if (openPoints.length > 0) {
