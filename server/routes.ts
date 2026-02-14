@@ -124,11 +124,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         aiPreferences: users.aiPreferences
       }).from(users).where(eq(users.id, userId)).limit(1);
       
-      const preferences = user[0]?.aiPreferences || {
-        generatorModel: 'google/gemini-2.5-flash',
-        reviewerModel: 'anthropic/claude-sonnet-4',
-        fallbackModel: 'deepseek/deepseek-r1-0528:free',
-        tier: 'production'
+      const stored = (user[0]?.aiPreferences as any) || {};
+      const tier = stored.tier || 'production';
+      const tierModels = stored.tierModels || {};
+      const activeTierModels = tierModels[tier] || {};
+
+      const preferences = {
+        ...stored,
+        tier,
+        tierModels,
+        generatorModel: activeTierModels.generatorModel || stored.generatorModel || 'google/gemini-2.5-flash',
+        reviewerModel: activeTierModels.reviewerModel || stored.reviewerModel || 'anthropic/claude-sonnet-4',
+        fallbackModel: activeTierModels.fallbackModel || stored.fallbackModel || 'deepseek/deepseek-r1-0528:free',
       };
       
       res.json(preferences);
@@ -142,15 +149,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.user.claims.sub;
       const preferences = aiPreferencesSchema.parse(req.body);
+
+      const existing = await db.select({
+        aiPreferences: users.aiPreferences
+      }).from(users).where(eq(users.id, userId)).limit(1);
+      const existingPrefs = (existing[0]?.aiPreferences as any) || {};
+      const existingTierModels = existingPrefs.tierModels || {};
+
+      const activeTier = preferences.tier || existingPrefs.tier || 'production';
+      const updatedTierModels = {
+        ...existingTierModels,
+        ...preferences.tierModels,
+        [activeTier]: {
+          generatorModel: preferences.generatorModel,
+          reviewerModel: preferences.reviewerModel,
+          fallbackModel: preferences.fallbackModel,
+        },
+      };
+
+      const merged = {
+        ...existingPrefs,
+        ...preferences,
+        tierModels: updatedTierModels,
+      };
       
       await db.update(users)
         .set({ 
-          aiPreferences: preferences as any,
+          aiPreferences: merged as any,
           updatedAt: new Date()
         })
         .where(eq(users.id, userId));
       
-      res.json(preferences);
+      res.json(merged);
     } catch (error) {
       console.error("Error updating AI settings:", error);
       res.status(500).json({ message: "Failed to update AI settings" });

@@ -41,6 +41,7 @@ export default function Settings() {
     production?: { generator?: string; reviewer?: string };
     premium?: { generator?: string; reviewer?: string };
   }>({});
+  const [savedTierModels, setSavedTierModels] = useState<Record<string, { generatorModel?: string; reviewerModel?: string; fallbackModel?: string }>>({});
   const [iterativeMode, setIterativeMode] = useState(false);
   const [iterationCount, setIterationCount] = useState(3);
   const [useFinalReview, setUseFinalReview] = useState(false);
@@ -88,6 +89,7 @@ export default function Settings() {
     reviewerModel?: string;
     fallbackModel?: string;
     tier?: "development" | "production" | "premium";
+    tierModels?: Record<string, { generatorModel?: string; reviewerModel?: string; fallbackModel?: string }>;
     tierDefaults?: {
       development?: { generator?: string; reviewer?: string };
       production?: { generator?: string; reviewer?: string };
@@ -103,6 +105,8 @@ export default function Settings() {
 
   useEffect(() => {
     if (aiPreferences) {
+      const tm = aiPreferences.tierModels || {};
+      setSavedTierModels(tm);
       setGeneratorModel(aiPreferences.generatorModel || "google/gemini-2.5-flash");
       setReviewerModel(aiPreferences.reviewerModel || "anthropic/claude-sonnet-4");
       setFallbackModel(aiPreferences.fallbackModel || "deepseek/deepseek-r1-0528:free");
@@ -132,15 +136,24 @@ export default function Settings() {
   };
 
   const handleTierChange = (value: "development" | "production" | "premium") => {
+    setSavedTierModels(prev => ({
+      ...prev,
+      [aiTier]: { generatorModel, reviewerModel, fallbackModel },
+    }));
+
     setAiTier(value);
-    const systemDefaults = openRouterData?.tierDefaults?.[value];
-    if (systemDefaults?.generator) {
-      setGeneratorModel(systemDefaults.generator);
+
+    const saved = savedTierModels[value];
+    if (saved?.generatorModel || saved?.reviewerModel || saved?.fallbackModel) {
+      if (saved.generatorModel) setGeneratorModel(saved.generatorModel);
+      if (saved.reviewerModel) setReviewerModel(saved.reviewerModel);
+      if (saved.fallbackModel) setFallbackModel(saved.fallbackModel);
+    } else {
+      const systemDefaults = openRouterData?.tierDefaults?.[value];
+      if (systemDefaults?.generator) setGeneratorModel(systemDefaults.generator);
+      if (systemDefaults?.reviewer) setReviewerModel(systemDefaults.reviewer);
+      setFallbackModel(tierFallbackDefaults[value] || "deepseek/deepseek-r1-0528:free");
     }
-    if (systemDefaults?.reviewer) {
-      setReviewerModel(systemDefaults.reviewer);
-    }
-    setFallbackModel(tierFallbackDefaults[value] || "deepseek/deepseek-r1-0528:free");
   };
 
   const updateProfileMutation = useMutation({
@@ -217,11 +230,16 @@ export default function Settings() {
 
   const updateAiSettingsMutation = useMutation({
     mutationFn: async () => {
+      const currentTierModels = {
+        ...savedTierModels,
+        [aiTier]: { generatorModel, reviewerModel, fallbackModel },
+      };
       return await apiRequest("PATCH", "/api/settings/ai", {
         generatorModel,
         reviewerModel,
         fallbackModel,
         tier: aiTier,
+        tierModels: currentTierModels,
         tierDefaults,
         iterativeMode,
         iterationCount,
@@ -230,6 +248,10 @@ export default function Settings() {
       });
     },
     onSuccess: () => {
+      setSavedTierModels(prev => ({
+        ...prev,
+        [aiTier]: { generatorModel, reviewerModel, fallbackModel },
+      }));
       queryClient.invalidateQueries({ queryKey: ["/api/settings/ai"] });
       toast({
         title: "Success",
