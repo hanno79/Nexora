@@ -317,16 +317,16 @@ Your task:
       modelsUsed.add(answerResult.model);
       console.log(`✅ Answered with ${answerResult.usage.completion_tokens} tokens using ${answerResult.model}`);
       
-      // Step 3: Merge answers into PRD
-      const mergedPRD = this.mergePRDWithAnswers(genResult.content, answerResult.content);
-      currentPRD = mergedPRD;
+      // Step 3: Extract clean PRD (without Q&A sections) and build iteration log
+      const cleanPRD = this.extractCleanPRD(genResult.content);
+      currentPRD = cleanPRD;
       
       iterations.push({
         iterationNumber: i,
         generatorOutput: genResult.content,
         answererOutput: answerResult.content,
         questions,
-        mergedPRD,
+        mergedPRD: cleanPRD,
         tokensUsed: genResult.usage.total_tokens + answerResult.usage.total_tokens
       });
     }
@@ -343,7 +343,7 @@ Your task:
         'reviewer',
         FINAL_REVIEWER_PROMPT + langInstruction,
         finalReviewerPrompt,
-        6000  // Enough for comprehensive review
+        6000
       );
       
       modelsUsed.add(reviewResult.model);
@@ -355,10 +355,10 @@ Your task:
         usage: reviewResult.usage,
         tier: reviewResult.tier
       };
-      
-      // Apply final polish if review suggests improvements
-      currentPRD = this.applyFinalReview(currentPRD, reviewResult.content);
     }
+    
+    // Build iteration log document (separate from clean PRD)
+    const iterationLog = this.buildIterationLog(iterations, finalReview);
     
     // Calculate totals
     const totalTokens = iterations.reduce((sum, iter) => sum + iter.tokensUsed, 0) +
@@ -368,6 +368,7 @@ Your task:
     
     return {
       finalContent: currentPRD,
+      iterationLog,
       iterations,
       finalReview,
       totalTokens,
@@ -399,15 +400,68 @@ Your task:
     return questions;
   }
 
-  private mergePRDWithAnswers(generatorOutput: string, answererOutput: string): string {
-    // Extract the "Überarbeitetes PRD" section from generator output
+  private extractCleanPRD(generatorOutput: string): string {
     const prdMatch = generatorOutput.match(/## Überarbeitetes PRD([\s\S]*?)(?=## Offene Punkte|## Fragen|$)/i);
-    let prdContent = prdMatch ? prdMatch[1].trim() : generatorOutput;
+    if (prdMatch) {
+      return prdMatch[1].trim();
+    }
     
-    // Append answerer insights as a new section
-    const mergedContent = `${prdContent}\n\n---\n\n## Best Practice Empfehlungen (Iteration)\n\n${answererOutput}`;
+    const qaSections = [
+      /\n---\n\n## Best Practice Empfehlungen[\s\S]*/i,
+      /\n---\n\n## Final Review Feedback[\s\S]*/i,
+      /\n## Fragen zur Verbesserung[\s\S]*?(?=\n## (?!Fragen)|$)/i,
+      /\n## Offene Punkte[\s\S]*?(?=\n## (?!Offene)|$)/i,
+      /\n## Open Questions[\s\S]*?(?=\n## (?!Open)|$)/i,
+      /\n## Questions for Improvement[\s\S]*?(?=\n## (?!Questions)|$)/i,
+    ];
     
-    return mergedContent;
+    let cleanContent = generatorOutput;
+    for (const pattern of qaSections) {
+      cleanContent = cleanContent.replace(pattern, '');
+    }
+    
+    return cleanContent.trim();
+  }
+
+  private buildIterationLog(iterations: IterationData[], finalReview?: IterativeResponse['finalReview']): string {
+    const lines: string[] = [];
+    lines.push('# Iteration Protocol');
+    lines.push('');
+    lines.push(`Generated: ${new Date().toISOString()}`);
+    lines.push(`Total Iterations: ${iterations.length}`);
+    lines.push('');
+    
+    for (const iter of iterations) {
+      lines.push(`---`);
+      lines.push('');
+      lines.push(`## Iteration ${iter.iterationNumber}`);
+      lines.push('');
+      
+      if (iter.questions.length > 0) {
+        lines.push('### Questions Identified');
+        lines.push('');
+        for (let q = 0; q < iter.questions.length; q++) {
+          lines.push(`${q + 1}. ${iter.questions[q]}`);
+        }
+        lines.push('');
+      }
+      
+      lines.push('### Best Practice Recommendations');
+      lines.push('');
+      lines.push(iter.answererOutput);
+      lines.push('');
+    }
+    
+    if (finalReview) {
+      lines.push('---');
+      lines.push('');
+      lines.push('## Final Review');
+      lines.push('');
+      lines.push(finalReview.content);
+      lines.push('');
+    }
+    
+    return lines.join('\n');
   }
 
   private extractVisionFromContent(content: string): string {
@@ -426,12 +480,6 @@ Your task:
 
     const firstParagraphs = content.split('\n').filter(l => l.trim().length > 0).slice(0, 5).join('\n');
     return firstParagraphs || content.substring(0, 500);
-  }
-
-  private applyFinalReview(currentPRD: string, reviewContent: string): string {
-    // For now, append review as final section
-    // In future iterations, could use another AI call to actually apply the suggestions
-    return `${currentPRD}\n\n---\n\n## Final Review Feedback\n\n${reviewContent}`;
   }
 
   private async createClientWithUserPreferences(userId?: string): Promise<{ client: OpenRouterClient; contentLanguage: string | null }> {

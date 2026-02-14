@@ -12,7 +12,9 @@ import {
   CheckCircle2,
   Share2,
   MessageSquare,
-  Trash2
+  Trash2,
+  FileText,
+  ScrollText
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -68,6 +70,8 @@ export default function Editor() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
+  const [iterationLog, setIterationLog] = useState("");
+  const [activeTab, setActiveTab] = useState<"prd" | "log">("prd");
   const [status, setStatus] = useState<string>("draft");
   const [showComments, setShowComments] = useState(true);
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
@@ -104,6 +108,7 @@ export default function Editor() {
       
       setContent(contentToSet);
       setStatus(prd.status);
+      setIterationLog(prd.iterationLog || "");
     }
   }, [prd]);
 
@@ -181,13 +186,22 @@ export default function Editor() {
   const handleDualAiContentGenerated = (newContent: string, response: any) => {
     setContent(newContent);
     
-    // Save the new content directly (not using state to avoid race condition)
-    apiRequest("PATCH", `/api/prds/${prdId}`, {
+    const newIterationLog = response.iterationLog || "";
+    if (newIterationLog) {
+      setIterationLog(newIterationLog);
+    }
+    
+    const patchData: any = {
       title,
       description,
-      content: newContent,  // Use newContent directly, not state
+      content: newContent,
       status,
-    }).then(() => {
+    };
+    if (newIterationLog) {
+      patchData.iterationLog = newIterationLog;
+    }
+    
+    apiRequest("PATCH", `/api/prds/${prdId}`, patchData).then(() => {
       queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId] });
       queryClient.invalidateQueries({ queryKey: ["/api/prds"] });
       
@@ -629,15 +643,47 @@ export default function Editor() {
                 </Select>
               </div>
 
-              {/* Content */}
-              <div className="border-t pt-4 sm:pt-6">
-                <Textarea
-                  placeholder="Start writing your PRD content here..."
-                  value={content}
-                  onChange={(e) => setContent(e.target.value)}
-                  className="min-h-[400px] sm:min-h-[500px] font-mono text-xs sm:text-sm resize-none"
-                  data-testid="textarea-content"
-                />
+              {/* Content Tabs: PRD + Iteration Log */}
+              <div className="border-t pt-4 sm:pt-6 space-y-3">
+                {iterationLog && (
+                  <div className="flex gap-1 p-1 rounded-md bg-muted w-fit">
+                    <Button
+                      variant={activeTab === "prd" ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setActiveTab("prd")}
+                      data-testid="tab-prd-content"
+                    >
+                      <FileText className="w-4 h-4 mr-1.5" />
+                      PRD
+                    </Button>
+                    <Button
+                      variant={activeTab === "log" ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setActiveTab("log")}
+                      data-testid="tab-iteration-log"
+                    >
+                      <ScrollText className="w-4 h-4 mr-1.5" />
+                      Iteration Protocol
+                    </Button>
+                  </div>
+                )}
+
+                {activeTab === "prd" ? (
+                  <Textarea
+                    placeholder="Start writing your PRD content here..."
+                    value={content}
+                    onChange={(e) => setContent(e.target.value)}
+                    className="min-h-[400px] sm:min-h-[500px] font-mono text-xs sm:text-sm resize-none"
+                    data-testid="textarea-content"
+                  />
+                ) : (
+                  <div
+                    className="min-h-[400px] sm:min-h-[500px] rounded-md border border-input bg-muted/30 px-3 py-2 font-mono text-xs sm:text-sm whitespace-pre-wrap overflow-auto"
+                    data-testid="div-iteration-log"
+                  >
+                    {iterationLog}
+                  </div>
+                )}
               </div>
             </div>
           </div>

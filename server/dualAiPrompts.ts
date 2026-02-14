@@ -494,6 +494,7 @@ interface IterationData {
 
 interface IterativeResponse {
   finalContent: string;
+  iterationLog: string;
   iterations: IterationData[];
   finalReview?: {
     content: string;
