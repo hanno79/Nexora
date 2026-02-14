@@ -1,0 +1,161 @@
+We are upgrading the Nexora platform.
+
+IMPORTANT:
+Do NOT refactor the entire architecture.
+Do NOT remove existing functionality.
+Do NOT change the current PRD generator behavior.
+We are adding a new modular LLM phase.
+
+----------------------------------------
+OBJECTIVE
+----------------------------------------
+
+Introduce a new modular LLM phase called:
+
+"Feature Identification Layer"
+
+This phase must:
+- Run after Vision generation
+- Extract atomic, independently implementable features
+- Return a structured feature list
+- Not generate full feature specifications yet
+
+----------------------------------------
+STEP 1 — CREATE NEW SERVICE
+----------------------------------------
+
+Create a new file:
+
+services/llm/generateFeatureList.ts
+
+This file must export a function:
+
+generateFeatureList(userInput: string, vision: string)
+
+This function:
+- Builds a dedicated prompt (see below)
+- Calls the existing LLM service (reuse current LLM call logic)
+- Returns the raw feature list text
+
+----------------------------------------
+STEP 2 — FEATURE IDENTIFICATION PROMPT
+----------------------------------------
+
+Use this exact prompt template inside generateFeatureList:
+
+------------------------------------------------------
+
+You are part of the Nexora Requirements Compiler.
+
+Your task is NOT to generate a full PRD.
+
+Your task is ONLY to identify atomic, independently implementable features based on the given system idea and vision.
+
+----------------------------------------
+INPUT
+----------------------------------------
+
+System Idea:
+${userInput}
+
+System Vision:
+${vision}
+
+----------------------------------------
+OBJECTIVE
+----------------------------------------
+
+Identify discrete features that:
+
+- Represent a single capability
+- Can be implemented as standalone development tasks
+- Are not vague
+- Do not combine multiple capabilities
+- Do not describe benefits or vision
+
+The complete system must later be describable as the sum of these features.
+
+----------------------------------------
+OUTPUT FORMAT (STRICT)
+----------------------------------------
+
+Feature List:
+
+F-01: <Short Clear Feature Name>
+Short description: <1–2 sentence capability summary>
+
+F-02: <Short Clear Feature Name>
+Short description: <1–2 sentence capability summary>
+
+F-03: ...
+
+Rules:
+- Use sequential numbering starting at F-01
+- Do not skip numbers
+- Do not write detailed flows
+- Do not write acceptance criteria
+- Do not explain architecture
+- Do not use vague language like "etc." or "and more"
+- Do not combine multiple features into one
+
+Only output the feature list.
+
+------------------------------------------------------
+
+----------------------------------------
+STEP 3 — PIPELINE INTEGRATION
+----------------------------------------
+
+Locate the main PRD generation flow.
+
+Modify it minimally:
+
+Before generating the full PRD:
+
+1. Generate Vision (existing logic)
+2. Call generateFeatureList(userInput, vision)
+3. Store the feature list
+4. Log it to console for debugging
+5. Do NOT yet replace existing PRD generation
+
+We are only introducing the layer.
+Not changing the final output yet.
+
+----------------------------------------
+STEP 4 — SAFETY
+----------------------------------------
+
+Do not modify:
+- Existing prompt structure
+- Existing section logic
+- Existing UI
+- Existing DB schema
+
+Only add the new modular phase.
+
+----------------------------------------
+STEP 5 — OPTIONAL VALIDATION (Lightweight)
+----------------------------------------
+
+After receiving the feature list:
+
+- Verify that at least 3 features exist
+- Verify that numbering starts at F-01
+- Verify no numbering gaps
+
+If validation fails:
+- Retry the LLM call once
+
+----------------------------------------
+DELIVERABLE
+----------------------------------------
+
+Return:
+
+1. The new file content
+2. The updated generation flow
+3. A short explanation of changes
+4. Confirmation that no existing logic was removed
+
+Do not perform large architectural refactors.
+Keep this change minimal and modular.
