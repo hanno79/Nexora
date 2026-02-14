@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Save, Check, Link2, Sun, Moon, Monitor, Brain, RefreshCw, Languages } from "lucide-react";
+import { Save, Check, Link2, Sun, Moon, Monitor, Brain, RefreshCw, Languages, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,9 +30,16 @@ export default function Settings() {
   const [role, setRole] = useState("");
   const [uiLanguage, setUiLanguage] = useState("auto");
   const [defaultContentLanguage, setDefaultContentLanguage] = useState("auto");
-  const [generatorModel, setGeneratorModel] = useState("openai/gpt-4o");
-  const [reviewerModel, setReviewerModel] = useState("anthropic/claude-3.5-sonnet");
+  const [generatorModel, setGeneratorModel] = useState("google/gemini-2.5-flash-preview");
+  const [reviewerModel, setReviewerModel] = useState("anthropic/claude-sonnet-4");
   const [aiTier, setAiTier] = useState<"development" | "production" | "premium">("production");
+  const [modelFilter, setModelFilter] = useState<'all' | 'free' | 'paid'>('all');
+  const [modelSearch, setModelSearch] = useState('');
+  const [tierDefaults, setTierDefaults] = useState<{
+    development?: { generator?: string; reviewer?: string };
+    production?: { generator?: string; reviewer?: string };
+    premium?: { generator?: string; reviewer?: string };
+  }>({});
   const [iterativeMode, setIterativeMode] = useState(false);
   const [iterationCount, setIterationCount] = useState(3);
   const [useFinalReview, setUseFinalReview] = useState(false);
@@ -57,10 +64,33 @@ export default function Settings() {
     queryKey: ["/api/dart/status"],
   });
 
+  const { data: openRouterData, isLoading: modelsLoading } = useQuery<{
+    models: Array<{
+      id: string;
+      name: string;
+      pricing: { prompt: string; completion: string };
+      context_length: number;
+      isFree: boolean;
+      provider: string;
+    }>;
+    tierDefaults: {
+      development: { generator: string; reviewer: string; cost: string };
+      production: { generator: string; reviewer: string; cost: string };
+      premium: { generator: string; reviewer: string; cost: string };
+    };
+  }>({
+    queryKey: ["/api/openrouter/models"],
+  });
+
   const { data: aiPreferences } = useQuery<{
     generatorModel?: string;
     reviewerModel?: string;
     tier?: "development" | "production" | "premium";
+    tierDefaults?: {
+      development?: { generator?: string; reviewer?: string };
+      production?: { generator?: string; reviewer?: string };
+      premium?: { generator?: string; reviewer?: string };
+    };
     iterativeMode?: boolean;
     iterationCount?: number;
     useFinalReview?: boolean;
@@ -71,15 +101,42 @@ export default function Settings() {
 
   useEffect(() => {
     if (aiPreferences) {
-      setGeneratorModel(aiPreferences.generatorModel || "openai/gpt-4o");
-      setReviewerModel(aiPreferences.reviewerModel || "anthropic/claude-3.5-sonnet");
+      setGeneratorModel(aiPreferences.generatorModel || "google/gemini-2.5-flash-preview");
+      setReviewerModel(aiPreferences.reviewerModel || "anthropic/claude-sonnet-4");
       setAiTier(aiPreferences.tier || "production");
+      setTierDefaults(aiPreferences.tierDefaults || {});
       setIterativeMode(aiPreferences.iterativeMode || false);
       setIterationCount(aiPreferences.iterationCount || 3);
       setUseFinalReview(aiPreferences.useFinalReview || false);
       setGuidedQuestionRounds(aiPreferences.guidedQuestionRounds || 3);
     }
   }, [aiPreferences]);
+
+  const filteredModels = (openRouterData?.models || []).filter(m => {
+    const matchesFilter = modelFilter === 'all' || 
+      (modelFilter === 'free' && m.isFree) || 
+      (modelFilter === 'paid' && !m.isFree);
+    const matchesSearch = !modelSearch || 
+      m.name.toLowerCase().includes(modelSearch.toLowerCase()) || 
+      m.id.toLowerCase().includes(modelSearch.toLowerCase());
+    return matchesFilter && matchesSearch;
+  });
+
+  const handleTierChange = (value: "development" | "production" | "premium") => {
+    setAiTier(value);
+    const userDefaults = tierDefaults[value];
+    const systemDefaults = openRouterData?.tierDefaults?.[value];
+    if (userDefaults?.generator) {
+      setGeneratorModel(userDefaults.generator);
+    } else if (systemDefaults?.generator) {
+      setGeneratorModel(systemDefaults.generator);
+    }
+    if (userDefaults?.reviewer) {
+      setReviewerModel(userDefaults.reviewer);
+    } else if (systemDefaults?.reviewer) {
+      setReviewerModel(systemDefaults.reviewer);
+    }
+  };
 
   const updateProfileMutation = useMutation({
     mutationFn: async () => {
@@ -159,6 +216,7 @@ export default function Settings() {
         generatorModel,
         reviewerModel,
         tier: aiTier,
+        tierDefaults,
         iterativeMode,
         iterationCount,
         useFinalReview,
@@ -422,16 +480,64 @@ export default function Settings() {
             <CardContent className="space-y-6">
               <div className="space-y-4">
                 <div className="space-y-2">
+                  <Label>Model Filter</Label>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Button
+                      variant={modelFilter === 'all' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setModelFilter('all')}
+                      data-testid="button-filter-all"
+                    >
+                      All Models
+                    </Button>
+                    <Button
+                      variant={modelFilter === 'free' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setModelFilter('free')}
+                      data-testid="button-filter-free"
+                    >
+                      Free Only
+                    </Button>
+                    <Button
+                      variant={modelFilter === 'paid' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setModelFilter('paid')}
+                      data-testid="button-filter-paid"
+                    >
+                      Paid Only
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="model-search">Search Models</Label>
+                  <Input
+                    id="model-search"
+                    placeholder="Search by model name or ID..."
+                    value={modelSearch}
+                    onChange={(e) => setModelSearch(e.target.value)}
+                    data-testid="input-model-search"
+                  />
+                </div>
+
+                <div className="space-y-2">
                   <Label htmlFor="generator-model">Generator Model</Label>
                   <Select value={generatorModel} onValueChange={setGeneratorModel}>
                     <SelectTrigger id="generator-model" data-testid="select-generator-model">
-                      <SelectValue />
+                      <SelectValue placeholder={modelsLoading ? "Loading models..." : "Select a model"} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="openai/gpt-4o">GPT-4o (Recommended)</SelectItem>
-                      <SelectItem value="openai/gpt-5">GPT-5 (Latest)</SelectItem>
-                      <SelectItem value="google/gemini-flash-1.5">Gemini Flash 1.5</SelectItem>
-                      <SelectItem value="mistralai/mistral-7b-instruct">Mistral 7B (Free)</SelectItem>
+                      {modelsLoading ? (
+                        <SelectItem value="loading" disabled>Loading models...</SelectItem>
+                      ) : filteredModels.length === 0 ? (
+                        <SelectItem value="none" disabled>No models found</SelectItem>
+                      ) : (
+                        filteredModels.map(m => (
+                          <SelectItem key={m.id} value={m.id}>
+                            {m.name}{m.isFree ? ' (Free)' : ''}
+                          </SelectItem>
+                        ))
+                      )}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
@@ -443,13 +549,20 @@ export default function Settings() {
                   <Label htmlFor="reviewer-model">Reviewer Model</Label>
                   <Select value={reviewerModel} onValueChange={setReviewerModel}>
                     <SelectTrigger id="reviewer-model" data-testid="select-reviewer-model">
-                      <SelectValue />
+                      <SelectValue placeholder={modelsLoading ? "Loading models..." : "Select a model"} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet (Recommended)</SelectItem>
-                      <SelectItem value="anthropic/claude-opus-4.1">Claude Opus 4.1 (Best Quality)</SelectItem>
-                      <SelectItem value="openai/gpt-4o">GPT-4o</SelectItem>
-                      <SelectItem value="google/gemini-flash-1.5">Gemini Flash 1.5 (Free)</SelectItem>
+                      {modelsLoading ? (
+                        <SelectItem value="loading" disabled>Loading models...</SelectItem>
+                      ) : filteredModels.length === 0 ? (
+                        <SelectItem value="none" disabled>No models found</SelectItem>
+                      ) : (
+                        filteredModels.map(m => (
+                          <SelectItem key={m.id} value={m.id}>
+                            {m.name}{m.isFree ? ' (Free)' : ''}
+                          </SelectItem>
+                        ))
+                      )}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
@@ -457,9 +570,11 @@ export default function Settings() {
                   </p>
                 </div>
 
+                <Separator className="my-4" />
+
                 <div className="space-y-2">
-                  <Label htmlFor="ai-tier">Quality Tier</Label>
-                  <Select value={aiTier} onValueChange={(value: any) => setAiTier(value)}>
+                  <Label htmlFor="ai-tier">Quality Tier (Preset)</Label>
+                  <Select value={aiTier} onValueChange={handleTierChange}>
                     <SelectTrigger id="ai-tier" data-testid="select-ai-tier">
                       <SelectValue />
                     </SelectTrigger>
@@ -470,8 +585,34 @@ export default function Settings() {
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Fallback tier if preferred models fail
+                    Selecting a tier applies saved model defaults. Also used as fallback if preferred models fail.
                   </p>
+                </div>
+
+                <div className="p-3 rounded-lg border bg-muted/30 space-y-2">
+                  <p className="text-sm font-medium">Save Current Selection as Tier Default</p>
+                  <p className="text-xs text-muted-foreground">
+                    Save the current Generator and Reviewer models as defaults for the "{aiTier}" tier.
+                    Next time you select this tier, these models will be applied automatically.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setTierDefaults(prev => ({
+                        ...prev,
+                        [aiTier]: { generator: generatorModel, reviewer: reviewerModel },
+                      }));
+                      toast({
+                        title: "Tier Defaults Updated",
+                        description: `Saved current models as defaults for ${aiTier} tier. Click "Save AI Preferences" to persist.`,
+                      });
+                    }}
+                    data-testid="button-save-tier-defaults"
+                  >
+                    <Save className="w-4 h-4 mr-2" />
+                    Set as {aiTier.charAt(0).toUpperCase() + aiTier.slice(1)} Default
+                  </Button>
                 </div>
               </div>
 

@@ -13,22 +13,22 @@ interface ModelConfig {
   premium: ModelTier;
 }
 
-// Model configuration based on HRP-17
+// Model configuration with current best models (Feb 2025)
 const MODEL_TIERS: ModelConfig = {
   development: {
-    generator: "mistralai/mistral-7b-instruct",
-    reviewer: "google/gemini-flash-1.5",
+    generator: "meta-llama/llama-4-maverick:free",
+    reviewer: "qwen/qwen3-235b-a22b:free",
     cost: "$0/Million Tokens"
   },
   production: {
-    generator: "openai/gpt-4o",  // GPT-5 not yet available, using GPT-4o
-    reviewer: "anthropic/claude-3.5-sonnet",  // Opus 4.1 not yet available
-    cost: "~$0.30-0.50 pro PRD"
+    generator: "google/gemini-2.5-flash-preview",
+    reviewer: "anthropic/claude-sonnet-4",
+    cost: "~$0.10-0.30 pro PRD"
   },
   premium: {
-    generator: "anthropic/claude-3.5-sonnet",
-    reviewer: "openai/gpt-4o",
-    cost: "~$0.50-1.00 pro PRD"
+    generator: "anthropic/claude-sonnet-4",
+    reviewer: "google/gemini-2.5-pro-preview",
+    cost: "~$0.30-1.00 pro PRD"
   }
 };
 
@@ -166,12 +166,17 @@ class OpenRouterClient {
           throw new Error(`The requested content is too long for model ${modelName}. Try splitting your PRD into smaller sections.`);
         }
         
+        if (response.status === 404 || errorText.includes('No endpoints found') || errorText.includes('not found')) {
+          throw new Error(`Model "${modelName}" is no longer available on OpenRouter. Please go to Settings and select a different model.`);
+        }
+        
         if (response.status === 503 || response.status === 504) {
           throw new Error(`Model ${modelName} is temporarily unavailable or overloaded. The system will automatically try a backup model.`);
         }
         
         // Generic error with model name
-        throw new Error(`AI model error (${modelName}): ${errorData.message || errorText}. Status: ${response.status}`);
+        const errorMsg = errorData?.error?.message || errorData.message || errorText;
+        throw new Error(`AI model error (${modelName}): ${errorMsg}. Status: ${response.status}`);
       }
 
       const data: OpenRouterResponse = await response.json();
@@ -239,7 +244,10 @@ class OpenRouterClient {
         // If this is the last tier, restore original tier and throw
         if (i === tiers.length - 1) {
           this.tier = originalTier;
-          throw new Error(`All models failed. Last error: ${error.message}`);
+          if (error.message.includes('no longer available') || error.message.includes('No endpoints found') || error.message.includes('not found')) {
+            throw new Error(`The selected AI models are no longer available on OpenRouter. Please go to Settings and update your Generator and Reviewer model selections to currently available models.`);
+          }
+          throw new Error(`All AI models failed. ${error.message}`);
         }
         
         // Continue to next tier
@@ -280,6 +288,74 @@ export function isOpenRouterConfigured(): boolean {
  */
 export function getOpenRouterConfigError(): string {
   return `OpenRouter API key is not configured. Please add OPENROUTER_API_KEY to your environment variables. You can get a free API key at https://openrouter.ai/keys`;
+}
+
+// --- OpenRouter Models List API ---
+
+export interface OpenRouterModel {
+  id: string;
+  name: string;
+  pricing: {
+    prompt: string;
+    completion: string;
+  };
+  context_length: number;
+  isFree: boolean;
+  provider: string;
+}
+
+let modelsCache: OpenRouterModel[] | null = null;
+let modelsCacheTimestamp: number = 0;
+const MODELS_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+export async function fetchOpenRouterModels(): Promise<OpenRouterModel[]> {
+  const now = Date.now();
+  if (modelsCache && (now - modelsCacheTimestamp) < MODELS_CACHE_TTL) {
+    return modelsCache;
+  }
+
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error('OpenRouter API key not configured');
+  }
+
+  const response = await fetch('https://openrouter.ai/api/v1/models', {
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch models from OpenRouter: ${response.status}`);
+  }
+
+  const data = await response.json();
+  
+  const models: OpenRouterModel[] = (data.data || [])
+    .filter((m: any) => m.id && m.name)
+    .map((m: any) => {
+      const promptPrice = parseFloat(m.pricing?.prompt || '0');
+      const completionPrice = parseFloat(m.pricing?.completion || '0');
+      const isFree = promptPrice === 0 && completionPrice === 0;
+      const provider = m.id.split('/')[0] || 'unknown';
+      
+      return {
+        id: m.id,
+        name: m.name,
+        pricing: {
+          prompt: m.pricing?.prompt || '0',
+          completion: m.pricing?.completion || '0',
+        },
+        context_length: m.context_length || 0,
+        isFree,
+        provider,
+      };
+    })
+    .sort((a: OpenRouterModel, b: OpenRouterModel) => a.name.localeCompare(b.name));
+
+  modelsCache = models;
+  modelsCacheTimestamp = now;
+  return models;
 }
 
 // Startup check

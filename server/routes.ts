@@ -125,8 +125,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }).from(users).where(eq(users.id, userId)).limit(1);
       
       const preferences = user[0]?.aiPreferences || {
-        generatorModel: 'openai/gpt-4o',
-        reviewerModel: 'anthropic/claude-3.5-sonnet',
+        generatorModel: 'google/gemini-2.5-flash-preview',
+        reviewerModel: 'anthropic/claude-sonnet-4',
         tier: 'production'
       };
       
@@ -678,10 +678,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // OpenRouter models list endpoint
+  const { isOpenRouterConfigured, getOpenRouterConfigError, fetchOpenRouterModels, MODEL_TIERS } = await import('./openrouter');
+  
+  app.get('/api/openrouter/models', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!isOpenRouterConfigured()) {
+        return res.status(503).json({ message: getOpenRouterConfigError() });
+      }
+      const models = await fetchOpenRouterModels();
+      res.json({ models, tierDefaults: MODEL_TIERS });
+    } catch (error: any) {
+      console.error("Error fetching OpenRouter models:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch models" });
+    }
+  });
+
   // Dual-AI generation routes (HRP-17)
   const { getDualAiService } = await import('./dualAiService');
   const { logAiUsage } = await import('./aiUsageLogger');
-  const { isOpenRouterConfigured, getOpenRouterConfigError } = await import('./openrouter');
   
   app.post('/api/ai/generate-dual', isAuthenticated, async (req: any, res) => {
     try {
