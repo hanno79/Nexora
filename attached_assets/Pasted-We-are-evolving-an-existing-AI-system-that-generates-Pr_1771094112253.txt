@@ -1,0 +1,115 @@
+We are evolving an existing AI system that generates Product Requirements Documents (PRDs).
+
+IMPORTANT:
+The current system already produces high-quality PRDs with good structure, UX thinking, and feature descriptions.
+We must NOT break existing capabilities.
+We will improve it incrementally.
+
+GOAL OF THIS PHASE:
+Transform the generator into a FEATURE-ORIENTED REQUIREMENTS COMPILER that produces implementation-ready specifications for developers and no-code/code-generation tools.
+
+Do NOT redesign everything.
+Do NOT add academic or unnecessary sections.
+Do NOT reduce clarity.
+
+We will introduce a new mandatory structure while preserving existing strengths.
+
+----------------------------------------
+PHASE 1 OBJECTIVE
+----------------------------------------
+
+Enforce a FEATURE-FIRST output structure.
+
+From now on, every generated document MUST contain:
+
+1. A concise System Vision (context only)
+2. A clearly defined System Operating Model
+3. A Functional Feature Catalogue where the system is defined as the sum of independent features
+
+The system must stop describing the product only as a whole and instead define it through implementable features.
+
+----------------------------------------
+NEW REQUIRED OUTPUT STRUCTURE
+----------------------------------------
+
+Add the following sections to the generator output:
+
+## 1. System Vision
+Short, high-level purpose and intended outcome.
+No implementation details here.
+
+## 2. System Boundaries & Operating Model
+Define how the system operates:
+- Deployment type
+- Runtime environment
+- Online/offline
+- Single-user or multi-user
+- Persistence strategy
+- External integrations (if any)
+
+This section must eliminate ambiguity about how the system runs.
+
+## 3. Functional Feature Catalogue (MANDATORY)
+
+This becomes the core of the document.
+
+The system must identify discrete features that together form the system.
+
+Each feature must be described independently so it can be implemented as its own task by a developer or LLM tool.
+
+----------------------------------------
+FEATURE SPEC TEMPLATE (MANDATORY)
+----------------------------------------
+
+For EACH feature, generate:
+
+Feature ID: F-XX
+Feature Name
+
+1. Purpose — what capability this feature provides
+
+2. Actors — who can trigger it
+
+3. Trigger — how the feature is initiated
+
+4. Preconditions — what must be true before execution
+
+5. Main Flow — numbered deterministic steps (happy path)
+
+6. Alternate Flows — edge cases and variations
+
+7. Postconditions — resulting system state
+
+8. Data Impact — created/modified/deleted data
+
+9. UI Impact — interface changes caused by the feature
+
+10. Acceptance Criteria — testable observable conditions
+
+----------------------------------------
+IMPORTANT CONSTRAINTS
+----------------------------------------
+
+- Do NOT remove existing good sections such as user stories or UX guidelines.
+- Do NOT introduce unnecessary formalism.
+- Keep the document practical and implementation-focused.
+- Avoid vague language like "for example", "etc.", "optional", or "could".
+- Prefer deterministic descriptions.
+
+----------------------------------------
+SUCCESS CRITERIA FOR THIS PHASE
+----------------------------------------
+
+After this upgrade:
+
+A developer or no-code tool should be able to implement the system feature-by-feature without needing clarification about what each feature does.
+
+----------------------------------------
+TASK
+----------------------------------------
+
+Modify the existing generator so future outputs follow this structure while preserving current strengths.
+Do not implement future phases yet.
+Focus ONLY on enforcing Vision + Operating Model + Feature Catalogue.
+
+Return the updated generation logic and explain what was changed and why.
