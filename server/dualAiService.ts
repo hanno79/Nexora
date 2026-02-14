@@ -23,6 +23,7 @@ import { compareStructures, logStructuralDrift, restoreRemovedFeatures } from '.
 import { assembleStructureToMarkdown } from './prdAssembler';
 import { enforceFeatureIntegrity, type IntegrityRestoration } from './prdFeatureValidator';
 import { detectTargetSection, regenerateSection } from './prdSectionRegenerator';
+import { regenerateSectionAsJson } from './prdSectionJsonRegenerator';
 import type { PRDStructure } from './prdStructure';
 import { db } from './db';
 import { users } from '@shared/schema';
@@ -258,7 +259,7 @@ Create an improved version that incorporates the new requirements while keeping 
     const allDriftWarnings: Map<number, string[]> = new Map();
     const allPreservationActions: Map<number, string[]> = new Map();
     const allIntegrityRestorations: Map<number, IntegrityRestoration[]> = new Map();
-    const allSectionRegens: Map<number, { section: string; feedbackSnippet: string }> = new Map();
+    const allSectionRegens: Map<number, { section: string; feedbackSnippet: string; mode?: 'json' | 'markdown' }> = new Map();
     
     // Iterative Q&A Loop
     for (let i = 1; i <= iterationCount; i++) {
@@ -277,14 +278,37 @@ Create an improved version that incorporates the new requirements while keeping 
           if (targetSection && typeof previousStructure[targetSection] === 'string') {
             console.log(`🎯 Iteration ${i}: Section-level regeneration detected — targeting "${targetSection}"`);
             const visionContext = previousStructure.systemVision || '';
-            const regenContent = await regenerateSection(
-              targetSection,
-              previousStructure,
-              feedbackText,
-              visionContext,
-              client,
-              langInstruction
-            );
+
+            let regenContent: string | null = null;
+            let usedJsonMode = false;
+
+            try {
+              const jsonResult = await regenerateSectionAsJson(
+                targetSection,
+                previousStructure,
+                feedbackText,
+                visionContext,
+                client,
+                langInstruction
+              );
+              regenContent = jsonResult.updatedContent;
+              usedJsonMode = true;
+              console.log(`✅ Iteration ${i}: JSON structured section update succeeded for "${targetSection}"`);
+            } catch (jsonError: any) {
+              console.warn(`⚠️ Iteration ${i}: JSON section regen failed (falling back to markdown regen):`, jsonError.message);
+            }
+
+            if (!regenContent) {
+              regenContent = await regenerateSection(
+                targetSection,
+                previousStructure,
+                feedbackText,
+                visionContext,
+                client,
+                langInstruction
+              );
+              console.log(`✅ Iteration ${i}: Markdown section regeneration complete for "${targetSection}"`);
+            }
 
             const updatedStructure = { ...previousStructure, features: [...previousStructure.features] };
             (updatedStructure as any)[targetSection] = regenContent;
@@ -293,15 +317,16 @@ Create an improved version that incorporates the new requirements while keeping 
             genResult = {
               content: rebuiltMarkdown,
               usage: { total_tokens: 0, prompt_tokens: 0, completion_tokens: 0 },
-              model: 'section-regen',
+              model: usedJsonMode ? 'json-section-regen' : 'section-regen',
               tier: 'section',
               usedFallback: false
             };
             allSectionRegens.set(i, {
               section: targetSection,
-              feedbackSnippet: feedbackText.substring(0, 150)
+              feedbackSnippet: feedbackText.substring(0, 150),
+              mode: usedJsonMode ? 'json' : 'markdown'
             });
-            console.log(`✅ Iteration ${i}: Section-level regeneration complete for "${targetSection}"`);
+            console.log(`✅ Iteration ${i}: Section-level regeneration complete for "${targetSection}" (mode: ${usedJsonMode ? 'json' : 'markdown'})`);
           }
         } catch (sectionRegenError: any) {
           console.warn(`⚠️ Section-level regeneration failed for iteration ${i} (falling back to full regen):`, sectionRegenError.message);
@@ -626,7 +651,7 @@ Your task:
     return openPoints;
   }
 
-  private buildIterationLog(iterations: IterationData[], finalReview?: IterativeResponse['finalReview'], driftWarnings?: Map<number, string[]>, preservationActions?: Map<number, string[]>, integrityRestorations?: Map<number, IntegrityRestoration[]>, sectionRegens?: Map<number, { section: string; feedbackSnippet: string }>): string {
+  private buildIterationLog(iterations: IterationData[], finalReview?: IterativeResponse['finalReview'], driftWarnings?: Map<number, string[]>, preservationActions?: Map<number, string[]>, integrityRestorations?: Map<number, IntegrityRestoration[]>, sectionRegens?: Map<number, { section: string; feedbackSnippet: string; mode?: 'json' | 'markdown' }>): string {
     const lines: string[] = [];
     lines.push('# Iteration Protocol');
     lines.push('');
@@ -642,8 +667,13 @@ Your task:
       
       const iterSectionRegen = sectionRegens?.get(iter.iterationNumber);
       if (iterSectionRegen) {
-        lines.push('### Section-Level Regeneration Applied');
+        if (iterSectionRegen.mode === 'json') {
+          lines.push('### JSON Structured Section Update Applied');
+        } else {
+          lines.push('### Section-Level Regeneration Applied');
+        }
         lines.push('');
+        lines.push(`- Mode: ${iterSectionRegen.mode === 'json' ? 'JSON Structured Update' : 'Markdown Regeneration'}`);
         lines.push(`- Section: ${iterSectionRegen.section}`);
         lines.push(`- Feedback: ${iterSectionRegen.feedbackSnippet}...`);
         lines.push('');
