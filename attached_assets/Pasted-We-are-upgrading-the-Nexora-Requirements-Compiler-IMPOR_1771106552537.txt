@@ -1,0 +1,179 @@
+We are upgrading the Nexora Requirements Compiler.
+
+IMPORTANT:
+Do NOT remove existing PRD generation.
+Do NOT refactor the entire architecture.
+We are introducing a modular Feature Expansion Engine.
+
+----------------------------------------
+OBJECTIVE
+----------------------------------------
+
+After the Feature Identification phase, 
+each feature must now be expanded independently 
+into a full structured feature specification.
+
+We will:
+
+1. Generate Vision (existing)
+2. Generate Feature List (already implemented)
+3. For EACH feature:
+   Call a new LLM prompt to expand it
+4. Collect all expanded features
+5. Later assemble them into the PRD
+
+We are NOT yet replacing the old monolithic PRD call.
+We are building this in parallel.
+
+----------------------------------------
+STEP 1 — CREATE NEW SERVICE
+----------------------------------------
+
+Create a new file:
+
+services/llm/expandFeature.ts
+
+Export function:
+
+expandFeature(
+  userInput: string,
+  vision: string,
+  featureId: string,
+  featureName: string,
+  shortDescription: string
+)
+
+This function must:
+
+- Use a strict prompt template (see below)
+- Call the existing LLM logic
+- Return structured markdown for that feature
+
+----------------------------------------
+STEP 2 — FEATURE EXPANSION PROMPT
+----------------------------------------
+
+Use this strict prompt template:
+
+------------------------------------------------------
+
+You are part of the Nexora Requirements Compiler.
+
+Your task is to expand ONE specific feature into a full implementation-ready specification.
+
+You are NOT generating a full PRD.
+You are ONLY expanding the feature provided below.
+
+----------------------------------------
+INPUT
+----------------------------------------
+
+System Idea:
+${userInput}
+
+System Vision:
+${vision}
+
+Feature ID:
+${featureId}
+
+Feature Name:
+${featureName}
+
+Feature Short Description:
+${shortDescription}
+
+----------------------------------------
+OBJECTIVE
+----------------------------------------
+
+Expand this feature into a deterministic, implementation-ready specification.
+
+The output must follow this exact structure:
+
+Feature ID: ${featureId}
+Feature Name: ${featureName}
+
+1. Purpose
+2. Actors
+3. Trigger
+4. Preconditions
+5. Main Flow (numbered deterministic steps)
+6. Alternate Flows
+7. Postconditions
+8. Data Impact
+9. UI Impact
+10. Acceptance Criteria
+
+----------------------------------------
+CRITICAL RULES
+----------------------------------------
+
+- Do NOT describe other features
+- Do NOT reference "see above"
+- Do NOT describe vision again
+- Be technically precise
+- Be deterministic
+- No vague language ("etc", "and more")
+- Main Flow must contain numbered implementation steps
+- Alternate Flows must include at least one realistic edge case
+- Postconditions must describe resulting system state
+
+Only output the full expanded feature.
+
+------------------------------------------------------
+
+----------------------------------------
+STEP 3 — PIPELINE INTEGRATION
+----------------------------------------
+
+After generating the feature list:
+
+1. Parse each feature entry
+2. Extract:
+   - Feature ID
+   - Feature Name
+   - Short Description
+3. For each feature:
+   Call expandFeature(...)
+4. Log each expanded feature separately
+5. Store results in an array
+
+Do NOT assemble final PRD yet.
+This phase is for testing the modular expansion only.
+
+----------------------------------------
+STEP 4 — SAFETY
+----------------------------------------
+
+Do not modify:
+- Existing full PRD call
+- Existing UI
+- Existing database logic
+
+Only add the modular feature expansion layer.
+
+----------------------------------------
+STEP 5 — OPTIONAL VALIDATION
+----------------------------------------
+
+After expanding a feature, verify:
+
+- All 10 required sections exist
+- Main Flow is numbered
+- Alternate Flows exists
+- Acceptance Criteria exists
+
+If validation fails:
+Retry once.
+
+----------------------------------------
+DELIVERABLE
+----------------------------------------
+
+Return:
+
+1. The new expandFeature.ts file
+2. The updated orchestration logic
+3. Explanation of how features are expanded independently
+4. Confirmation that no previous logic was removed
