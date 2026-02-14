@@ -21,6 +21,7 @@ import { expandAllFeatures } from './services/llm/expandFeature';
 import { parsePRDToStructure, logStructureValidation } from './prdParser';
 import { compareStructures, logStructuralDrift, restoreRemovedFeatures } from './prdStructureDiff';
 import { assembleStructureToMarkdown } from './prdAssembler';
+import { enforceFeatureIntegrity, type IntegrityRestoration } from './prdFeatureValidator';
 import type { PRDStructure } from './prdStructure';
 import { db } from './db';
 import { users } from '@shared/schema';
@@ -255,6 +256,7 @@ Create an improved version that incorporates the new requirements while keeping 
     let previousStructure: PRDStructure | null = null;
     const allDriftWarnings: Map<number, string[]> = new Map();
     const allPreservationActions: Map<number, string[]> = new Map();
+    const allIntegrityRestorations: Map<number, IntegrityRestoration[]> = new Map();
     
     // Iterative Q&A Loop
     for (let i = 1; i <= iterationCount; i++) {
@@ -381,6 +383,18 @@ Your task:
             allPreservationActions.set(i, [...diff.removedFeatures]);
             console.log(`✅ Iteration ${i}: Feature preservation complete, PRD reassembled`);
           }
+
+          try {
+            const integrityResult = enforceFeatureIntegrity(previousStructure, currentStructure);
+            currentStructure = integrityResult.structure;
+            if (integrityResult.restorations.length > 0) {
+              preservedPRD = assembleStructureToMarkdown(currentStructure);
+              allIntegrityRestorations.set(i, integrityResult.restorations);
+              console.log(`🛡️ Iteration ${i}: Feature integrity enforced, ${integrityResult.restorations.length} feature(s) restored`);
+            }
+          } catch (integrityError: any) {
+            console.warn(`⚠️ Feature integrity check failed for iteration ${i} (non-blocking):`, integrityError.message);
+          }
         } else {
           logStructureValidation(currentStructure);
         }
@@ -429,7 +443,7 @@ Your task:
     }
     
     // Build iteration log document (separate from clean PRD)
-    const iterationLog = this.buildIterationLog(iterations, finalReview, allDriftWarnings, allPreservationActions);
+    const iterationLog = this.buildIterationLog(iterations, finalReview, allDriftWarnings, allPreservationActions, allIntegrityRestorations);
     
     // Calculate totals
     const totalTokens = iterations.reduce((sum, iter) => sum + iter.tokensUsed, 0) +
@@ -567,7 +581,7 @@ Your task:
     return openPoints;
   }
 
-  private buildIterationLog(iterations: IterationData[], finalReview?: IterativeResponse['finalReview'], driftWarnings?: Map<number, string[]>, preservationActions?: Map<number, string[]>): string {
+  private buildIterationLog(iterations: IterationData[], finalReview?: IterativeResponse['finalReview'], driftWarnings?: Map<number, string[]>, preservationActions?: Map<number, string[]>, integrityRestorations?: Map<number, IntegrityRestoration[]>): string {
     const lines: string[] = [];
     lines.push('# Iteration Protocol');
     lines.push('');
@@ -617,6 +631,16 @@ Your task:
         lines.push('');
         for (const featureId of iterPreservations) {
           lines.push(`- Restored: ${featureId}`);
+        }
+        lines.push('');
+      }
+
+      const iterIntegrity = integrityRestorations?.get(iter.iterationNumber);
+      if (iterIntegrity && iterIntegrity.length > 0) {
+        lines.push('### Feature Integrity Restorations');
+        lines.push('');
+        for (const restoration of iterIntegrity) {
+          lines.push(`- ${restoration.featureId}: ${restoration.reasons.join('; ')}`);
         }
         lines.push('');
       }
