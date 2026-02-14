@@ -11,6 +11,37 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
 import { GuidedAiDialog } from './GuidedAiDialog';
 
+function isScaffoldOnly(content: string): boolean {
+  if (!content || content.trim().length === 0) return true;
+
+  const lines = content.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  if (lines.length === 0) return true;
+
+  const nonHeadingLines = lines.filter(l => !l.startsWith('#'));
+  if (nonHeadingLines.length === 0) return true;
+
+  const scaffoldPhrases = [
+    'brief description', 'what we aim', 'as a [user]', 'i want [goal]',
+    'how we measure', 'key milestones', 'functional and non-functional',
+    'high-level overview', 'long-term vision', 'strategic alignment',
+    'what\'s included', 'breakdown of individual', 'team and technical',
+    'kpis and success', 'phased delivery', 'technical problem',
+    'technical approach', 'system design', 'detailed technical',
+    'how we\'ll validate', 'scalability and optimization', 'deployment strategy',
+    'what we\'re launching', 'who we\'re building', 'unique value',
+    'complete feature list', 'marketing and launch', 'launch kpis',
+    'launch schedule', 'potential issues and solutions',
+    'default section content', 'section content placeholder',
+  ];
+
+  const substantiveLines = nonHeadingLines.filter(line => {
+    const lower = line.toLowerCase();
+    return !scaffoldPhrases.some(phrase => lower.includes(phrase));
+  });
+
+  return substantiveLines.length === 0;
+}
+
 interface DualAiDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -24,6 +55,7 @@ export function DualAiDialog({
   currentContent,
   onContentGenerated
 }: DualAiDialogProps) {
+  const hasRealContent = !isScaffoldOnly(currentContent);
   const [userInput, setUserInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [currentStep, setCurrentStep] = useState<'idle' | 'generating' | 'reviewing' | 'improving' | 'iterating' | 'done'>('idle');
@@ -67,7 +99,7 @@ export function DualAiDialog({
   };
 
   const handleGenerate = async () => {
-    if (!userInput.trim() && !currentContent) {
+    if (!userInput.trim() && !hasRealContent) {
       setError('Please provide input or ensure there is existing content');
       return;
     }
@@ -99,8 +131,8 @@ export function DualAiDialog({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         userInput: userInput.trim(),
-        existingContent: currentContent || undefined,
-        mode: currentContent ? 'improve' : 'generate'
+        existingContent: hasRealContent ? currentContent : undefined,
+        mode: hasRealContent ? 'improve' : 'generate'
       })
     });
 
@@ -127,18 +159,13 @@ export function DualAiDialog({
     setTotalIterations(iterationCount);
     setCurrentIteration(0);
     
-    // Determine if this is an improvement run (has existing content) or new generation
-    const hasExistingPRD = currentContent && currentContent.trim().length > 0;
-    
-    // NEW: Always pass existing content as base, userInput as additional requirements
-    // This ensures subsequent runs BUILD UPON existing content instead of replacing it
     const response = await fetch('/api/ai/generate-iterative', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        existingContent: hasExistingPRD ? currentContent : undefined,  // Pass existing PRD content
-        additionalRequirements: userInput.trim() || undefined,  // New requirements to add
-        mode: hasExistingPRD ? 'improve' : 'generate',  // Explicit mode for backend
+        existingContent: hasRealContent ? currentContent : undefined,
+        additionalRequirements: userInput.trim() || undefined,
+        mode: hasRealContent ? 'improve' : 'generate',
         iterationCount,
         useFinalReview
       })
@@ -352,11 +379,11 @@ export function DualAiDialog({
           {/* User Input */}
           <div className="space-y-2">
             <Label htmlFor="ai-input">
-              {currentContent ? 'Improvement Instructions' : 'PRD Description'}
+              {hasRealContent ? 'Improvement Instructions' : 'PRD Description'}
             </Label>
             <Textarea
               id="ai-input"
-              placeholder={currentContent 
+              placeholder={hasRealContent 
                 ? "Describe what you want to improve or add..."
                 : "Describe your product idea, features, and requirements..."
               }
@@ -403,7 +430,7 @@ export function DualAiDialog({
           ) : (
             <Button 
               onClick={handleGenerate}
-              disabled={isGenerating || (!userInput.trim() && !currentContent)}
+              disabled={isGenerating || (!userInput.trim() && !hasRealContent)}
               data-testid="button-dual-ai-generate"
             >
               {isGenerating ? (
@@ -420,7 +447,7 @@ export function DualAiDialog({
                   )}
                   {workflowMode === 'iterative' 
                     ? `Generate (${iterationCount}x iterations)` 
-                    : (currentContent ? 'Improve with Dual-AI' : 'Generate with Dual-AI')
+                    : (hasRealContent ? 'Improve with Dual-AI' : 'Generate with Dual-AI')
                   }
                 </>
               )}
