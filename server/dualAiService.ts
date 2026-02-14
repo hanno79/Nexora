@@ -19,6 +19,8 @@ import {
 import { generateFeatureList } from './services/llm/generateFeatureList';
 import { expandAllFeatures } from './services/llm/expandFeature';
 import { parsePRDToStructure, logStructureValidation } from './prdParser';
+import { compareStructures, logStructuralDrift } from './prdStructureDiff';
+import type { PRDStructure } from './prdStructure';
 import { db } from './db';
 import { users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
@@ -249,6 +251,8 @@ Create an improved version that incorporates the new requirements while keeping 
     const iterations: IterationData[] = [];
     let currentPRD = existingContent || '';
     const modelsUsed = new Set<string>();
+    let previousStructure: PRDStructure | null = null;
+    const allDriftWarnings: Map<number, string[]> = new Map();
     
     // Iterative Q&A Loop
     for (let i = 1; i <= iterationCount; i++) {
@@ -356,6 +360,24 @@ Your task:
       
       // Step 3: Extract clean PRD (without Q&A sections) and build iteration log
       const cleanPRD = this.extractCleanPRD(genResult.content);
+
+      // Structural drift detection (read-only, non-blocking)
+      try {
+        const currentStructure = parsePRDToStructure(cleanPRD);
+        if (previousStructure) {
+          const diff = compareStructures(previousStructure, currentStructure);
+          const warnings = logStructuralDrift(i, diff);
+          if (warnings.length > 0) {
+            allDriftWarnings.set(i, warnings);
+          }
+        } else {
+          logStructureValidation(currentStructure);
+        }
+        previousStructure = currentStructure;
+      } catch (driftError: any) {
+        console.warn(`⚠️ Structural drift detection failed for iteration ${i} (non-blocking):`, driftError.message);
+      }
+
       currentPRD = cleanPRD;
       
       iterations.push({
@@ -395,7 +417,7 @@ Your task:
     }
     
     // Build iteration log document (separate from clean PRD)
-    const iterationLog = this.buildIterationLog(iterations, finalReview);
+    const iterationLog = this.buildIterationLog(iterations, finalReview, allDriftWarnings);
     
     // Calculate totals
     const totalTokens = iterations.reduce((sum, iter) => sum + iter.tokensUsed, 0) +
@@ -533,7 +555,7 @@ Your task:
     return openPoints;
   }
 
-  private buildIterationLog(iterations: IterationData[], finalReview?: IterativeResponse['finalReview']): string {
+  private buildIterationLog(iterations: IterationData[], finalReview?: IterativeResponse['finalReview'], driftWarnings?: Map<number, string[]>): string {
     const lines: string[] = [];
     lines.push('# Iteration Protocol');
     lines.push('');
@@ -567,6 +589,16 @@ Your task:
         lines.push('');
       }
       
+      const iterWarnings = driftWarnings?.get(iter.iterationNumber);
+      if (iterWarnings && iterWarnings.length > 0) {
+        lines.push('### Structural Drift Warnings');
+        lines.push('');
+        for (const warning of iterWarnings) {
+          lines.push(`- ${warning}`);
+        }
+        lines.push('');
+      }
+
       lines.push('### Best Practice Recommendations');
       lines.push('');
       lines.push(iter.answererOutput);
