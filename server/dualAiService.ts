@@ -16,6 +16,7 @@ import {
   type IterativeResponse,
   type IterationData
 } from './dualAiPrompts';
+import { generateFeatureList } from './services/llm/generateFeatureList';
 import { db } from './db';
 import { users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
@@ -86,6 +87,19 @@ Create an improved version that incorporates the new requirements while keeping 
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
         tier: 'n/a'
       };
+    }
+
+    // Feature Identification Layer (runs after vision generation, before review)
+    if (mode !== 'review-only') {
+      try {
+        console.log('🧩 Feature Identification Layer: Extracting atomic features...');
+        const vision = this.extractVisionFromContent(generatorResponse.content);
+        const featureResult = await generateFeatureList(userInput, vision, client);
+        console.log(`🧩 Feature List (model: ${featureResult.model}, retried: ${featureResult.retried}):`);
+        console.log(featureResult.featureList);
+      } catch (error: any) {
+        console.warn('⚠️ Feature Identification Layer failed (non-blocking):', error.message);
+      }
     }
 
     // Step 2: Review with AI Reviewer
@@ -270,6 +284,20 @@ Your task:
       modelsUsed.add(genResult.model);
       console.log(`✅ Generated ${genResult.usage.completion_tokens} tokens with ${genResult.model}`);
       
+      // Feature Identification Layer (first iteration only)
+      if (i === 1) {
+        try {
+          console.log('🧩 Feature Identification Layer (iterative): Extracting atomic features...');
+          const vision = this.extractVisionFromContent(genResult.content);
+          const inputText = additionalRequirements || existingContent || '';
+          const featureResult = await generateFeatureList(inputText, vision, client);
+          console.log(`🧩 Feature List (model: ${featureResult.model}, retried: ${featureResult.retried}):`);
+          console.log(featureResult.featureList);
+        } catch (error: any) {
+          console.warn('⚠️ Feature Identification Layer failed (non-blocking):', error.message);
+        }
+      }
+
       // Extract questions from generator output
       const questions = this.extractQuestionsFromIterativeOutput(genResult.content);
       console.log(`📋 Extracted ${questions.length} questions`);
@@ -380,6 +408,24 @@ Your task:
     const mergedContent = `${prdContent}\n\n---\n\n## Best Practice Empfehlungen (Iteration)\n\n${answererOutput}`;
     
     return mergedContent;
+  }
+
+  private extractVisionFromContent(content: string): string {
+    const visionPatterns = [
+      /##\s*(?:1\.\s*)?System Vision\s*\n([\s\S]*?)(?=\n##\s)/i,
+      /##\s*(?:1\.\s*)?Executive Summary\s*\n([\s\S]*?)(?=\n##\s)/i,
+      /##\s*Vision\s*\n([\s\S]*?)(?=\n##\s)/i,
+    ];
+
+    for (const pattern of visionPatterns) {
+      const match = content.match(pattern);
+      if (match && match[1]?.trim().length > 20) {
+        return match[1].trim();
+      }
+    }
+
+    const firstParagraphs = content.split('\n').filter(l => l.trim().length > 0).slice(0, 5).join('\n');
+    return firstParagraphs || content.substring(0, 500);
   }
 
   private applyFinalReview(currentPRD: string, reviewContent: string): string {
