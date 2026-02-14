@@ -80,6 +80,93 @@ function splitIntoSections(markdown: string): RawSection[] {
   return sections;
 }
 
+const SUBSECTION_ORDER = [
+  { num: '1', field: 'purpose' as const, label: 'Purpose' },
+  { num: '2', field: 'actors' as const, label: 'Actors' },
+  { num: '3', field: 'trigger' as const, label: 'Trigger' },
+  { num: '4', field: 'preconditions' as const, label: 'Preconditions' },
+  { num: '5', field: 'mainFlow' as const, label: 'Main Flow' },
+  { num: '6', field: 'alternateFlows' as const, label: 'Alternate Flows' },
+  { num: '7', field: 'postconditions' as const, label: 'Postconditions' },
+  { num: '8', field: 'dataImpact' as const, label: 'Data Impact' },
+  { num: '9', field: 'uiImpact' as const, label: 'UI Impact' },
+  { num: '10', field: 'acceptanceCriteria' as const, label: 'Acceptance Criteria' },
+];
+
+function splitNumberedItems(text: string): string[] {
+  const items: string[] = [];
+  const lines = text.split('\n');
+  let currentItem = '';
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    const isNumbered = /^\d+[\.\)]\s+/.test(trimmed);
+    const isBullet = /^[-*]\s+/.test(trimmed);
+
+    if (isNumbered || isBullet) {
+      if (currentItem.trim()) {
+        items.push(currentItem.trim());
+      }
+      currentItem = trimmed.replace(/^\d+[\.\)]\s+/, '').replace(/^[-*]\s+/, '');
+    } else {
+      currentItem += ' ' + trimmed;
+    }
+  }
+  if (currentItem.trim()) {
+    items.push(currentItem.trim());
+  }
+
+  return items;
+}
+
+function parseFeatureSubsections(rawContent: string): Partial<Pick<FeatureSpec, 'purpose' | 'actors' | 'trigger' | 'preconditions' | 'mainFlow' | 'alternateFlows' | 'postconditions' | 'dataImpact' | 'uiImpact' | 'acceptanceCriteria'>> {
+  const result: any = {};
+
+  try {
+    const subsectionBoundaries: { field: string; matchStart: number; contentStart: number; isArray: boolean }[] = [];
+
+    for (const sub of SUBSECTION_ORDER) {
+      const pattern = new RegExp(`(?:^|\\n)\\s*(?:\\*\\*)?${sub.num}\\.\\s*${sub.label}[:\\s]*(?:\\*\\*)?`, 'i');
+      const match = rawContent.match(pattern);
+      if (match && match.index !== undefined) {
+        const isArray = sub.field === 'mainFlow' || sub.field === 'alternateFlows' || sub.field === 'acceptanceCriteria';
+        subsectionBoundaries.push({
+          field: sub.field,
+          matchStart: match.index,
+          contentStart: match.index + match[0].length,
+          isArray,
+        });
+      }
+    }
+
+    subsectionBoundaries.sort((a, b) => a.matchStart - b.matchStart);
+
+    for (let i = 0; i < subsectionBoundaries.length; i++) {
+      const boundary = subsectionBoundaries[i];
+      const endIndex = i + 1 < subsectionBoundaries.length
+        ? subsectionBoundaries[i + 1].matchStart
+        : rawContent.length;
+
+      const content = rawContent.substring(boundary.contentStart, endIndex).trim();
+      if (!content) continue;
+
+      if (boundary.isArray) {
+        const items = splitNumberedItems(content);
+        if (items.length > 0) {
+          result[boundary.field] = items;
+        }
+      } else {
+        result[boundary.field] = content;
+      }
+    }
+  } catch (e) {
+  }
+
+  return result;
+}
+
 function parseFeatureBlocks(body: string): { features: FeatureSpec[]; introText: string } {
   const features: FeatureSpec[] = [];
   const featurePattern = /(?:^|\n)(?:#{2,4}\s+)?(?:Feature\s+(?:ID:\s*)?|Feature\s+ID:\s*)(F-\d+)[:\s]+(.+?)(?:\n|$)/gi;
@@ -108,6 +195,7 @@ function parseFeatureBlocks(body: string): { features: FeatureSpec[]; introText:
       id: splitPoints[i].id,
       name: splitPoints[i].name,
       rawContent,
+      ...parseFeatureSubsections(rawContent),
     });
   }
 
@@ -172,6 +260,7 @@ export function parsePRDToStructure(markdown: string): PRDStructure {
           id: featureId,
           name: featureName || featureId,
           rawContent: section.body,
+          ...parseFeatureSubsections(section.body),
         });
       } else {
         structure.otherSections[section.heading] = section.body;
@@ -191,6 +280,12 @@ const REQUIRED_SECTIONS: (keyof PRDStructure)[] = [
   'errorHandling',
   'deployment',
   'definitionOfDone',
+];
+
+const STRUCTURED_FIELDS: (keyof FeatureSpec)[] = [
+  'purpose', 'actors', 'trigger', 'preconditions',
+  'mainFlow', 'alternateFlows', 'postconditions',
+  'dataImpact', 'uiImpact', 'acceptanceCriteria',
 ];
 
 export function logStructureValidation(structure: PRDStructure): void {
@@ -216,9 +311,33 @@ export function logStructureValidation(structure: PRDStructure): void {
   console.log(`📊 PRD Structure Analysis:`);
   console.log(`  Features found: ${structure.features.length}`);
   if (structure.features.length > 0) {
+    let structuredCount = 0;
     for (const f of structure.features) {
-      console.log(`    - ${f.id}: ${f.name} (${f.rawContent.length} chars)`);
+      const parsedFields: string[] = [];
+      const missingFields: string[] = [];
+      for (const field of STRUCTURED_FIELDS) {
+        const val = f[field];
+        const hasValue = Array.isArray(val) ? val.length > 0 : typeof val === 'string' && val.trim().length > 0;
+        if (hasValue) {
+          parsedFields.push(field);
+        } else {
+          missingFields.push(field);
+        }
+      }
+      const isStructured = parsedFields.length >= 3;
+      if (isStructured) structuredCount++;
+      console.log(`    - ${f.id}: ${f.name} (${f.rawContent.length} chars) [${parsedFields.length}/${STRUCTURED_FIELDS.length} fields]`);
+      if (parsedFields.length > 0) {
+        console.log(`      Parsed: ${parsedFields.join(', ')}`);
+      }
+      if (missingFields.length > 0 && parsedFields.length > 0) {
+        console.log(`      Missing: ${missingFields.join(', ')}`);
+      }
     }
+    const pct = structure.features.length > 0
+      ? Math.round((structuredCount / structure.features.length) * 100)
+      : 0;
+    console.log(`  Structured features: ${structuredCount}/${structure.features.length} (${pct}%)`);
   }
   console.log(`  Sections detected: ${detectedSections.join(', ')}`);
   if (missingSections.length > 0) {

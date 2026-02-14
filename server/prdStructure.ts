@@ -1,7 +1,19 @@
 export interface FeatureSpec {
   id: string;
   name: string;
+
   rawContent: string;
+
+  purpose?: string;
+  actors?: string;
+  trigger?: string;
+  preconditions?: string;
+  mainFlow?: string[];
+  alternateFlows?: string[];
+  postconditions?: string;
+  dataImpact?: string;
+  uiImpact?: string;
+  acceptanceCriteria?: string[];
 }
 
 export interface PRDStructure {
