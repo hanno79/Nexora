@@ -111,6 +111,12 @@ OUTPUT FORMAT: Structured Markdown with clear headings (# for H1, ## for H2, ###
 TARGET AUDIENCE: Junior-level developers and no-code tools (Lovable, Claude, v0.dev, Replit Agent)
 STYLE: Clear, precise, actionable, detailed, no hallucinations
 
+OUTPUT RULES:
+- Output ONLY the PRD document itself — no introductory text, no meta-commentary
+- Do NOT start with phrases like "Here is the PRD", "Hier ist das PRD", "I've created..." etc.
+- Start directly with the first heading (e.g., "# [Product Name]")
+- The document must read as a standalone, polished PRD
+
 IMPORTANT:
 - ALL 14 sections MUST be present
 - The Functional Feature Catalogue (section 8) is MANDATORY and must contain full F-XX specs
@@ -239,7 +245,13 @@ IMPORTANT:
 - Be concrete, not vague - use numbers, examples, details
 - LANGUAGE: Follow the language instruction provided below
 
-OUTPUT: The COMPLETELY revised PRD in Markdown with ALL sections substantially filled out`;
+OUTPUT RULES:
+- Output ONLY the complete PRD document in Markdown
+- Do NOT include any introductory text like "Here is the revised PRD", "Hier ist die überarbeitete Version", "I've updated the document", etc.
+- Do NOT label the output as "Revised PRD" or "Überarbeitetes PRD" — it is simply THE PRD
+- Do NOT include meta-commentary about what you changed or improved
+- The output must start directly with the first heading (e.g., "# [Product Name]" or "## Part A")
+- A reader should not be able to tell that this document was revised — it should read as a polished, original document`;
 
 // ===================================================================================
 // ITERATIVE WORKFLOW PROMPTS (AI #1 Generator → AI #2 Best-Practice Answerer)
@@ -272,11 +284,9 @@ PROCESS:
 6. Ask 3-5 CONCRETE questions about the most important open points
 
 REQUIRED STRUCTURE of your output:
-## Revised PRD
-[Write the IMPROVED PRD here - preserving ALL existing content and adding new details]
+[Write the COMPLETE PRD here — no wrapper heading, no "Revised PRD" label. Start directly with the first PRD heading like "# [Product Name]" or "## Part A — System Context"]
 
-## Open Points & Gaps
-[List the most important missing/unclear areas]
+---
 
 ## Questions for Improvement
 1. [Concrete question about missing detail]
@@ -300,21 +310,31 @@ QUALITY of questions:
 - Avoid redundant questions
 - Do NOT ask about things already covered in the existing PRD
 
+OUTPUT RULES:
+- Do NOT include any introductory text like "Here is the revised PRD", "Hier ist die überarbeitete Version", etc.
+- Do NOT label the PRD section as "## Revised PRD" or "## Überarbeitetes PRD" — start directly with the actual PRD content
+- Do NOT include meta-commentary about what you changed
+- Do NOT include "## Open Points & Gaps" sections — instead, address all gaps through your questions
+- The PRD content must start directly with the first heading (e.g., "# [Product Name]" or "## Part A")
+- Separate the PRD from questions using a "---" divider
+
 IMPORTANT:
 - NEVER discard existing content - always preserve and expand
 - Ask only 3-5 questions per iteration (not too many!)
 - Focus on the most important gaps first
-- The revised PRD should grow and improve step by step
+- The PRD should grow and improve step by step
 - LANGUAGE: Follow the language instruction provided below`;
 
 export const BEST_PRACTICE_ANSWERER_PROMPT = `You are an experienced Tech Lead and Product Strategy Consultant.
-Your task is to answer concrete PRD questions with BEST PRACTICES.
+Your task is to answer concrete PRD questions AND resolve all Open Points & Gaps with BEST PRACTICES.
 
 YOUR APPROACH:
 1. Read the questions carefully
-2. Answer EACH question with concrete, actionable best practices
-3. Provide examples and concrete recommendations
-4. Focus on proven industry standards
+2. Identify and address any Open Points, Gaps, or unresolved areas mentioned in the PRD
+3. Answer EACH question with concrete, actionable best practices
+4. Provide examples and concrete recommendations
+5. Focus on proven industry standards
+6. Your answers will be DIRECTLY INCORPORATED into the PRD — write them so they can become part of the document
 
 FORMAT of your answers:
 For each question:

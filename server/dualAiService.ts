@@ -163,8 +163,12 @@ Create an improved version that incorporates the new requirements while keeping 
       improvedVersion?.model
     ].filter(Boolean))) as string[];
 
+    // Apply cleanup to strip any LLM preamble/meta-commentary from final output
+    const rawFinalContent = improvedVersion?.content || generatorResponse.content;
+    const cleanedFinalContent = this.extractCleanPRD(rawFinalContent);
+
     return {
-      finalContent: improvedVersion?.content || generatorResponse.content,
+      finalContent: cleanedFinalContent,
       generatorResponse,
       reviewerResponse,
       improvedVersion,
@@ -262,16 +266,21 @@ Your task:
           generatorPrompt = `INITIAL INPUT:\n${additionalRequirements || existingContent}\n\nCreate an initial PRD draft and ask questions about open points.`;
         }
       } else {
-        // Subsequent iterations: Always improve current state
+        // Subsequent iterations: Incorporate previous answers and resolve open points
+        const prevIteration = iterations[iterations.length - 1];
         generatorPrompt = `CURRENT PRD (DO NOT DISCARD - BUILD UPON IT):
 ${currentPRD}
 
+ANSWERS FROM PREVIOUS ITERATION (MUST be incorporated into the PRD):
+${prevIteration.answererOutput}
+
 Your task:
 1. PRESERVE all existing sections and content
-2. INTEGRATE any answered questions from previous iterations
-3. EXPAND sections that are still incomplete
-4. Ask questions about remaining gaps only
-5. Make the PRD more detailed and comprehensive`
+2. INCORPORATE all answers from the previous iteration directly into the appropriate PRD sections — do NOT leave them as separate Q&A
+3. RESOLVE any Open Points or Gaps by using the expert answers — the information must become part of the PRD content
+4. EXPAND sections that are still incomplete
+5. Ask questions about remaining gaps only (do NOT repeat already-answered questions)
+6. The final PRD must be self-contained — a reader should find all information IN the document, not in a separate Q&A section`
       }
       
       const genResult = await client.callWithFallback(
@@ -305,7 +314,7 @@ Your task:
       // Step 2: AI #2 (Answerer) - Answers with best practices
       console.log(`🧠 AI #2: Answering questions with best practices...`);
       
-      const answererPrompt = `The following PRD is being developed:\n\n${genResult.content}\n\nAnswer the questions with best practices.`;
+      const answererPrompt = `The following PRD is being developed:\n\n${genResult.content}\n\nAnswer ALL questions with best practices. Also identify and resolve any Open Points, Gaps, or unresolved areas in the PRD. Your answers will be incorporated directly into the next PRD revision.`;
       
       const answerResult = await client.callWithFallback(
         'reviewer',  // Using reviewer model for answerer role
@@ -379,11 +388,22 @@ Your task:
   private extractQuestionsFromIterativeOutput(generatorOutput: string): string[] {
     const questions: string[] = [];
     
-    // Look for "Fragen zur Verbesserung" section
-    const questionSectionMatch = generatorOutput.match(/## Fragen zur Verbesserung([\s\S]*?)(?=##|$)/i);
+    // Look for question sections in multiple languages
+    const questionPatterns = [
+      /## (?:Fragen zur Verbesserung|Questions for Improvement)([\s\S]*?)(?=##|$)/i,
+      /## (?:Offene Fragen|Open Questions)([\s\S]*?)(?=##|$)/i,
+    ];
     
-    if (questionSectionMatch) {
-      const questionSection = questionSectionMatch[1];
+    let questionSection: string | null = null;
+    for (const pattern of questionPatterns) {
+      const match = generatorOutput.match(pattern);
+      if (match) {
+        questionSection = match[1];
+        break;
+      }
+    }
+    
+    if (questionSection) {
       const lines = questionSection.split('\n');
       
       for (const line of lines) {
@@ -401,26 +421,80 @@ Your task:
   }
 
   private extractCleanPRD(generatorOutput: string): string {
-    const prdMatch = generatorOutput.match(/## Überarbeitetes PRD([\s\S]*?)(?=## Offene Punkte|## Fragen|$)/i);
-    if (prdMatch) {
-      return prdMatch[1].trim();
+    let cleanContent = generatorOutput;
+    
+    // Step 1: If output is wrapped in "## Revised PRD" / "## Überarbeitetes PRD", extract inner content
+    const revisedMatch = cleanContent.match(/##\s*(?:Revised PRD|Überarbeitetes PRD)\s*\n([\s\S]*?)(?=\n---\s*\n## (?:Questions|Fragen|Open|Offene)|$)/i);
+    if (revisedMatch) {
+      cleanContent = revisedMatch[1].trim();
     }
     
+    // Step 2: Remove Q&A and meta sections (at end of document, after --- divider or without)
     const qaSections = [
-      /\n---\n\n## Best Practice Empfehlungen[\s\S]*/i,
-      /\n---\n\n## Final Review Feedback[\s\S]*/i,
-      /\n## Fragen zur Verbesserung[\s\S]*?(?=\n## (?!Fragen)|$)/i,
-      /\n## Offene Punkte[\s\S]*?(?=\n## (?!Offene)|$)/i,
-      /\n## Open Questions[\s\S]*?(?=\n## (?!Open)|$)/i,
-      /\n## Questions for Improvement[\s\S]*?(?=\n## (?!Questions)|$)/i,
+      /\n---\s*\n+## (?:Questions for Improvement|Fragen zur Verbesserung)[\s\S]*/i,
+      /\n---\s*\n+## (?:Open Points|Offene Punkte)[\s\S]*/i,
+      /\n---\s*\n+## Best Practice Empfehlungen[\s\S]*/i,
+      /\n---\s*\n+## Final Review Feedback[\s\S]*/i,
+      /\n## (?:Questions for Improvement|Fragen zur Verbesserung)[\s\S]*?(?=\n## (?!Questions|Fragen)|$)/i,
+      /\n## (?:Open Points(?: & Gaps)?|Offene Punkte(?: (?:&|und) Lücken)?)[\s\S]*?(?=\n## (?!Open|Offene)|$)/i,
+      /\n## (?:Open Questions|Offene Fragen)[\s\S]*?(?=\n## (?!Open|Offene)|$)/i,
     ];
     
-    let cleanContent = generatorOutput;
     for (const pattern of qaSections) {
       cleanContent = cleanContent.replace(pattern, '');
     }
     
+    // Step 3: Strip LLM preamble text before the actual PRD content
+    // These are introductory sentences the LLM adds before the document
+    const preamblePatterns = [
+      /^(?:Hier ist (?:die|das|eine)[\s\S]*?(?:PRD|Dokument|Version)[\s\S]*?[:.]\s*\n+)/i,
+      /^(?:Here is (?:the|a|an)[\s\S]*?(?:PRD|document|version)[\s\S]*?[:.]\s*\n+)/i,
+      /^(?:I've (?:updated|revised|improved|created|generated)[\s\S]*?[:.]\s*\n+)/i,
+      /^(?:Ich habe (?:das|die|den)[\s\S]*?(?:überarbeitet|erstellt|aktualisiert|verbessert)[\s\S]*?[:.]\s*\n+)/i,
+      /^(?:Below is (?:the|a|an)[\s\S]*?[:.]\s*\n+)/i,
+      /^(?:The following is[\s\S]*?[:.]\s*\n+)/i,
+      /^(?:Im Folgenden[\s\S]*?[:.]\s*\n+)/i,
+    ];
+    
+    for (const pattern of preamblePatterns) {
+      cleanContent = cleanContent.replace(pattern, '');
+    }
+    
+    // Step 4: Final safety net — strip any remaining non-heading text before the first markdown heading
+    // This catches multi-line preambles that the specific patterns above might miss
+    const firstHeadingIndex = cleanContent.search(/^#{1,3}\s+/m);
+    if (firstHeadingIndex > 0) {
+      const beforeHeading = cleanContent.substring(0, firstHeadingIndex).trim();
+      // Only strip if the text before the heading doesn't contain markdown structure (just plain text preamble)
+      if (!beforeHeading.includes('#') && beforeHeading.length < 500) {
+        cleanContent = cleanContent.substring(firstHeadingIndex);
+      }
+    }
+    
+    // Step 5: Strip trailing --- divider if document ends with one
+    cleanContent = cleanContent.replace(/\n---\s*$/, '');
+    
     return cleanContent.trim();
+  }
+
+  private extractOpenPoints(generatorOutput: string): string[] {
+    const openPoints: string[] = [];
+    const openPointsMatch = generatorOutput.match(/## (?:Open Points(?: & Gaps)?|Offene Punkte(?: (?:&|und) Lücken)?)([\s\S]*?)(?=\n## |$)/i);
+    
+    if (openPointsMatch) {
+      const lines = openPointsMatch[1].split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.match(/^[-*]\s+/) || trimmed.match(/^\d+\.\s+/)) {
+          const point = trimmed.replace(/^[-*]\s+/, '').replace(/^\d+\.\s+/, '').trim();
+          if (point.length > 5) {
+            openPoints.push(point);
+          }
+        }
+      }
+    }
+    
+    return openPoints;
   }
 
   private buildIterationLog(iterations: IterationData[], finalReview?: IterativeResponse['finalReview']): string {
@@ -436,6 +510,17 @@ Your task:
       lines.push('');
       lines.push(`## Iteration ${iter.iterationNumber}`);
       lines.push('');
+      
+      // Extract and log open points from this iteration
+      const openPoints = this.extractOpenPoints(iter.generatorOutput);
+      if (openPoints.length > 0) {
+        lines.push('### Open Points & Gaps Identified');
+        lines.push('');
+        for (let p = 0; p < openPoints.length; p++) {
+          lines.push(`${p + 1}. ${openPoints[p]}`);
+        }
+        lines.push('');
+      }
       
       if (iter.questions.length > 0) {
         lines.push('### Questions Identified');
