@@ -512,6 +512,17 @@ interface IterationData {
   tokensUsed: number;
 }
 
+interface CompilerDiagnostics {
+  structuredFeatureCount: number;
+  totalFeatureCount: number;
+  jsonSectionUpdates: number;
+  markdownSectionRegens: number;
+  fullRegenerations: number;
+  featurePreservations: number;
+  featureIntegrityRestores: number;
+  driftEvents: number;
+}
+
 interface IterativeResponse {
   finalContent: string;
   iterationLog: string;
@@ -524,6 +535,7 @@ interface IterativeResponse {
   };
   totalTokens: number;
   modelsUsed: string[];
+  diagnostics?: CompilerDiagnostics;
 }
 
 export type {
@@ -532,5 +544,6 @@ export type {
   ReviewerResponse,
   DualAiResponse,
   IterationData,
-  IterativeResponse
+  IterativeResponse,
+  CompilerDiagnostics
 };

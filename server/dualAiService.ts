@@ -14,7 +14,8 @@ import {
   type GeneratorResponse,
   type ReviewerResponse,
   type IterativeResponse,
-  type IterationData
+  type IterationData,
+  type CompilerDiagnostics
 } from './dualAiPrompts';
 import { generateFeatureList } from './services/llm/generateFeatureList';
 import { expandAllFeatures } from './services/llm/expandFeature';
@@ -261,6 +262,17 @@ Create an improved version that incorporates the new requirements while keeping 
     const allIntegrityRestorations: Map<number, IntegrityRestoration[]> = new Map();
     const allSectionRegens: Map<number, { section: string; feedbackSnippet: string; mode?: 'json' | 'markdown' }> = new Map();
     
+    const diagnostics: CompilerDiagnostics = {
+      structuredFeatureCount: 0,
+      totalFeatureCount: 0,
+      jsonSectionUpdates: 0,
+      markdownSectionRegens: 0,
+      fullRegenerations: 0,
+      featurePreservations: 0,
+      featureIntegrityRestores: 0,
+      driftEvents: 0,
+    };
+
     // Iterative Q&A Loop
     for (let i = 1; i <= iterationCount; i++) {
       console.log(`\n📝 Iteration ${i}/${iterationCount}`);
@@ -293,6 +305,7 @@ Create an improved version that incorporates the new requirements while keeping 
               );
               regenContent = jsonResult.updatedContent;
               usedJsonMode = true;
+              diagnostics.jsonSectionUpdates++;
               console.log(`✅ Iteration ${i}: JSON structured section update succeeded for "${targetSection}"`);
             } catch (jsonError: any) {
               console.warn(`⚠️ Iteration ${i}: JSON section regen failed (falling back to markdown regen):`, jsonError.message);
@@ -307,6 +320,7 @@ Create an improved version that incorporates the new requirements while keeping 
                 client,
                 langInstruction
               );
+              diagnostics.markdownSectionRegens++;
               console.log(`✅ Iteration ${i}: Markdown section regeneration complete for "${targetSection}"`);
             }
 
@@ -335,6 +349,7 @@ Create an improved version that incorporates the new requirements while keeping 
       }
 
       if (!genResult) {
+        diagnostics.fullRegenerations++;
         console.log(`🤖 AI #1: Generating PRD draft and identifying gaps...`);
         
         let generatorPrompt: string;
@@ -444,6 +459,7 @@ Your task:
           const warnings = logStructuralDrift(i, diff);
           if (warnings.length > 0) {
             allDriftWarnings.set(i, warnings);
+            diagnostics.driftEvents += warnings.length;
           }
 
           if (diff.removedFeatures.length > 0) {
@@ -451,6 +467,7 @@ Your task:
             currentStructure = restoreRemovedFeatures(previousStructure, currentStructure, diff.removedFeatures);
             preservedPRD = assembleStructureToMarkdown(currentStructure);
             allPreservationActions.set(i, [...diff.removedFeatures]);
+            diagnostics.featurePreservations += diff.removedFeatures.length;
             console.log(`✅ Iteration ${i}: Feature preservation complete, PRD reassembled`);
           }
 
@@ -460,6 +477,7 @@ Your task:
             if (integrityResult.restorations.length > 0) {
               preservedPRD = assembleStructureToMarkdown(currentStructure);
               allIntegrityRestorations.set(i, integrityResult.restorations);
+              diagnostics.featureIntegrityRestores += integrityResult.restorations.length;
               console.log(`🛡️ Iteration ${i}: Feature integrity enforced, ${integrityResult.restorations.length} feature(s) restored`);
             }
           } catch (integrityError: any) {
@@ -525,6 +543,10 @@ Your task:
     try {
       const structured = parsePRDToStructure(currentPRD);
       logStructureValidation(structured);
+      diagnostics.totalFeatureCount = structured.features.length;
+      diagnostics.structuredFeatureCount = structured.features.filter(f =>
+        f.purpose || f.actors || f.mainFlow || f.acceptanceCriteria
+      ).length;
     } catch (parseError: any) {
       console.warn('⚠️ PRD structure parsing failed (non-blocking):', parseError.message);
     }
@@ -535,7 +557,8 @@ Your task:
       iterations,
       finalReview,
       totalTokens,
-      modelsUsed: Array.from(modelsUsed)
+      modelsUsed: Array.from(modelsUsed),
+      diagnostics
     };
   }
 
