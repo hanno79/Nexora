@@ -1,0 +1,107 @@
+We are adding a Compiler Diagnostics Layer to Nexora.
+
+IMPORTANT:
+Do NOT modify generation logic.
+Do NOT change iteration behavior.
+This is observability only.
+
+----------------------------------------
+OBJECTIVE
+----------------------------------------
+
+Expose internal compiler behavior in the UI so we can verify:
+
+- Structured feature usage
+- JSON section update usage
+- Markdown fallback usage
+- Full regeneration usage
+- Feature preservation restores
+- Feature integrity restores
+- Structural drift events
+
+----------------------------------------
+STEP 1 — EXTEND ITERATION DATA STRUCTURE
+----------------------------------------
+
+In dualAiService.ts, extend IterationData (or result object):
+
+Add fields:
+
+{
+  diagnostics?: {
+    structuredFeatureCount: number;
+    totalFeatureCount: number;
+    jsonSectionUpdates: number;
+    markdownSectionRegens: number;
+    fullRegenerations: number;
+    featurePreservations: number;
+    featureIntegrityRestores: number;
+    driftEvents: number;
+  }
+}
+
+Initialize counters at beginning of generation.
+
+Increment counters inside:
+
+- JSON section update success
+- Markdown section regeneration
+- Full regeneration fallback
+- restoreRemovedFeatures()
+- enforceFeatureIntegrity()
+- Drift detection
+
+----------------------------------------
+STEP 2 — RETURN DIAGNOSTICS TO FRONTEND
+----------------------------------------
+
+Ensure API route returns diagnostics object
+inside the response JSON.
+
+Example:
+
+{
+  finalContent,
+  iterationLog,
+  diagnostics
+}
+
+----------------------------------------
+STEP 3 — FRONTEND DEBUG PANEL
+----------------------------------------
+
+In frontend PRD result view:
+
+Add collapsible panel titled:
+
+"Compiler Diagnostics"
+
+Display:
+
+Structured Features: X / Y
+JSON Section Updates: X
+Markdown Section Regenerations: X
+Full Regenerations: X
+Feature Preservation Restores: X
+Feature Integrity Restores: X
+Structural Drift Events: X
+
+If structuredFeatureCount === totalFeatureCount
+display green indicator.
+
+----------------------------------------
+STEP 4 — NO FUNCTIONAL CHANGE
+----------------------------------------
+
+Generation flow must remain untouched.
+Diagnostics must not affect logic.
+
+----------------------------------------
+DELIVERABLE
+----------------------------------------
+
+Return:
+
+1. Backend modifications
+2. Frontend diagnostics panel
+3. Confirmation no generation logic changed
