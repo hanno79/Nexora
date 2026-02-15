@@ -197,8 +197,18 @@ export default function Editor() {
     if (newIterationLog) {
       setIterationLog(newIterationLog);
     }
-    if (response.diagnostics) {
-      setCompilerDiagnostics(response.diagnostics);
+    const diag = response.diagnostics || (response.iterations ? {
+      structuredFeatureCount: 0,
+      totalFeatureCount: 0,
+      jsonSectionUpdates: 0,
+      markdownSectionRegens: 0,
+      fullRegenerations: response.iterations?.length || 0,
+      featurePreservations: 0,
+      featureIntegrityRestores: 0,
+      driftEvents: 0,
+    } : null);
+    if (diag) {
+      setCompilerDiagnostics(diag);
     }
     
     const patchData: any = {
