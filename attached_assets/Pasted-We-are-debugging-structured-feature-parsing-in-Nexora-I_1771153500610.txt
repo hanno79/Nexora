@@ -1,0 +1,97 @@
+We are debugging structured feature parsing in Nexora.
+
+IMPORTANT:
+Do NOT modify generation logic.
+Do NOT fix anything yet.
+This is inspection only.
+
+----------------------------------------
+OBJECTIVE
+----------------------------------------
+
+Determine why Structured Features show 0 / 0.
+
+We must inspect:
+
+1. cleanPRD content
+2. Raw feature headers in cleanPRD
+3. Parser regex matches
+4. Feature extraction boundaries
+
+----------------------------------------
+STEP 1 — LOG CLEAN PRD PREVIEW
+----------------------------------------
+
+Inside generateIterative(), immediately after:
+
+const cleanPRD = this.extractCleanPRD(...);
+
+Add:
+
+console.log("---- CLEAN PRD START ----");
+console.log(cleanPRD.substring(0, 2000));
+console.log("---- CLEAN PRD END ----");
+
+Also log:
+
+console.log("CLEAN PRD LENGTH:", cleanPRD.length);
+
+----------------------------------------
+STEP 2 — LOG FEATURE HEADER MATCHING
+----------------------------------------
+
+Inside parsePRDToStructure():
+
+Before extracting features, add:
+
+const featureHeaderMatches = cleanMarkdown.match(/Feature\s+ID:/gi);
+console.log("Feature ID header matches:", featureHeaderMatches?.length || 0);
+
+Also log first 5 matches including surrounding context:
+
+const debugMatches = cleanMarkdown.match(/Feature\s+ID:[^\n]{0,100}/gi);
+console.log("Feature Header Samples:", debugMatches?.slice(0, 5));
+
+----------------------------------------
+STEP 3 — LOG SECTION SPLIT RESULTS
+----------------------------------------
+
+If using split based on headings:
+
+console.log("Top-level sections detected:", detectedSectionTitles);
+
+----------------------------------------
+STEP 4 — LOG STRUCTURE OUTPUT
+----------------------------------------
+
+After parsePRDToStructure():
+
+console.log("Parsed Feature Count:", structured.features.length);
+console.log("Feature IDs Parsed:", structured.features.map(f => f.id));
+
+----------------------------------------
+STEP 5 — VERIFY RAW FEATURE FORMAT
+----------------------------------------
+
+Add temporary log:
+
+console.log("First 1000 chars around Feature Catalogue:");
+const featureCatalogIndex = cleanPRD.indexOf("Feature");
+if (featureCatalogIndex > -1) {
+    console.log(cleanPRD.substring(featureCatalogIndex, featureCatalogIndex + 1000));
+}
+
+----------------------------------------
+DELIVERABLE
+----------------------------------------
+
+Run one iteration.
+
+Provide console output for:
+
+- CLEAN PRD LENGTH
+- Feature ID header matches
+- Feature Header Samples
+- Parsed Feature Count
+- Feature IDs Parsed
+- First 1000 chars around Feature section
