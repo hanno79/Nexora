@@ -1,23 +1,29 @@
 import type { PRDStructure } from './prdStructure';
 import type { OpenRouterClient } from './openrouter';
 
-const SECTION_KEYWORDS: Record<string, keyof PRDStructure> = {
-  'vision': 'systemVision',
-  'system vision': 'systemVision',
-  'boundaries': 'systemBoundaries',
-  'system boundaries': 'systemBoundaries',
-  'domain model': 'domainModel',
-  'business rules': 'globalBusinessRules',
-  'global business rules': 'globalBusinessRules',
-  'non-functional': 'nonFunctional',
-  'nonfunctional': 'nonFunctional',
-  'non functional': 'nonFunctional',
-  'error handling': 'errorHandling',
-  'error recovery': 'errorHandling',
-  'deployment': 'deployment',
-  'infrastructure': 'deployment',
-  'definition of done': 'definitionOfDone',
-};
+interface SectionPattern {
+  regex: RegExp;
+  sectionKey: keyof PRDStructure;
+  weight: number;
+}
+
+const SECTION_PATTERNS: SectionPattern[] = [
+  { regex: /system\s*vision/i, sectionKey: 'systemVision', weight: 10 },
+  { regex: /\bvision\b/i, sectionKey: 'systemVision', weight: 5 },
+  { regex: /system\s*boundaries/i, sectionKey: 'systemBoundaries', weight: 10 },
+  { regex: /\bboundaries\b/i, sectionKey: 'systemBoundaries', weight: 5 },
+  { regex: /\bdomain\s*model\b/i, sectionKey: 'domainModel', weight: 10 },
+  { regex: /global\s*business\s*rules/i, sectionKey: 'globalBusinessRules', weight: 10 },
+  { regex: /\bbusiness\s*rules\b/i, sectionKey: 'globalBusinessRules', weight: 7 },
+  { regex: /non[- ]?functional/i, sectionKey: 'nonFunctional', weight: 10 },
+  { regex: /\berror\s*handling\b/i, sectionKey: 'errorHandling', weight: 10 },
+  { regex: /\berror\s*recovery\b/i, sectionKey: 'errorHandling', weight: 8 },
+  { regex: /\bdeployment\b/i, sectionKey: 'deployment', weight: 7 },
+  { regex: /\binfrastructure\b/i, sectionKey: 'deployment', weight: 5 },
+  { regex: /definition\s*of\s*done/i, sectionKey: 'definitionOfDone', weight: 10 },
+];
+
+const EXPLICIT_SECTION_REGEX = /(?:section|abschnitt|bereich)\s*[:\-–]?\s*["']?([^"'\n,]+)["']?/gi;
 
 const SECTION_DISPLAY_NAMES: Partial<Record<keyof PRDStructure, string>> = {
   systemVision: 'System Vision',
@@ -30,28 +36,57 @@ const SECTION_DISPLAY_NAMES: Partial<Record<keyof PRDStructure, string>> = {
   definitionOfDone: 'Definition of Done',
 };
 
+const DISPLAY_NAME_TO_KEY: Record<string, keyof PRDStructure> = {};
+for (const [key, name] of Object.entries(SECTION_DISPLAY_NAMES)) {
+  DISPLAY_NAME_TO_KEY[name.toLowerCase()] = key as keyof PRDStructure;
+}
+
 export function detectTargetSection(reviewText: string): keyof PRDStructure | null {
-  const lower = reviewText.toLowerCase();
+  console.log(`\n🔍 [detectTargetSection] Analyzing reviewer feedback (${reviewText.length} chars)...`);
+  console.log(`🔍 [detectTargetSection] Feedback preview: "${reviewText.substring(0, 200)}..."`);
 
-  let bestMatch: keyof PRDStructure | null = null;
-  let bestLength = 0;
+  const scoreMap: Map<keyof PRDStructure, number> = new Map();
 
-  for (const [keyword, sectionKey] of Object.entries(SECTION_KEYWORDS)) {
-    if (lower.includes(keyword) && keyword.length > bestLength) {
-      bestMatch = sectionKey;
-      bestLength = keyword.length;
+  for (const pattern of SECTION_PATTERNS) {
+    const matches = reviewText.match(new RegExp(pattern.regex, 'gi'));
+    if (matches) {
+      const current = scoreMap.get(pattern.sectionKey) || 0;
+      scoreMap.set(pattern.sectionKey, current + pattern.weight * matches.length);
     }
   }
 
-  if (bestMatch) {
-    const featurePatterns = [/\bf-\d{2}\b/i, /\bfeature\s+(spec|catalogue|catalog)\b/i];
-    const hasFeatureContext = featurePatterns.some(p => p.test(lower));
-    if (hasFeatureContext) {
-      return null;
+  let match: RegExpExecArray | null;
+  while ((match = EXPLICIT_SECTION_REGEX.exec(reviewText)) !== null) {
+    const namedSection = match[1].trim().toLowerCase();
+    const mappedKey = DISPLAY_NAME_TO_KEY[namedSection];
+    if (mappedKey) {
+      const current = scoreMap.get(mappedKey) || 0;
+      scoreMap.set(mappedKey, current + 20);
+      console.log(`🔍 [detectTargetSection] Explicit section reference found: "${match[1].trim()}" → ${String(mappedKey)} (+20 boost)`);
     }
   }
 
-  return bestMatch;
+  if (scoreMap.size === 0) {
+    console.warn(`⚠️ [detectTargetSection] No section match detected. Falling back to full regeneration.`);
+    return null;
+  }
+
+  const sorted = Array.from(scoreMap.entries()).sort((a, b) => b[1] - a[1]);
+  console.log(`🔍 [detectTargetSection] Section scores:`, sorted.map(([k, v]) => `${String(k)}=${v}`).join(', '));
+
+  const bestKey = sorted[0][0];
+  const bestScore = sorted[0][1];
+
+  const featurePatterns = [/\bf-\d{2}\b/i, /\bfeature\s+(spec|catalogue|catalog)\b/i];
+  const hasFeatureContext = featurePatterns.some(p => p.test(reviewText));
+  if (hasFeatureContext) {
+    console.log(`🔍 [detectTargetSection] Feature context detected (F-XX pattern). Skipping section targeting.`);
+    return null;
+  }
+
+  const displayName = (SECTION_DISPLAY_NAMES as Record<string, string>)[bestKey as string] || String(bestKey);
+  console.log(`🔍 [detectTargetSection] Detected Section: "${displayName}" (key: ${String(bestKey)}, confidence: ${bestScore})`);
+  return bestKey;
 }
 
 const SECTION_REGEN_SYSTEM_PROMPT = `You are a senior product architect specializing in PRD section refinement.

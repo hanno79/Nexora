@@ -385,6 +385,12 @@ Implementation via NextAuth.js or Supabase Auth for easy session management."
 
 ---
 
+SECTION REFERENCE RULE:
+- When suggesting improvements, you MUST explicitly state the section name that requires changes using exact heading terminology
+- Use exact section names: "System Vision", "System Boundaries", "Domain Model", "Global Business Rules", "Non-Functional Requirements", "Error Handling & Recovery", "Deployment & Infrastructure", "Definition of Done"
+- Example: "The Deployment section should include..." or "Section: Deployment & Infrastructure needs..."
+- All feedback must explicitly reference the affected section name so targeted updates can be applied
+
 IMPORTANT:
 - Be CONCRETE and ACTIONABLE
 - Provide EXAMPLES and TOOL RECOMMENDATIONS

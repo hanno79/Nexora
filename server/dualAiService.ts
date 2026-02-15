@@ -288,11 +288,12 @@ Create an improved version that incorporates the new requirements while keeping 
           const targetSection = detectTargetSection(feedbackText);
 
           if (targetSection && typeof previousStructure[targetSection] === 'string') {
-            console.log(`🎯 Iteration ${i}: Section-level regeneration detected — targeting "${targetSection}"`);
+            console.log(`🎯 Iteration ${i}: JSON Mode Triggered for Section: "${String(targetSection)}"`);
             const visionContext = previousStructure.systemVision || '';
 
             let regenContent: string | null = null;
             let usedJsonMode = false;
+            const strictMode = process.env.STRICT_JSON_MODE === 'true';
 
             try {
               const jsonResult = await regenerateSectionAsJson(
@@ -306,9 +307,13 @@ Create an improved version that incorporates the new requirements while keeping 
               regenContent = jsonResult.updatedContent;
               usedJsonMode = true;
               diagnostics.jsonSectionUpdates++;
-              console.log(`✅ Iteration ${i}: JSON structured section update succeeded for "${targetSection}"`);
+              console.log(`✅ Iteration ${i}: JSON structured section update succeeded for "${String(targetSection)}"`);
             } catch (jsonError: any) {
-              console.warn(`⚠️ Iteration ${i}: JSON section regen failed (falling back to markdown regen):`, jsonError.message);
+              console.warn(`⚠️ Iteration ${i}: JSON Mode failed. Falling back to Markdown Section Regeneration. Error: ${jsonError.message}`);
+              if (strictMode) {
+                console.error(`🚨 STRICT MODE: JSON failed while section "${String(targetSection)}" was detected. Diagnostic flag raised.`);
+                diagnostics.driftEvents++;
+              }
             }
 
             if (!regenContent) {
@@ -321,7 +326,7 @@ Create an improved version that incorporates the new requirements while keeping 
                 langInstruction
               );
               diagnostics.markdownSectionRegens++;
-              console.log(`✅ Iteration ${i}: Markdown section regeneration complete for "${targetSection}"`);
+              console.log(`✅ Iteration ${i}: Markdown section regeneration complete for "${String(targetSection)}"`);
             }
 
             const updatedStructure = { ...previousStructure, features: [...previousStructure.features] };
@@ -343,7 +348,7 @@ Create an improved version that incorporates the new requirements while keeping 
             console.log(`✅ Iteration ${i}: Section-level regeneration complete for "${targetSection}" (mode: ${usedJsonMode ? 'json' : 'markdown'})`);
           }
         } catch (sectionRegenError: any) {
-          console.warn(`⚠️ Section-level regeneration failed for iteration ${i} (falling back to full regen):`, sectionRegenError.message);
+          console.error(`🚨 Iteration ${i}: Section-level regeneration failed. Falling back to FULL regeneration. Error: ${sectionRegenError.message}`);
           genResult = null;
         }
       }

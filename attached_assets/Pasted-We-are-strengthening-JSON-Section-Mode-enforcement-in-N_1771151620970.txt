@@ -1,0 +1,132 @@
+We are strengthening JSON Section Mode enforcement in Nexora.
+
+IMPORTANT:
+Do NOT change core generation logic.
+We are adding debugging visibility and better section targeting.
+This is a diagnostic and enforcement improvement phase.
+
+----------------------------------------
+OBJECTIVE
+----------------------------------------
+
+Ensure JSON Section Update mode is:
+
+1. Properly triggered
+2. Clearly logged
+3. Verifiable
+4. Preferentially used over full regeneration
+
+----------------------------------------
+STEP 1 — DEBUG detectTargetSection
+----------------------------------------
+
+In detectTargetSection():
+
+Add verbose debug logging:
+
+Before returning:
+
+console.log("Reviewer Feedback:", reviewText);
+console.log("Detected Section:", matchedSection || "NONE");
+
+If no section matched:
+console.warn("No section match detected. Falling back to full regeneration.");
+
+----------------------------------------
+STEP 2 — IMPROVE SECTION DETECTION
+----------------------------------------
+
+Replace simple keyword match with robust detection:
+
+Use case-insensitive regex:
+- /vision/i
+- /deployment/i
+- /non[- ]?functional/i
+- /error handling/i
+- /domain model/i
+- /business rules/i
+- /boundaries/i
+
+Additionally:
+
+If reviewText contains:
+"section" + specific name (e.g. "Deployment section")
+
+Boost that match.
+
+Return section with highest match confidence.
+
+----------------------------------------
+STEP 3 — FORCE REVIEWER TO NAME SECTIONS
+----------------------------------------
+
+Modify Reviewer LLM prompt.
+
+Add instruction:
+
+"If suggesting improvements, explicitly state the section name that requires changes using exact heading terminology (e.g., 'Deployment', 'System Vision')."
+
+Example instruction:
+
+"All feedback must explicitly reference the affected section name."
+
+----------------------------------------
+STEP 4 — JSON MODE PRIORITY LOGGING
+----------------------------------------
+
+When section detected:
+
+console.log("JSON Mode Triggered for Section:", targetSection);
+
+Before fallback to markdown regeneration:
+
+console.warn("JSON Mode failed. Falling back to Markdown Section Regeneration.");
+
+Before fallback to full regen:
+
+console.error("Section-level regeneration failed. Falling back to FULL regeneration.");
+
+----------------------------------------
+STEP 5 — DIAGNOSTIC COUNTER FIX
+----------------------------------------
+
+Ensure counters increment correctly:
+
+If JSON success → jsonSectionUpdates++
+If JSON fail → markdownSectionRegens++
+If both fail → fullRegenerations++
+
+Verify counters not double-counting.
+
+----------------------------------------
+STEP 6 — TEMPORARY STRICT MODE FLAG
+----------------------------------------
+
+Add temporary environment flag:
+
+STRICT_JSON_MODE=true
+
+If enabled:
+
+- If section detected
+- AND JSON fails
+
+Do NOT immediately fallback to markdown.
+Instead:
+
+Log critical error:
+console.error("STRICT MODE: JSON failed while section detected.");
+
+Still fallback to markdown but mark diagnostic flag.
+
+----------------------------------------
+DELIVERABLE
+----------------------------------------
+
+Return:
+
+1. Updated detectTargetSection implementation
+2. Reviewer prompt modification
+3. Improved logging output examples
+4. Counter fix confirmation
+5. STRICT_JSON_MODE implementation
