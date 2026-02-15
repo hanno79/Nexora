@@ -208,7 +208,24 @@ export function parsePRDToStructure(markdown: string): PRDStructure {
     otherSections: {},
   };
 
+  // [DEBUG] Step 2 — Log feature header matching
+  const featureHeaderMatches = markdown.match(/Feature\s+ID:/gi);
+  console.log(`\n🔬 [parsePRDToStructure] Feature ID header matches: ${featureHeaderMatches?.length || 0}`);
+  const debugMatches = markdown.match(/Feature\s+ID:[^\n]{0,100}/gi);
+  if (debugMatches) {
+    console.log(`🔬 [parsePRDToStructure] Feature Header Samples:`, debugMatches.slice(0, 5));
+  }
+  const altFeatureMatches = markdown.match(/(?:^|\n)#{2,4}\s+(?:Feature\s+)?F-\d+/gim);
+  console.log(`🔬 [parsePRDToStructure] Alt feature heading matches (## F-XX): ${altFeatureMatches?.length || 0}`);
+  if (altFeatureMatches) {
+    console.log(`🔬 [parsePRDToStructure] Alt Feature Samples:`, altFeatureMatches.slice(0, 5).map(s => s.trim()));
+  }
+
   const sections = splitIntoSections(markdown);
+
+  // [DEBUG] Step 3 — Log section split results
+  const detectedSectionTitles = sections.map(s => `[L${s.level}] ${s.heading || '(no heading)'}`);
+  console.log(`🔬 [parsePRDToStructure] Top-level sections detected (${sections.length}):`, detectedSectionTitles);
 
   for (const section of sections) {
     if (!section.heading) {
@@ -226,6 +243,7 @@ export function parsePRDToStructure(markdown: string): PRDStructure {
     );
 
     if (isFeatureCatalogue) {
+      console.log(`🔬 [parsePRDToStructure] Feature catalogue section found: "${section.heading}" (body: ${section.body.length} chars)`);
       const { features, introText } = parseFeatureBlocks(section.body);
       if (introText) {
         structure.featureCatalogueIntro = introText;
@@ -266,6 +284,13 @@ export function parsePRDToStructure(markdown: string): PRDStructure {
         structure.otherSections[section.heading] = section.body;
       }
     }
+  }
+
+  // [DEBUG] Step 4 — Log structure output
+  console.log(`\n🔬 [parsePRDToStructure] Parsed Feature Count: ${structure.features.length}`);
+  console.log(`🔬 [parsePRDToStructure] Feature IDs Parsed:`, structure.features.map(f => f.id));
+  if (structure.features.length > 0) {
+    console.log(`🔬 [parsePRDToStructure] Feature names:`, structure.features.map(f => `${f.id}: ${f.name}`));
   }
 
   return structure;

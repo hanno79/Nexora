@@ -455,6 +455,22 @@ Your task:
       // Step 3: Extract clean PRD (without Q&A sections) and build iteration log
       const cleanPRD = this.extractCleanPRD(genResult.content);
 
+      // [DEBUG] Step 1 — Log clean PRD preview
+      console.log(`\n---- CLEAN PRD START (Iteration ${i}) ----`);
+      console.log(cleanPRD.substring(0, 2000));
+      console.log(`---- CLEAN PRD END ----`);
+      console.log(`CLEAN PRD LENGTH: ${cleanPRD.length}`);
+
+      // [DEBUG] Step 5 — First 1000 chars around Feature Catalogue
+      const featureCatalogIndex = cleanPRD.indexOf("Feature");
+      if (featureCatalogIndex > -1) {
+        console.log(`\n---- FEATURE CATALOGUE CONTEXT (starts at index ${featureCatalogIndex}) ----`);
+        console.log(cleanPRD.substring(featureCatalogIndex, featureCatalogIndex + 1000));
+        console.log(`---- END FEATURE CATALOGUE CONTEXT ----`);
+      } else {
+        console.warn(`⚠️ [DEBUG] No "Feature" keyword found in cleanPRD at all!`);
+      }
+
       // Structural drift detection + feature preservation (non-blocking)
       let preservedPRD = cleanPRD;
       try {
