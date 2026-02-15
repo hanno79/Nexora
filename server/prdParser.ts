@@ -34,6 +34,12 @@ const FEATURE_CATALOGUE_HEADINGS = [
   'features',
   'functional requirements',
   'feature specifications',
+  'must-have features',
+  'must have features',
+  'nice-to-have features',
+  'nice to have features',
+  'core features',
+  'required features',
 ];
 
 interface RawSection {
@@ -128,7 +134,7 @@ function parseFeatureSubsections(rawContent: string): Partial<Pick<FeatureSpec, 
     const subsectionBoundaries: { field: string; matchStart: number; contentStart: number; isArray: boolean }[] = [];
 
     for (const sub of SUBSECTION_ORDER) {
-      const pattern = new RegExp(`(?:^|\\n)\\s*(?:\\*\\*)?${sub.num}\\.\\s*${sub.label}[:\\s]*(?:\\*\\*)?`, 'i');
+      const pattern = new RegExp(`(?:^|\\n)\\s*(?:\\*\\*)?${sub.num}\\.\\s*(?:\\*\\*)?\\s*${sub.label}\\s*[:\\s]*(?:\\*\\*)?`, 'i');
       const match = rawContent.match(pattern);
       if (match && match.index !== undefined) {
         const isArray = sub.field === 'mainFlow' || sub.field === 'alternateFlows' || sub.field === 'acceptanceCriteria';
@@ -169,18 +175,70 @@ function parseFeatureSubsections(rawContent: string): Partial<Pick<FeatureSpec, 
 
 function parseFeatureBlocks(body: string): { features: FeatureSpec[]; introText: string } {
   const features: FeatureSpec[] = [];
-  const featurePattern = /(?:^|\n)(?:#{2,4}\s+)?(?:Feature\s+(?:ID:\s*)?|Feature\s+ID:\s*)(F-\d+)[:\s]+(.+?)(?:\n|$)/gi;
   const bodyWithNewline = '\n' + body;
 
   const splitPoints: { index: number; id: string; name: string }[] = [];
+
+  const inlinePattern = /(?:^|\n)(?:#{2,4}\s+)?(?:\*{0,2})(?:Feature\s+(?:ID:\s*)?|Feature\s+ID:\s*)(F-\d+)(?:\*{0,2})[: —–-]+(?!\n)(?:\*{0,2})([^\n]+?)(?:\*{0,2})(?:\n|$)/gi;
   let match: RegExpExecArray | null;
 
-  while ((match = featurePattern.exec(bodyWithNewline)) !== null) {
-    splitPoints.push({
-      index: match.index,
-      id: match[1].toUpperCase(),
-      name: match[2].trim().replace(/\*+/g, '').trim(),
-    });
+  while ((match = inlinePattern.exec(bodyWithNewline)) !== null) {
+    const name = match[2].trim().replace(/\*+/g, '').trim();
+    if (name && !name.toLowerCase().startsWith('feature name')) {
+      splitPoints.push({
+        index: match.index,
+        id: match[1].toUpperCase(),
+        name,
+      });
+    }
+  }
+
+  if (splitPoints.length === 0) {
+    const twoLinePattern = /(?:^|\n)\s*(?:#{1,6}\s+)?(?:\*{0,2})Feature\s+ID:\s*(F-\d+)(?:\*{0,2})\s*\n\s*\*{0,2}Feature\s+Name:?\*{0,2}\s*(.+?)(?:\*{0,2})\s*(?:\n|$)/gi;
+    let twoLineMatch: RegExpExecArray | null;
+    while ((twoLineMatch = twoLinePattern.exec(bodyWithNewline)) !== null) {
+      const rawName = twoLineMatch[2].trim().replace(/\*+/g, '').trim();
+      splitPoints.push({
+        index: twoLineMatch.index,
+        id: twoLineMatch[1].toUpperCase(),
+        name: rawName || twoLineMatch[1].toUpperCase(),
+      });
+    }
+  }
+
+  if (splitPoints.length === 0) {
+    const boldIdPattern = /(?:^|\n)\s*\*{2}Feature\s+ID:\s*(F-\d+)\*{2}\s*\n/gi;
+    const featureNamePattern = /\*{0,2}Feature\s+Name:?\*{0,2}\s*(.+?)(?:\*{0,2})\s*$/im;
+
+    let boldMatch: RegExpExecArray | null;
+    while ((boldMatch = boldIdPattern.exec(bodyWithNewline)) !== null) {
+      const featureId = boldMatch[1].toUpperCase();
+      const afterIndex = boldMatch.index + boldMatch[0].length;
+      const nextChunk = bodyWithNewline.substring(afterIndex, afterIndex + 200);
+      const nameMatch = nextChunk.match(featureNamePattern);
+      const rawName = nameMatch
+        ? nameMatch[1].trim().replace(/\*+/g, '').trim()
+        : featureId;
+      const featureName = rawName.replace(/^Feature\s+Name:\s*/i, '').trim() || featureId;
+
+      splitPoints.push({
+        index: boldMatch.index,
+        id: featureId,
+        name: featureName,
+      });
+    }
+  }
+
+  if (splitPoints.length === 0) {
+    const headingPattern = /(?:^|\n)(#{2,4})\s+(?:\*{0,2})(?:Feature\s+)?(?:ID:\s*)?(F-\d+)(?:\*{0,2})[:\s—–-]*(?:\*{0,2})(.*?)(?:\*{0,2})\s*(?:\n|$)/gi;
+    let headingMatch: RegExpExecArray | null;
+    while ((headingMatch = headingPattern.exec(bodyWithNewline)) !== null) {
+      splitPoints.push({
+        index: headingMatch.index,
+        id: headingMatch[2].toUpperCase(),
+        name: headingMatch[3].trim().replace(/\*+/g, '').trim() || headingMatch[2].toUpperCase(),
+      });
+    }
   }
 
   const firstFeatureIndex = splitPoints.length > 0 ? splitPoints[0].index : bodyWithNewline.length;
@@ -208,24 +266,7 @@ export function parsePRDToStructure(markdown: string): PRDStructure {
     otherSections: {},
   };
 
-  // [DEBUG] Step 2 — Log feature header matching
-  const featureHeaderMatches = markdown.match(/Feature\s+ID:/gi);
-  console.log(`\n🔬 [parsePRDToStructure] Feature ID header matches: ${featureHeaderMatches?.length || 0}`);
-  const debugMatches = markdown.match(/Feature\s+ID:[^\n]{0,100}/gi);
-  if (debugMatches) {
-    console.log(`🔬 [parsePRDToStructure] Feature Header Samples:`, debugMatches.slice(0, 5));
-  }
-  const altFeatureMatches = markdown.match(/(?:^|\n)#{2,4}\s+(?:Feature\s+)?F-\d+/gim);
-  console.log(`🔬 [parsePRDToStructure] Alt feature heading matches (## F-XX): ${altFeatureMatches?.length || 0}`);
-  if (altFeatureMatches) {
-    console.log(`🔬 [parsePRDToStructure] Alt Feature Samples:`, altFeatureMatches.slice(0, 5).map(s => s.trim()));
-  }
-
   const sections = splitIntoSections(markdown);
-
-  // [DEBUG] Step 3 — Log section split results
-  const detectedSectionTitles = sections.map(s => `[L${s.level}] ${s.heading || '(no heading)'}`);
-  console.log(`🔬 [parsePRDToStructure] Top-level sections detected (${sections.length}):`, detectedSectionTitles);
 
   for (const section of sections) {
     if (!section.heading) {
@@ -243,7 +284,6 @@ export function parsePRDToStructure(markdown: string): PRDStructure {
     );
 
     if (isFeatureCatalogue) {
-      console.log(`🔬 [parsePRDToStructure] Feature catalogue section found: "${section.heading}" (body: ${section.body.length} chars)`);
       const { features, introText } = parseFeatureBlocks(section.body);
       if (introText) {
         structure.featureCatalogueIntro = introText;
@@ -284,13 +324,6 @@ export function parsePRDToStructure(markdown: string): PRDStructure {
         structure.otherSections[section.heading] = section.body;
       }
     }
-  }
-
-  // [DEBUG] Step 4 — Log structure output
-  console.log(`\n🔬 [parsePRDToStructure] Parsed Feature Count: ${structure.features.length}`);
-  console.log(`🔬 [parsePRDToStructure] Feature IDs Parsed:`, structure.features.map(f => f.id));
-  if (structure.features.length > 0) {
-    console.log(`🔬 [parsePRDToStructure] Feature names:`, structure.features.map(f => `${f.id}: ${f.name}`));
   }
 
   return structure;
