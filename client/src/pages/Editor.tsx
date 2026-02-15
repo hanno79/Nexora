@@ -72,7 +72,13 @@ export default function Editor() {
   const [content, setContent] = useState("");
   const [iterationLog, setIterationLog] = useState("");
   const [compilerDiagnostics, setCompilerDiagnostics] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<"prd" | "log">("prd");
+  const [activeTab, setActiveTab] = useState<"prd" | "log" | "diagnostics">("prd");
+
+  useEffect(() => {
+    if (activeTab === "log" && !iterationLog) setActiveTab("prd");
+    if (activeTab === "diagnostics" && !compilerDiagnostics) setActiveTab("prd");
+  }, [activeTab, iterationLog, compilerDiagnostics]);
+
   const [status, setStatus] = useState<string>("draft");
   const [showComments, setShowComments] = useState(true);
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
@@ -647,10 +653,10 @@ export default function Editor() {
                 </Select>
               </div>
 
-              {/* Content Tabs: PRD + Iteration Log */}
+              {/* Content Tabs: PRD + Iteration Log + Diagnostics */}
               <div className="border-t pt-4 sm:pt-6 space-y-3">
-                {iterationLog && (
-                  <div className="flex gap-1 p-1 rounded-md bg-muted w-fit">
+                {(iterationLog || compilerDiagnostics) && (
+                  <div className="flex gap-1 p-1 rounded-md bg-muted w-fit flex-wrap">
                     <Button
                       variant={activeTab === "prd" ? "default" : "ghost"}
                       size="sm"
@@ -660,19 +666,36 @@ export default function Editor() {
                       <FileText className="w-4 h-4 mr-1.5" />
                       PRD
                     </Button>
-                    <Button
-                      variant={activeTab === "log" ? "default" : "ghost"}
-                      size="sm"
-                      onClick={() => setActiveTab("log")}
-                      data-testid="tab-iteration-log"
-                    >
-                      <ScrollText className="w-4 h-4 mr-1.5" />
-                      Iteration Protocol
-                    </Button>
+                    {iterationLog && (
+                      <Button
+                        variant={activeTab === "log" ? "default" : "ghost"}
+                        size="sm"
+                        onClick={() => setActiveTab("log")}
+                        data-testid="tab-iteration-log"
+                      >
+                        <ScrollText className="w-4 h-4 mr-1.5" />
+                        Iteration Protocol
+                      </Button>
+                    )}
+                    {compilerDiagnostics && (
+                      <Button
+                        variant={activeTab === "diagnostics" ? "default" : "ghost"}
+                        size="sm"
+                        onClick={() => setActiveTab("diagnostics")}
+                        data-testid="tab-diagnostics"
+                      >
+                        {compilerDiagnostics.structuredFeatureCount === compilerDiagnostics.totalFeatureCount && compilerDiagnostics.totalFeatureCount > 0 ? (
+                          <span className="inline-block w-2.5 h-2.5 rounded-full bg-green-500 mr-1.5" data-testid="diagnostics-green-indicator" />
+                        ) : (
+                          <ScrollText className="w-4 h-4 mr-1.5" />
+                        )}
+                        Diagnostics
+                      </Button>
+                    )}
                   </div>
                 )}
 
-                {activeTab === "prd" ? (
+                {activeTab === "prd" && (
                   <Textarea
                     placeholder="Start writing your PRD content here..."
                     value={content}
@@ -680,7 +703,8 @@ export default function Editor() {
                     className="min-h-[400px] sm:min-h-[500px] font-mono text-xs sm:text-sm resize-none"
                     data-testid="textarea-content"
                   />
-                ) : (
+                )}
+                {activeTab === "log" && iterationLog && (
                   <div
                     className="min-h-[400px] sm:min-h-[500px] rounded-md border border-input bg-muted/30 px-3 py-2 font-mono text-xs sm:text-sm whitespace-pre-wrap overflow-auto"
                     data-testid="div-iteration-log"
@@ -688,46 +712,48 @@ export default function Editor() {
                     {iterationLog}
                   </div>
                 )}
-
-                {compilerDiagnostics && (
-                  <details className="mt-4 rounded-md border border-input" data-testid="compiler-diagnostics-panel">
-                    <summary className="cursor-pointer px-4 py-3 text-sm font-medium flex items-center gap-2 select-none">
-                      <span>Compiler Diagnostics</span>
+                {activeTab === "diagnostics" && compilerDiagnostics && (
+                  <div
+                    className="min-h-[400px] sm:min-h-[500px] rounded-md border border-input bg-muted/30 px-4 py-4 space-y-3"
+                    data-testid="compiler-diagnostics-panel"
+                  >
+                    <div className="flex items-center gap-2 mb-4">
+                      <h3 className="text-sm font-semibold">Compiler Diagnostics</h3>
                       {compilerDiagnostics.structuredFeatureCount === compilerDiagnostics.totalFeatureCount && compilerDiagnostics.totalFeatureCount > 0 && (
-                        <span className="inline-block w-2.5 h-2.5 rounded-full bg-green-500" data-testid="diagnostics-green-indicator" />
+                        <span className="text-xs text-green-600 dark:text-green-400 font-medium">Full Coverage</span>
                       )}
-                    </summary>
-                    <div className="px-4 pb-4 pt-2 border-t space-y-1.5 font-mono text-xs text-muted-foreground">
-                      <div className="flex justify-between" data-testid="diag-structured-features">
-                        <span>Structured Features</span>
-                        <span className="text-foreground">{compilerDiagnostics.structuredFeatureCount} / {compilerDiagnostics.totalFeatureCount}</span>
+                    </div>
+                    <div className="space-y-2 font-mono text-sm">
+                      <div className="flex justify-between py-2 border-b border-input" data-testid="diag-structured-features">
+                        <span className="text-muted-foreground">Structured Features</span>
+                        <span className="text-foreground font-medium">{compilerDiagnostics.structuredFeatureCount} / {compilerDiagnostics.totalFeatureCount}</span>
                       </div>
-                      <div className="flex justify-between" data-testid="diag-json-updates">
-                        <span>JSON Section Updates</span>
-                        <span className="text-foreground">{compilerDiagnostics.jsonSectionUpdates}</span>
+                      <div className="flex justify-between py-2 border-b border-input" data-testid="diag-json-updates">
+                        <span className="text-muted-foreground">JSON Section Updates</span>
+                        <span className="text-foreground font-medium">{compilerDiagnostics.jsonSectionUpdates}</span>
                       </div>
-                      <div className="flex justify-between" data-testid="diag-markdown-regens">
-                        <span>Markdown Section Regenerations</span>
-                        <span className="text-foreground">{compilerDiagnostics.markdownSectionRegens}</span>
+                      <div className="flex justify-between py-2 border-b border-input" data-testid="diag-markdown-regens">
+                        <span className="text-muted-foreground">Markdown Section Regenerations</span>
+                        <span className="text-foreground font-medium">{compilerDiagnostics.markdownSectionRegens}</span>
                       </div>
-                      <div className="flex justify-between" data-testid="diag-full-regens">
-                        <span>Full Regenerations</span>
-                        <span className="text-foreground">{compilerDiagnostics.fullRegenerations}</span>
+                      <div className="flex justify-between py-2 border-b border-input" data-testid="diag-full-regens">
+                        <span className="text-muted-foreground">Full Regenerations</span>
+                        <span className="text-foreground font-medium">{compilerDiagnostics.fullRegenerations}</span>
                       </div>
-                      <div className="flex justify-between" data-testid="diag-feature-preservations">
-                        <span>Feature Preservation Restores</span>
-                        <span className="text-foreground">{compilerDiagnostics.featurePreservations}</span>
+                      <div className="flex justify-between py-2 border-b border-input" data-testid="diag-feature-preservations">
+                        <span className="text-muted-foreground">Feature Preservation Restores</span>
+                        <span className="text-foreground font-medium">{compilerDiagnostics.featurePreservations}</span>
                       </div>
-                      <div className="flex justify-between" data-testid="diag-integrity-restores">
-                        <span>Feature Integrity Restores</span>
-                        <span className="text-foreground">{compilerDiagnostics.featureIntegrityRestores}</span>
+                      <div className="flex justify-between py-2 border-b border-input" data-testid="diag-integrity-restores">
+                        <span className="text-muted-foreground">Feature Integrity Restores</span>
+                        <span className="text-foreground font-medium">{compilerDiagnostics.featureIntegrityRestores}</span>
                       </div>
-                      <div className="flex justify-between" data-testid="diag-drift-events">
-                        <span>Structural Drift Events</span>
-                        <span className="text-foreground">{compilerDiagnostics.driftEvents}</span>
+                      <div className="flex justify-between py-2" data-testid="diag-drift-events">
+                        <span className="text-muted-foreground">Structural Drift Events</span>
+                        <span className="text-foreground font-medium">{compilerDiagnostics.driftEvents}</span>
                       </div>
                     </div>
-                  </details>
+                  </div>
                 )}
               </div>
             </div>
