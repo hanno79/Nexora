@@ -271,7 +271,15 @@ Create an improved version that incorporates the new requirements while keeping 
       featurePreservations: 0,
       featureIntegrityRestores: 0,
       driftEvents: 0,
+      featureFreezeActive: false,
+      blockedRegenerationAttempts: 0,
     };
+
+    // Feature Freeze Engine - State Variables
+    let featuresFrozen = false;
+    let freezeActivated = false;
+    let blockedRegenerationAttempts = 0;
+    console.log("❄️ Feature Freeze Engine initialisiert (wartet auf erste Kompilierung)");
 
     // Iterative Q&A Loop
     for (let i = 1; i <= iterationCount; i++) {
@@ -348,8 +356,25 @@ Create an improved version that incorporates the new requirements while keeping 
             console.log(`✅ Iteration ${i}: Section-level regeneration complete for "${targetSection}" (mode: ${usedJsonMode ? 'json' : 'markdown'})`);
           }
         } catch (sectionRegenError: any) {
-          console.error(`🚨 Iteration ${i}: Section-level regeneration failed. Falling back to FULL regeneration. Error: ${sectionRegenError.message}`);
-          genResult = null;
+          // FEATURE FREEZE: Block full regeneration when frozen
+          if (featuresFrozen) {
+            console.warn('🚫 FULL REGENERATION BLOCKED (freeze active)');
+            console.warn('   Section-level regen failed: ' + sectionRegenError.message);
+            console.warn('   Using previous iteration instead');
+            const prevIteration = iterations[iterations.length - 1];
+            if (prevIteration) {
+              genResult = {
+                content: prevIteration.mergedPRD,
+                usage: { total_tokens: 0, prompt_tokens: 0, completion_tokens: 0 },
+                model: 'frozen-prev-iteration',
+                tier: 'fallback',
+                usedFallback: true
+              };
+            }
+          } else {
+            console.error(`🚨 Iteration ${i}: Section-level regeneration failed. Falling back to FULL regeneration. Error: ${sectionRegenError.message}`);
+            genResult = null;
+          }
         }
       }
 
@@ -384,6 +409,33 @@ Your task:
           }
         } else {
           const prevIteration = iterations[iterations.length - 1];
+
+          // FEATURE FREEZE: Add freeze rules to prompt when frozen and iteration >= 2
+          let freezeRule = '';
+          if (featuresFrozen && i >= 2) {
+            freezeRule = `
+
+=== CRITICAL SYSTEM RULE ===
+The Feature Catalogue is FROZEN.
+
+You are strictly forbidden to:
+- Rewrite existing Feature IDs (F-XX)
+- Remove existing features
+- Change feature numbering
+- Replace the full Feature Catalogue section
+- Modify compiled feature structures
+
+You may only:
+- Add new features using NEW sequential F-XX IDs (e.g., F-03, F-04 if F-01 and F-02 exist)
+- Extend non-feature sections
+- Improve descriptive content outside compiled features
+
+If you modify or remove existing features, your output will be discarded.
+=== END CRITICAL RULE ===
+`;
+            console.log('🔒 Feature Freeze Rule added to generator prompt');
+          }
+
           generatorPrompt = `CURRENT PRD (DO NOT DISCARD - BUILD UPON IT):
 ${currentPRD}
 
@@ -411,6 +463,7 @@ Your task:
       }
       
       // Feature Identification Layer + Expansion Engine (first iteration only)
+      let expansionResult: any = null;
       if (i === 1) {
         try {
           console.log('🧩 Feature Identification Layer (iterative): Extracting atomic features...');
@@ -423,8 +476,20 @@ Your task:
           // Feature Expansion Engine (modular, parallel to monolithic PRD — testing phase)
           try {
             console.log('🏗️ Feature Expansion Engine (iterative): Starting modular expansion...');
-            const expansionResult = await expandAllFeatures(inputText, vision, featureResult.featureList, client);
+            expansionResult = await expandAllFeatures(inputText, vision, featureResult.featureList, client);
             console.log(`🏗️ Feature Expansion complete: ${expansionResult.expandedFeatures.length} features, ${expansionResult.totalTokens} tokens`);
+
+            // FEATURE FREEZE: Activate freeze after first successful compilation
+            if (expansionResult && expansionResult.expandedFeatures.length > 0) {
+              const compiledCount = expansionResult.expandedFeatures.filter((f: any) => f.state === 'compiled').length;
+              if (compiledCount > 0 && !freezeActivated) {
+                featuresFrozen = true;
+                freezeActivated = true;
+                console.log('🧊 FEATURE CATALOGUE FROZEN – First compilation detected');
+                console.log('   ' + compiledCount + ' feature(s) in compiled state');
+                console.log('   Full regeneration will be blocked from next iteration');
+              }
+            }
           } catch (expansionError: any) {
             console.warn('⚠️ Feature Expansion Engine failed (non-blocking):', expansionError.message);
           }
@@ -454,6 +519,41 @@ Your task:
       
       // Step 3: Extract clean PRD (without Q&A sections) and build iteration log
       const cleanPRD = this.extractCleanPRD(genResult.content);
+
+      // FEATURE FREEZE: Validate no feature loss when frozen
+      if (featuresFrozen && previousStructure) {
+        const previousIds = previousStructure.features.map(f => f.id);
+        const newStructureForCheck = parsePRDToStructure(cleanPRD);
+        const newIds = newStructureForCheck.features.map(f => f.id);
+
+        const lostFeature = previousIds.some(id => !newIds.includes(id));
+
+        if (lostFeature) {
+          console.warn('❌ FEATURE LOSS DETECTED WHILE FROZEN');
+          console.warn('   Previous features: ' + previousIds.join(', '));
+          console.warn('   New features: ' + newIds.join(', '));
+          console.warn('   Reverting to previous PRD');
+          blockedRegenerationAttempts++;
+          const prevIteration = iterations[iterations.length - 1];
+          if (prevIteration) {
+            currentPRD = prevIteration.mergedPRD;
+            continue;
+          }
+        }
+
+        if (newStructureForCheck.features.length < previousStructure.features.length) {
+          console.warn('❌ FEATURE COUNT DECREASED WHILE FROZEN');
+          console.warn('   Previous: ' + previousStructure.features.length + ' features');
+          console.warn('   New: ' + newStructureForCheck.features.length + ' features');
+          console.warn('   Reverting to previous PRD');
+          blockedRegenerationAttempts++;
+          const prevIteration = iterations[iterations.length - 1];
+          if (prevIteration) {
+            currentPRD = prevIteration.mergedPRD;
+            continue;
+          }
+        }
+      }
 
       // Structural drift detection + feature preservation (non-blocking)
       let preservedPRD = cleanPRD;
@@ -555,7 +655,17 @@ Your task:
     } catch (parseError: any) {
       console.warn('⚠️ PRD structure parsing failed (non-blocking):', parseError.message);
     }
-    
+
+    // FEATURE FREEZE: Set final diagnostic values
+    diagnostics.featureFreezeActive = featuresFrozen;
+    diagnostics.blockedRegenerationAttempts = blockedRegenerationAttempts;
+
+    // FEATURE FREEZE: Final summary logging
+    console.log('\n📊 Feature Freeze Engine Summary:');
+    console.log('   Freeze Active: ' + featuresFrozen);
+    console.log('   Blocked Attempts: ' + blockedRegenerationAttempts);
+    console.log('   Final Feature Count: ' + (previousStructure?.features.length || 0));
+
     return {
       finalContent: currentPRD,
       iterationLog,

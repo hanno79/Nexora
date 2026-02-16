@@ -527,6 +527,9 @@ interface CompilerDiagnostics {
   featurePreservations: number;
   featureIntegrityRestores: number;
   driftEvents: number;
+  // Feature Freeze Engine
+  featureFreezeActive?: boolean;
+  blockedRegenerationAttempts?: number;
 }
 
 interface IterativeResponse {
