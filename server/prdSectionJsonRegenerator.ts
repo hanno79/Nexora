@@ -29,10 +29,10 @@ export async function regenerateSectionAsJson(
 ): Promise<SectionUpdateResult> {
   const currentContent = currentStructure[sectionName];
   const displayName = SECTION_DISPLAY_NAMES[sectionName] || String(sectionName);
-
-  if (typeof currentContent !== 'string' || !currentContent.trim()) {
-    throw new Error(`Section "${sectionName}" has no content for JSON regeneration`);
-  }
+  const normalizedCurrentContent = typeof currentContent === 'string' ? currentContent.trim() : '';
+  const sectionContext = normalizedCurrentContent.length > 0
+    ? normalizedCurrentContent
+    : '(This section is currently empty and must be created from reviewer feedback and system vision.)';
 
   const userPrompt = `INPUT
 
@@ -43,7 +43,7 @@ Current Section Name:
 ${displayName}
 
 Current Section Content:
-${currentContent.trim()}
+${sectionContext}
 
 Reviewer Feedback:
 ${feedback}

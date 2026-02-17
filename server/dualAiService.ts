@@ -344,7 +344,12 @@ Create an improved version that incorporates the new requirements while keeping 
             }
           }
 
-          if (targetSection && typeof previousStructure[targetSection] === 'string') {
+          if (targetSection) {
+            const currentSectionValue = previousStructure[targetSection];
+            const hasSectionContent = typeof currentSectionValue === 'string' && currentSectionValue.trim().length > 0;
+            if (!hasSectionContent) {
+              console.log(`🧱 Iteration ${i}: Target section "${String(targetSection)}" is empty and will be initialized via section regeneration`);
+            }
             console.log(`🎯 Iteration ${i}: JSON Mode Triggered for Section: "${String(targetSection)}"`);
             const visionContext = previousStructure.systemVision || '';
 
@@ -693,6 +698,17 @@ Your task:
           console.log(`🔐 Iteration ${i}: Feature write-lock active (direct F-XX rewrites ignored)`);
         }
 
+        const scaffoldResult = this.ensureRequiredSections(currentStructure, {
+          workflowInputText,
+          iterationNumber: i,
+          contentLanguage,
+        });
+        currentStructure = scaffoldResult.structure;
+        if (scaffoldResult.addedSections.length > 0) {
+          forceReassembleFromStructure = true;
+          console.log(`🧱 Iteration ${i}: Section scaffold added (${scaffoldResult.addedSections.join(', ')})`);
+        }
+
         if (previousStructure) {
           const diff = compareStructures(previousStructure, currentStructure);
           const warnings = logStructuralDrift(i, diff);
@@ -868,6 +884,25 @@ Your task:
         usage: reviewResult.usage,
         tier: reviewResult.tier
       };
+    }
+
+    // Final hardening: guarantee all required non-feature sections are present in final output.
+    try {
+      const finalStructure = parsePRDToStructure(currentPRD);
+      const finalScaffold = this.ensureRequiredSections(finalStructure, {
+        workflowInputText,
+        iterationNumber: iterationCount,
+        contentLanguage,
+      });
+      if (finalScaffold.addedSections.length > 0) {
+        currentPRD = assembleStructureToMarkdown(finalScaffold.structure);
+        if (iterations.length > 0) {
+          iterations[iterations.length - 1].mergedPRD = currentPRD;
+        }
+        console.log(`🧱 Final scaffold added (${finalScaffold.addedSections.join(', ')})`);
+      }
+    } catch (finalScaffoldError: any) {
+      console.warn(`⚠️ Final scaffold hardening failed (non-blocking): ${finalScaffoldError.message}`);
     }
     
     // Build iteration log document (separate from clean PRD)
@@ -1235,6 +1270,151 @@ Your task:
     }
     
     return lines.join('\n');
+  }
+
+  private ensureRequiredSections(
+    structure: PRDStructure,
+    context: { workflowInputText: string; iterationNumber: number; contentLanguage?: string | null }
+  ): { structure: PRDStructure; addedSections: Array<keyof PRDStructure> } {
+    const { workflowInputText, iterationNumber, contentLanguage } = context;
+    const updated: PRDStructure = {
+      ...structure,
+      otherSections: { ...structure.otherSections },
+    };
+    const addedSections: Array<keyof PRDStructure> = [];
+    const inputSummary = workflowInputText.trim().slice(0, 220);
+    const language = this.resolveScaffoldLanguage(contentLanguage, workflowInputText);
+    const isGerman = language === 'de';
+
+    const templates: Array<{ key: keyof PRDStructure; content: string }> = [
+      {
+        key: 'domainModel',
+        content: isGerman
+          ? [
+              '- Kern-Entitaeten: Nutzer/Besucher, Feature, Anforderung und Iteration.',
+              '- Beziehungen: Eine Anforderung aggregiert Features; jede Iteration verfeinert bestehende Features und kann neue ueber ein strukturiertes Delta hinzufuegen.',
+              '- Datenkonsistenz: Feature-IDs bleiben ueber Iterationen stabil und gelten als unveraenderliche Kennungen.',
+              inputSummary ? `- Quellkontext (Iteration ${iterationNumber}): ${inputSummary}` : '',
+            ].filter(Boolean).join('\n')
+          : [
+              '- Core entities: User/Visitor, Feature, Requirement, and Iteration.',
+              '- Relations: A Requirement aggregates Features; each Iteration refines existing Features and may add new ones via structured delta.',
+              '- Data consistency: feature IDs remain stable across iterations and are treated as immutable identifiers.',
+              inputSummary ? `- Source context (iteration ${iterationNumber}): ${inputSummary}` : '',
+            ].filter(Boolean).join('\n'),
+      },
+      {
+        key: 'globalBusinessRules',
+        content: isGerman
+          ? [
+              '- Bestehende Features duerfen waehrend der iterativen Verfeinerung nicht entfernt werden.',
+              '- Neue Features werden nur ueber validiertes Feature-Delta-JSON akzeptiert.',
+              '- Doppelte Features (gleiche Intention/Bezeichnung) werden deterministisch verworfen.',
+              '- Akzeptanzkriterien aller Features muessen testbar und beobachtbar bleiben.',
+            ].join('\n')
+          : [
+              '- Existing features must not be removed during iterative refinement.',
+              '- New features are only accepted through validated Feature Delta JSON.',
+              '- Duplicate features (same intent/name) are rejected deterministically.',
+              '- Acceptance criteria for all features must stay testable and observable.',
+            ].join('\n'),
+      },
+      {
+        key: 'nonFunctional',
+        content: isGerman
+          ? [
+              '- Zuverlaessigkeit: Ein iterativer Lauf muss ohne Verlust bereits akzeptierter Features abschliessen.',
+              '- Determinismus: Freeze-Baseline und Feature-IDs bleiben ueber Iterationen stabil.',
+              '- Performance: In Freeze-Mode wird Section-Patching gegenueber Vollregeneration bevorzugt.',
+              '- Beobachtbarkeit: Diagnostics muessen Feature-Anzahl, blockierte Versuche und Integritaetsereignisse ausweisen.',
+            ].join('\n')
+          : [
+              '- Reliability: iterative run must complete without losing previously accepted features.',
+              '- Determinism: freeze baseline and feature IDs remain stable across iterations.',
+              '- Performance: iteration patching is preferred over full regeneration in freeze mode.',
+              '- Observability: diagnostics must report feature count, blocked attempts, and structural integrity events.',
+            ].join('\n'),
+      },
+      {
+        key: 'errorHandling',
+        content: isGerman
+          ? [
+              '- Ungueltiges oder fehlendes strukturiertes Delta erzwingt einen strikten Fallback auf den vorherigen stabilen PRD-Zustand.',
+              '- Fehler bei Section-Regeneration im Freeze-Mode fallen sicher zurueck, ohne Feature-Verlust.',
+              '- Parse-Fehler gelten nur dann als non-blocking, wenn Integritaet weiterhin garantiert ist.',
+              '- Alle Fallback-Pfade werden mit explizitem Grund und Iterationsnummer protokolliert.',
+            ].join('\n')
+          : [
+              '- Invalid or missing structured delta triggers strict fallback to previous stable PRD state.',
+              '- Section regeneration failures in freeze mode fall back safely without feature loss.',
+              '- Parsing failures are treated as non-blocking only when integrity can still be guaranteed.',
+              '- All fallback paths must be logged with explicit reason and iteration number.',
+            ].join('\n'),
+      },
+      {
+        key: 'deployment',
+        content: isGerman
+          ? [
+              '- Runtime: Node.js-Service mit Endpunkten fuer den iterativen Compiler.',
+              '- Umgebung: Dockerisierte Local/Dev-Ausfuehrung mit reproduzierbarem Build und Health-Endpoint.',
+              '- Abhaengigkeiten: LLM-Provider-Integration mit Model-Fallback-Strategie.',
+              '- Auslieferung: Aenderungen werden mit TypeScript-Check und End-to-End-API-Smoke-Run validiert.',
+            ].join('\n')
+          : [
+              '- Runtime: Node.js service with iterative compiler endpoints.',
+              '- Environment: Dockerized local/dev execution with reproducible build and health endpoint.',
+              '- Dependencies: LLM provider integration with model fallback strategy.',
+              '- Delivery: changes are validated with TypeScript check and end-to-end API smoke run.',
+            ].join('\n'),
+      },
+      {
+        key: 'definitionOfDone',
+        content: isGerman
+          ? [
+              '- Erforderliche PRD-Sektionen sind vorhanden und nicht leer.',
+              '- Die Feature-Anzahl faellt nicht unter die gefrorene Baseline.',
+              '- Es bleiben keine doppelten Feature-IDs oder doppelten Feature-Namen bestehen.',
+              '- Der iterative Lauf schliesst mit gueltigem finalen PRD und Diagnostics ab.',
+            ].join('\n')
+          : [
+              '- Required PRD sections are present and non-empty.',
+              '- Feature count does not drop below the frozen baseline.',
+              '- No duplicate feature IDs or duplicate feature names remain.',
+              '- Iterative run completes with valid final PRD and diagnostics.',
+            ].join('\n'),
+      },
+    ];
+
+    for (const template of templates) {
+      const existing = updated[template.key];
+      if (typeof existing === 'string' && existing.trim().length > 0) continue;
+      (updated as any)[template.key] = template.content;
+      addedSections.push(template.key);
+    }
+
+    return { structure: updated, addedSections };
+  }
+
+  private resolveScaffoldLanguage(contentLanguage: string | null | undefined, text: string): 'de' | 'en' {
+    if (contentLanguage === 'de') return 'de';
+    if (contentLanguage === 'en') return 'en';
+
+    const sample = (text || '').toLowerCase();
+    const germanHints = [
+      ' und ',
+      ' mit ',
+      ' fuer ',
+      ' für ',
+      ' bitte ',
+      ' erstelle ',
+      ' landingpage',
+      'kontaktformular',
+      'kursuebersicht',
+      'kursübersicht',
+    ];
+    const hasGermanUmlaut = /[äöüß]/i.test(sample);
+    const hasGermanHint = germanHints.some(h => sample.includes(h));
+    return hasGermanUmlaut || hasGermanHint ? 'de' : 'en';
   }
 
   private pickFallbackPatchSection(structure: PRDStructure): keyof PRDStructure | null {

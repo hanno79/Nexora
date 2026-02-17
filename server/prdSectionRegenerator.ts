@@ -121,15 +121,15 @@ export async function regenerateSection(
 ): Promise<string> {
   const currentContent = currentStructure[sectionName];
   const displayName = SECTION_DISPLAY_NAMES[sectionName] || sectionName;
-
-  if (typeof currentContent !== 'string' || !currentContent.trim()) {
-    throw new Error(`Section "${sectionName}" has no content to regenerate`);
-  }
+  const normalizedCurrentContent = typeof currentContent === 'string' ? currentContent.trim() : '';
+  const sectionContext = normalizedCurrentContent.length > 0
+    ? normalizedCurrentContent
+    : '(This section is currently empty and must be created from reviewer feedback and system vision.)';
 
   const userPrompt = `SECTION TO REGENERATE: ${displayName}
 
 CURRENT SECTION CONTENT:
-${currentContent.trim()}
+${sectionContext}
 
 SYSTEM VISION (for context only — do NOT regenerate this):
 ${visionContext}
