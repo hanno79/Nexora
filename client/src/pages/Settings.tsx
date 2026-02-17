@@ -626,7 +626,7 @@ export default function Settings() {
                 <div className="p-3 rounded-lg border bg-muted/30 space-y-2">
                   <p className="text-sm font-medium">How fallback works</p>
                   <p className="text-xs text-muted-foreground">
-                    If the primary model fails (e.g. temporarily unavailable), the system tries the other model, then the Fallback. If all 3 fail, you get a clear error message. The system will show you which model was actually used.
+                    If the primary model for the current role fails, the system tries the configured Fallback model, then the tier default for that same role. Cross-role fallback is disabled by default. If all options fail, you get a clear error message with the tried models.
                   </p>
                 </div>
 

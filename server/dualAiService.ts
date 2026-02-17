@@ -22,7 +22,7 @@ import { expandAllFeatures, expandFeature } from './services/llm/expandFeature';
 import { parsePRDToStructure, logStructureValidation } from './prdParser';
 import { compareStructures, logStructuralDrift, restoreRemovedFeatures } from './prdStructureDiff';
 import { assembleStructureToMarkdown } from './prdAssembler';
-import { enforceFeatureIntegrity, type IntegrityRestoration } from './prdFeatureValidator';
+import { countFeatureCompleteness, enforceFeatureIntegrity, type IntegrityRestoration } from './prdFeatureValidator';
 import { detectTargetSection, regenerateSection } from './prdSectionRegenerator';
 import { regenerateSectionAsJson } from './prdSectionJsonRegenerator';
 import type { PRDStructure, FeatureSpec } from './prdStructure';
@@ -291,10 +291,15 @@ Create an improved version that incorporates the new requirements while keeping 
       fullRegenerations: 0,
       featurePreservations: 0,
       featureIntegrityRestores: 0,
+      featureQualityRegressions: 0,
+      autoRecoveredFeatures: 0,
+      avgFeatureCompleteness: 0,
       driftEvents: 0,
       featureFreezeActive: false,
       blockedRegenerationAttempts: 0,
       freezeSeedSource: 'none',
+      nfrGlobalCategoryAdds: 0,
+      nfrFeatureCriteriaAdds: 0,
     };
 
     // Feature Freeze Engine - State Variables
@@ -549,6 +554,12 @@ Your task:
       // Feature Identification Layer + Expansion Engine (first iteration only)
       let expansionResult: any = null;
       if (i === 1) {
+        let firstIterationStructure: PRDStructure | null = null;
+        try {
+          firstIterationStructure = parsePRDToStructure(this.extractCleanPRD(genResult.content));
+        } catch (firstIterationParseError: any) {
+          console.warn('⚠️ Unable to parse first iteration PRD for freeze seeding:', firstIterationParseError.message);
+        }
         try {
           console.log('🧩 Feature Identification Layer (iterative): Extracting atomic features...');
           const vision = this.extractVisionFromContent(genResult.content);
@@ -567,7 +578,10 @@ Your task:
               const compiledCount = expansionResult.expandedFeatures.filter(
                 (f: any) => f.compiled === true || f.valid === true
               ).length;
-              const expansionBaseline = this.buildFreezeBaselineFromExpansion(expansionResult, previousStructure);
+              const expansionBaseline = this.buildFreezeBaselineFromExpansion(
+                expansionResult,
+                firstIterationStructure || previousStructure
+              );
               if (expansionBaseline) {
                 freezeBaselineStructure = expansionBaseline;
               }
@@ -736,6 +750,9 @@ Your task:
               forceReassembleFromStructure = true;
               allIntegrityRestorations.set(i, integrityResult.restorations);
               diagnostics.featureIntegrityRestores += integrityResult.restorations.length;
+              diagnostics.autoRecoveredFeatures = (diagnostics.autoRecoveredFeatures || 0) + integrityResult.restorations.length;
+              diagnostics.featureQualityRegressions = (diagnostics.featureQualityRegressions || 0) +
+                integrityResult.restorations.filter(r => r.qualityRegression).length;
               console.log(`🛡️ Iteration ${i}: Feature integrity enforced, ${integrityResult.restorations.length} feature(s) restored`);
             }
             } catch (integrityError: any) {
@@ -771,6 +788,9 @@ Your task:
               const existing = allIntegrityRestorations.get(i) || [];
               allIntegrityRestorations.set(i, [...existing, ...freezeIntegrity.restorations]);
               diagnostics.featureIntegrityRestores += freezeIntegrity.restorations.length;
+              diagnostics.autoRecoveredFeatures = (diagnostics.autoRecoveredFeatures || 0) + freezeIntegrity.restorations.length;
+              diagnostics.featureQualityRegressions = (diagnostics.featureQualityRegressions || 0) +
+                freezeIntegrity.restorations.filter(r => r.qualityRegression).length;
               console.log(`🛡️ Freeze baseline integrity enforced, ${freezeIntegrity.restorations.length} feature(s) restored`);
             }
           }
@@ -888,18 +908,33 @@ Your task:
 
     // Final hardening: guarantee all required non-feature sections are present in final output.
     try {
-      const finalStructure = parsePRDToStructure(currentPRD);
+      let finalStructure = parsePRDToStructure(currentPRD);
+      if (featuresFrozen && freezeBaselineStructure) {
+        finalStructure = this.mergeWithFreezeBaseline(finalStructure, freezeBaselineStructure);
+      }
+      finalStructure = this.normalizeSectionAliases(finalStructure);
       const finalScaffold = this.ensureRequiredSections(finalStructure, {
         workflowInputText,
         iterationNumber: iterationCount,
         contentLanguage,
       });
+      let hardenedStructure = this.enforceCanonicalFeatureStructure(finalScaffold.structure, contentLanguage);
+      const nfrHardening = this.enforceNfrCoverage(hardenedStructure, contentLanguage);
+      hardenedStructure = nfrHardening.structure;
+      diagnostics.nfrGlobalCategoryAdds = (diagnostics.nfrGlobalCategoryAdds || 0) + nfrHardening.globalCategoryAdds;
+      diagnostics.nfrFeatureCriteriaAdds = (diagnostics.nfrFeatureCriteriaAdds || 0) + nfrHardening.featureCriteriaAdds;
+      hardenedStructure = this.normalizeSectionAliases(hardenedStructure);
+      currentPRD = assembleStructureToMarkdown(hardenedStructure);
+      if (iterations.length > 0) {
+        iterations[iterations.length - 1].mergedPRD = currentPRD;
+      }
       if (finalScaffold.addedSections.length > 0) {
-        currentPRD = assembleStructureToMarkdown(finalScaffold.structure);
-        if (iterations.length > 0) {
-          iterations[iterations.length - 1].mergedPRD = currentPRD;
-        }
         console.log(`🧱 Final scaffold added (${finalScaffold.addedSections.join(', ')})`);
+      } else {
+        console.log('🧱 Final canonical assembly complete');
+      }
+      if (nfrHardening.globalCategoryAdds > 0 || nfrHardening.featureCriteriaAdds > 0) {
+        console.log(`🛡️ NFR hardening: +${nfrHardening.globalCategoryAdds} global categories, +${nfrHardening.featureCriteriaAdds} feature criteria`);
       }
     } catch (finalScaffoldError: any) {
       console.warn(`⚠️ Final scaffold hardening failed (non-blocking): ${finalScaffoldError.message}`);
@@ -922,6 +957,9 @@ Your task:
       diagnostics.structuredFeatureCount = structured.features.filter(f =>
         f.purpose || f.actors || f.mainFlow || f.acceptanceCriteria
       ).length;
+      diagnostics.avgFeatureCompleteness = structured.features.length > 0
+        ? Number((structured.features.reduce((sum, f) => sum + countFeatureCompleteness(f), 0) / structured.features.length).toFixed(2))
+        : 0;
     } catch (parseError: any) {
       console.warn('⚠️ PRD structure parsing failed (non-blocking):', parseError.message);
     }
@@ -935,6 +973,8 @@ Your task:
     console.log('   Freeze Active: ' + featuresFrozen);
     console.log('   Blocked Attempts: ' + blockedRegenerationAttempts);
     console.log('   Final Feature Count: ' + (previousStructure?.features.length || 0));
+    console.log('   Avg Feature Completeness: ' + (diagnostics.avgFeatureCompleteness || 0));
+    console.log('   Quality Regressions Recovered: ' + (diagnostics.featureQualityRegressions || 0));
 
     return {
       finalContent: currentPRD,
@@ -1640,6 +1680,277 @@ Your task:
     return oneLine || feature.name;
   }
 
+  private mergeWithFreezeBaseline(current: PRDStructure, freezeBaseline: PRDStructure): PRDStructure {
+    const byId = new Map<string, FeatureSpec>();
+    for (const feature of freezeBaseline.features) {
+      byId.set(feature.id, { ...feature });
+    }
+    for (const feature of current.features) {
+      const existing = byId.get(feature.id);
+      if (!existing) {
+        byId.set(feature.id, { ...feature });
+        continue;
+      }
+      // Keep the richer version while preserving frozen IDs.
+      if ((feature.rawContent || '').length > (existing.rawContent || '').length) {
+        byId.set(feature.id, { ...feature });
+      }
+    }
+
+    return {
+      ...current,
+      featureCatalogueIntro: current.featureCatalogueIntro || freezeBaseline.featureCatalogueIntro,
+      features: Array.from(byId.values()).sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true })),
+    };
+  }
+
+  private normalizeSectionAliases(structure: PRDStructure): PRDStructure {
+    const normalized: PRDStructure = {
+      ...structure,
+      otherSections: { ...structure.otherSections },
+      features: [...structure.features],
+    };
+
+    const aliasMatchers: Array<{ key: keyof PRDStructure; patterns: RegExp[] }> = [
+      { key: 'systemVision', patterns: [/system\s*vision/i, /executive\s*summary/i, /systemkontext/i, /system\s*kontext/i, /vision/i] },
+      { key: 'systemBoundaries', patterns: [/system\s*boundar/i, /operating\s*model/i, /systemgrenzen/i, /system\s*grenzen/i, /betriebsmodell/i] },
+      { key: 'domainModel', patterns: [/domain\s*model/i, /data\s*model/i, /dom[aä]nenmodell/i] },
+      { key: 'globalBusinessRules', patterns: [/global\s*business\s*rules/i, /business\s*rules/i, /gesch[aä]ftsregeln/i] },
+      { key: 'nonFunctional', patterns: [/non[\s-]*functional/i, /quality\s*attributes/i, /nicht[\s-]*funktionale/i] },
+      { key: 'errorHandling', patterns: [/error\s*handling/i, /recovery/i, /fehlerbehandlung/i, /fehlermanagement/i] },
+      { key: 'deployment', patterns: [/deployment/i, /infrastructure/i, /bereitstellung/i, /infrastruktur/i] },
+      { key: 'definitionOfDone', patterns: [/definition\s*of\s*done/i, /done\s*criteria/i, /abnahmekriterien/i, /akzeptanzkriterien/i] },
+    ];
+
+    const normalizeHeading = (heading: string): string =>
+      heading
+        .replace(/^\s*teil\s+[a-z0-9ivx]+\s*[—:-]\s*/i, '')
+        .replace(/^\s*part\s+[a-z0-9ivx]+\s*[—:-]\s*/i, '')
+        .replace(/^\d+[\.\)]\s*/, '')
+        .replace(/\*+/g, '')
+        .trim();
+
+    for (const [heading, content] of Object.entries(structure.otherSections || {})) {
+      if (!content || !content.trim()) continue;
+      const cleanHeading = normalizeHeading(heading);
+      for (const alias of aliasMatchers) {
+        const currentVal = normalized[alias.key];
+        const alreadySet = typeof currentVal === 'string' && currentVal.trim().length > 0;
+        if (alreadySet) continue;
+        if (alias.patterns.some(p => p.test(cleanHeading))) {
+          (normalized as any)[alias.key] = content;
+          delete normalized.otherSections[heading];
+          break;
+        }
+      }
+    }
+
+    return normalized;
+  }
+
+  private enforceCanonicalFeatureStructure(structure: PRDStructure, contentLanguage?: string | null): PRDStructure {
+    const lang = this.resolveScaffoldLanguage(contentLanguage, structure.systemVision || structure.systemBoundaries || '');
+    const isGerman = lang === 'de';
+    const deduped = new Map<string, FeatureSpec>();
+
+    for (const rawFeature of structure.features) {
+      const feature = { ...rawFeature };
+      const idMatch = String(feature.id || '').toUpperCase().match(/F-(\d+)/);
+      if (!idMatch) continue;
+      const id = `F-${idMatch[1].padStart(2, '0')}`;
+      const rawName = String(feature.name || '').replace(/^#+\s*/, '').replace(/^feature\s*name\s*:\s*/i, '').trim();
+      const name = rawName || id;
+
+      const existing = deduped.get(id);
+      if (!existing || (feature.rawContent || '').length > (existing.rawContent || '').length) {
+        deduped.set(id, { ...feature, id, name });
+      }
+    }
+
+    const canonicalFeatures: FeatureSpec[] = [];
+    for (const feature of Array.from(deduped.values()).sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }))) {
+      const normalizedFeature = { ...feature, id: feature.id.toUpperCase() };
+      normalizedFeature.purpose = normalizedFeature.purpose?.trim() || (isGerman
+        ? `${normalizedFeature.name} liefert den zentralen Nutzerwert in einem klar abgrenzbaren Feature.`
+        : `${normalizedFeature.name} provides the core user value as a clearly bounded feature.`);
+      normalizedFeature.actors = normalizedFeature.actors?.trim() || (isGerman
+        ? 'Primär: Endnutzer. Sekundär: Systemkomponenten zur Verarbeitung.'
+        : 'Primary: End user. Secondary: system components for processing.');
+      normalizedFeature.trigger = normalizedFeature.trigger?.trim() || (isGerman
+        ? 'Wird ausgelöst, wenn der Nutzer die zugehörige Aktion in der Oberfläche startet.'
+        : 'Triggered when the user initiates the corresponding action in the interface.');
+      normalizedFeature.preconditions = normalizedFeature.preconditions?.trim() || (isGerman
+        ? 'Anwendung ist verfügbar, notwendige Datenquellen sind erreichbar, Nutzerkontext ist geladen.'
+        : 'Application is available, required data sources are reachable, and user context is loaded.');
+
+      const mainFlow = Array.isArray(normalizedFeature.mainFlow) ? normalizedFeature.mainFlow.filter(Boolean) : [];
+      while (mainFlow.length < 4) {
+        const stepNo = mainFlow.length + 1;
+        mainFlow.push(isGerman
+          ? `${stepNo}. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.`
+          : `${stepNo}. System processes the step deterministically and updates state consistently.`);
+      }
+      normalizedFeature.mainFlow = mainFlow;
+
+      const altFlows = Array.isArray(normalizedFeature.alternateFlows) ? normalizedFeature.alternateFlows.filter(Boolean) : [];
+      if (altFlows.length === 0) {
+        altFlows.push(isGerman
+          ? 'Fehlerfall: Bei ungültiger Eingabe zeigt das System eine klare Validierungsmeldung und behält den Eingabekontext.'
+          : 'Error path: on invalid input, the system shows clear validation feedback and preserves user input context.');
+      }
+      normalizedFeature.alternateFlows = altFlows;
+
+      normalizedFeature.postconditions = normalizedFeature.postconditions?.trim() || (isGerman
+        ? 'Nach Abschluss ist der Feature-Zustand konsistent gespeichert und für Folgeprozesse verfügbar.'
+        : 'After completion, feature state is stored consistently and available for follow-up processes.');
+      normalizedFeature.dataImpact = normalizedFeature.dataImpact?.trim() || (isGerman
+        ? 'Relevante Entitäten werden gelesen/geschrieben; Änderungen sind nachvollziehbar und konsistent.'
+        : 'Relevant entities are read/written; changes are traceable and consistent.');
+      normalizedFeature.uiImpact = normalizedFeature.uiImpact?.trim() || (isGerman
+        ? 'UI stellt den Status transparent dar und bietet klare Rückmeldungen für Erfolg und Fehler.'
+        : 'UI exposes status transparently and provides clear success/failure feedback.');
+
+      const acceptance = Array.isArray(normalizedFeature.acceptanceCriteria) ? normalizedFeature.acceptanceCriteria.filter(Boolean) : [];
+      while (acceptance.length < 3) {
+        const idx = acceptance.length + 1;
+        acceptance.push(isGerman
+          ? `${idx}. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.`
+          : `${idx}. Feature is reproducibly testable by end users and produces deterministic outcomes.`);
+      }
+      normalizedFeature.acceptanceCriteria = acceptance;
+
+      normalizedFeature.rawContent = this.renderCanonicalFeatureRaw(normalizedFeature);
+      canonicalFeatures.push(normalizedFeature);
+    }
+
+    return {
+      ...structure,
+      features: canonicalFeatures,
+    };
+  }
+
+  private renderCanonicalFeatureRaw(feature: FeatureSpec): string {
+    const lines: string[] = [];
+    lines.push(`### ${feature.id}: ${feature.name}`);
+    lines.push('');
+    lines.push(`1. Purpose`);
+    lines.push(feature.purpose || '');
+    lines.push('');
+    lines.push(`2. Actors`);
+    lines.push(feature.actors || '');
+    lines.push('');
+    lines.push(`3. Trigger`);
+    lines.push(feature.trigger || '');
+    lines.push('');
+    lines.push(`4. Preconditions`);
+    lines.push(feature.preconditions || '');
+    lines.push('');
+    lines.push(`5. Main Flow`);
+    for (const step of feature.mainFlow || []) {
+      lines.push(step);
+    }
+    lines.push('');
+    lines.push(`6. Alternate Flows`);
+    for (const flow of feature.alternateFlows || []) {
+      lines.push(`- ${flow.replace(/^-+\s*/, '')}`);
+    }
+    lines.push('');
+    lines.push(`7. Postconditions`);
+    lines.push(feature.postconditions || '');
+    lines.push('');
+    lines.push(`8. Data Impact`);
+    lines.push(feature.dataImpact || '');
+    lines.push('');
+    lines.push(`9. UI Impact`);
+    lines.push(feature.uiImpact || '');
+    lines.push('');
+    lines.push(`10. Acceptance Criteria`);
+    for (const ac of feature.acceptanceCriteria || []) {
+      lines.push(`- ${ac.replace(/^-+\s*/, '')}`);
+    }
+    return lines.join('\n').trim();
+  }
+
+  private enforceNfrCoverage(
+    structure: PRDStructure,
+    contentLanguage?: string | null
+  ): { structure: PRDStructure; globalCategoryAdds: number; featureCriteriaAdds: number } {
+    const lang = this.resolveScaffoldLanguage(contentLanguage, structure.nonFunctional || structure.systemVision || '');
+    const isGerman = lang === 'de';
+    const updated: PRDStructure = {
+      ...structure,
+      features: structure.features.map(f => ({ ...f })),
+      otherSections: { ...structure.otherSections },
+    };
+
+    const categories = [
+      {
+        key: 'reliability',
+        match: /(reliab|zuverlaess|zuverläss)/i,
+        line: isGerman
+          ? '- Reliability: Das System bleibt bei Fehlern stabil und stellt konsistente Zustände wieder her.'
+          : '- Reliability: The system remains stable during faults and restores consistent state.'
+      },
+      {
+        key: 'performance',
+        match: /(perform|latency|throughput|response time|antwortzeit)/i,
+        line: isGerman
+          ? '- Performance: Kritische Nutzeraktionen liefern in akzeptabler Antwortzeit reproduzierbare Ergebnisse.'
+          : '- Performance: Critical user actions return reproducible results within acceptable response time.'
+      },
+      {
+        key: 'security',
+        match: /(security|secure|auth|xss|csrf|injection|sicherheit|datenschutz)/i,
+        line: isGerman
+          ? '- Security: Eingaben werden validiert/sanitized und sensible Daten sind gegen Missbrauch abgesichert.'
+          : '- Security: Inputs are validated/sanitized and sensitive data is protected against misuse.'
+      },
+      {
+        key: 'accessibility',
+        match: /(accessib|wcag|aria|barriere)/i,
+        line: isGerman
+          ? '- Accessibility: Kernabläufe sind tastaturbedienbar und erfüllen mindestens WCAG-2.1-AA-Anforderungen.'
+          : '- Accessibility: Core flows are keyboard-operable and meet at least WCAG 2.1 AA requirements.'
+      },
+      {
+        key: 'observability',
+        match: /(observab|monitor|logging|metrics|telemetr|beobacht)/i,
+        line: isGerman
+          ? '- Observability: Fehler, Performance und Laufzeitereignisse sind über Logs/Metriken nachvollziehbar.'
+          : '- Observability: Errors, performance, and runtime events are traceable via logs/metrics.'
+      },
+    ];
+
+    let nonFunctionalText = String(updated.nonFunctional || '').trim();
+    let globalCategoryAdds = 0;
+    for (const cat of categories) {
+      if (!cat.match.test(nonFunctionalText)) {
+        nonFunctionalText = [nonFunctionalText, cat.line].filter(Boolean).join('\n');
+        globalCategoryAdds++;
+      }
+    }
+    updated.nonFunctional = nonFunctionalText.trim();
+
+    const nfrCriterionPattern = /(performance|latency|response time|security|xss|csrf|accessibility|wcag|aria|reliability|availability|monitor|logging|metrics|zuverlaess|zuverläss|sicherheit|barriere|antwortzeit|beobacht)/i;
+    let featureCriteriaAdds = 0;
+    for (const feature of updated.features) {
+      const criteria = Array.isArray(feature.acceptanceCriteria)
+        ? [...feature.acceptanceCriteria]
+        : [];
+      const hasNfrCriterion = criteria.some(c => nfrCriterionPattern.test(String(c)));
+      if (!hasNfrCriterion) {
+        criteria.push(isGerman
+          ? 'NFR: Funktion erfuellt definierte Performance-, Sicherheits- und Accessibility-Basisanforderungen ohne Laufzeitfehler.'
+          : 'NFR: Feature meets defined baseline performance, security, and accessibility requirements without runtime errors.');
+        feature.acceptanceCriteria = criteria;
+        feature.rawContent = this.renderCanonicalFeatureRaw(feature);
+        featureCriteriaAdds++;
+      }
+    }
+
+    return { structure: updated, globalCategoryAdds, featureCriteriaAdds };
+  }
+
   private async generateStructuredDeltaSection(params: {
     currentPrd: string;
     generatorOutput: string;
@@ -1801,11 +2112,31 @@ Return JSON only.`;
       }))
       .filter((f: FeatureSpec) => f.id.length > 0 && f.rawContent.length > 0);
 
-    if (compiledFeatures.length === 0) {
+    const anchorFeatures = Array.isArray(anchor?.features)
+      ? anchor!.features
+        .map((f: FeatureSpec) => ({
+          id: String(f.id || '').trim().toUpperCase(),
+          name: String(f.name || f.id || '').trim(),
+          rawContent: String(f.rawContent || '').trim(),
+        }))
+        .filter((f: FeatureSpec) => f.id.length > 0 && f.rawContent.length > 0)
+      : [];
+
+    if (compiledFeatures.length === 0 && anchorFeatures.length === 0) {
       return null;
     }
 
-    compiledFeatures.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+    const mergedById = new Map<string, FeatureSpec>();
+    for (const f of anchorFeatures) {
+      mergedById.set(f.id, f);
+    }
+    for (const f of compiledFeatures) {
+      // Prefer compiled expansion output for overlapping IDs.
+      mergedById.set(f.id, f);
+    }
+
+    const mergedFeatures = Array.from(mergedById.values());
+    mergedFeatures.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
 
     return {
       systemVision: anchor?.systemVision,
@@ -1813,7 +2144,7 @@ Return JSON only.`;
       domainModel: anchor?.domainModel,
       globalBusinessRules: anchor?.globalBusinessRules,
       featureCatalogueIntro: anchor?.featureCatalogueIntro,
-      features: compiledFeatures,
+      features: mergedFeatures,
       nonFunctional: anchor?.nonFunctional,
       errorHandling: anchor?.errorHandling,
       deployment: anchor?.deployment,
@@ -1860,17 +2191,23 @@ Return JSON only.`;
         // Get AI model preferences
         if (userPrefs[0].aiPreferences) {
           const prefs = userPrefs[0].aiPreferences as any;
-          if (prefs.generatorModel) {
-            client.setPreferredModel('generator', prefs.generatorModel);
+          const tier = prefs.tier || 'production';
+          const activeTierModels = prefs.tierModels?.[tier] || {};
+          const resolvedGeneratorModel = activeTierModels.generatorModel || prefs.generatorModel;
+          const resolvedReviewerModel = activeTierModels.reviewerModel || prefs.reviewerModel;
+          const resolvedFallbackModel = activeTierModels.fallbackModel || prefs.fallbackModel;
+
+          if (resolvedGeneratorModel) {
+            client.setPreferredModel('generator', resolvedGeneratorModel);
           }
-          if (prefs.reviewerModel) {
-            client.setPreferredModel('reviewer', prefs.reviewerModel);
+          if (resolvedReviewerModel) {
+            client.setPreferredModel('reviewer', resolvedReviewerModel);
           }
-          if (prefs.fallbackModel) {
-            client.setPreferredModel('fallback', prefs.fallbackModel);
+          if (resolvedFallbackModel) {
+            client.setPreferredModel('fallback', resolvedFallbackModel);
           }
-          if (prefs.tier) {
-            client.setPreferredTier(prefs.tier);
+          if (tier) {
+            client.setPreferredTier(tier);
           }
         }
       }

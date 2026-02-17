@@ -75,6 +75,42 @@ function renderFeatureFromStructure(feature: FeatureSpec): string {
   return lines.join('\n').trim();
 }
 
+function stripFeaturePreamble(raw: string): string {
+  const lines = raw.split('\n');
+  const out: string[] = [];
+  let skipping = true;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (skipping) {
+      const isPreamble =
+        /^#{1,6}\s*feature\s+specification\b/i.test(trimmed) ||
+        /^#{1,6}\s*f-\d{2,}\b/i.test(trimmed) ||
+        /^\*{0,2}feature\s+id\*{0,2}\s*:/i.test(trimmed) ||
+        /^\*{0,2}feature\s+name\*{0,2}\s*:/i.test(trimmed) ||
+        /^feature\s+id\s*:/i.test(trimmed) ||
+        /^feature\s+name\s*:/i.test(trimmed) ||
+        /^[-=]{3,}$/.test(trimmed);
+      if (isPreamble || !trimmed) {
+        continue;
+      }
+      skipping = false;
+    }
+    out.push(line);
+  }
+
+  return out.join('\n').trim();
+}
+
+function renderFeatureRawCanonical(feature: FeatureSpec): string {
+  const lines: string[] = [];
+  lines.push(`### ${feature.id}: ${feature.name}`);
+  lines.push('');
+  const cleaned = stripFeaturePreamble(feature.rawContent || '');
+  lines.push(cleaned || 'No additional details provided.');
+  return lines.join('\n').trim();
+}
+
 export function assembleStructureToMarkdown(structure: PRDStructure): string {
   const parts: string[] = [];
 
@@ -99,7 +135,7 @@ export function assembleStructureToMarkdown(structure: PRDStructure): string {
       if (hasStructuredFields(feature)) {
         featureLines.push(renderFeatureFromStructure(feature));
       } else {
-        featureLines.push(feature.rawContent);
+        featureLines.push(renderFeatureRawCanonical(feature));
       }
       featureLines.push('');
     }

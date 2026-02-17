@@ -212,9 +212,9 @@ class OpenRouterClient {
 
     // Build deduplicated ordered list:
     // 1) preferred model for this role
-    // 2) the other role's model (as secondary fallback)
-    // 3) explicit fallback model
-    // 4) tier defaults (only if nothing else configured)
+    // 2) explicit fallback model
+    // 3) tier default for this role
+    // 4) optional cross-role fallbacks (only when explicitly enabled)
     const seen = new Set<string>();
     const modelsToTry: Array<{ model: string; isPrimary: boolean }> = [];
 
@@ -226,18 +226,21 @@ class OpenRouterClient {
     };
 
     const primary = this.preferredModels[modelType];
-    const secondary = this.preferredModels[modelType === 'generator' ? 'reviewer' : 'generator'];
     const fallback = this.preferredModels.fallback;
+    const tierModels = MODEL_TIERS[this.tier];
+    const roleDefault = modelType === 'generator' ? tierModels.generator : tierModels.reviewer;
+    const crossRolePreferred = this.preferredModels[modelType === 'generator' ? 'reviewer' : 'generator'];
+    const crossRoleTierDefault = modelType === 'generator' ? tierModels.reviewer : tierModels.generator;
+    const allowCrossRoleFallback = process.env.ALLOW_CROSS_ROLE_MODEL_FALLBACK === 'true';
 
     addIfNew(primary, true);
-    addIfNew(secondary, false);
     addIfNew(fallback, false);
+    addIfNew(roleDefault, false);
 
-    // If no user models configured at all, use tier defaults
-    if (modelsToTry.length === 0) {
-      const tierModels = MODEL_TIERS[this.tier];
-      addIfNew(tierModels.generator, true);
-      addIfNew(tierModels.reviewer, false);
+    // Optional legacy behavior: allow using the other role's model as last-resort fallback.
+    if (allowCrossRoleFallback) {
+      addIfNew(crossRolePreferred, false);
+      addIfNew(crossRoleTierDefault, false);
     }
 
     for (let i = 0; i < modelsToTry.length; i++) {

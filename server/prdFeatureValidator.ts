@@ -12,9 +12,23 @@ const REQUIRED_SUBSECTIONS = [
   '9. UI Impact',
   '10. Acceptance Criteria',
 ];
+const STRUCTURED_FIELDS: (keyof FeatureSpec)[] = [
+  'purpose',
+  'actors',
+  'trigger',
+  'preconditions',
+  'mainFlow',
+  'alternateFlows',
+  'postconditions',
+  'dataImpact',
+  'uiImpact',
+  'acceptanceCriteria',
+];
 
 const SHRINKAGE_THRESHOLD = 0.7;
 const MIN_SECTION_CONTENT_LENGTH = 10;
+const MIN_FEATURE_COMPLETENESS = 8;
+const MAX_COMPLETENESS_DROP = 2;
 
 export interface FeatureValidationResult {
   isValid: boolean;
@@ -22,11 +36,36 @@ export interface FeatureValidationResult {
   severeShrinkage: boolean;
   missingMainFlowNumbering: boolean;
   missingAcceptanceCriteriaContent: boolean;
+  previousCompleteness: number;
+  currentCompleteness: number;
+  completenessRegression: boolean;
+  belowMinimumCompleteness: boolean;
 }
 
 export interface IntegrityRestoration {
   featureId: string;
   reasons: string[];
+  qualityRegression?: boolean;
+  previousCompleteness?: number;
+  currentCompleteness?: number;
+}
+
+function hasFieldValue(feature: FeatureSpec, field: keyof FeatureSpec): boolean {
+  const value = feature[field];
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+export function countFeatureCompleteness(feature: FeatureSpec): number {
+  let count = 0;
+  for (const field of STRUCTURED_FIELDS) {
+    if (hasFieldValue(feature, field)) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 function buildSectionPattern(section: string): RegExp[] {
@@ -71,6 +110,12 @@ export function validateFeatureIntegrity(
   }
 
   const severeShrinkage = currentFeature.rawContent.length < previousFeature.rawContent.length * SHRINKAGE_THRESHOLD;
+  const previousCompleteness = countFeatureCompleteness(previousFeature);
+  const currentCompleteness = countFeatureCompleteness(currentFeature);
+  const completenessDrop = previousCompleteness - currentCompleteness;
+  const completenessRegression = completenessDrop > MAX_COMPLETENESS_DROP;
+  const belowMinimumCompleteness =
+    currentCompleteness < MIN_FEATURE_COMPLETENESS && previousCompleteness >= MIN_FEATURE_COMPLETENESS;
 
   let missingMainFlowNumbering = false;
   const mainFlowBlock = findSectionBlock(content, '5', '6');
@@ -93,9 +138,21 @@ export function validateFeatureIntegrity(
   const isValid = missingSections.length === 0
     && !severeShrinkage
     && !missingMainFlowNumbering
-    && !missingAcceptanceCriteriaContent;
+    && !missingAcceptanceCriteriaContent
+    && !completenessRegression
+    && !belowMinimumCompleteness;
 
-  return { isValid, missingSections, severeShrinkage, missingMainFlowNumbering, missingAcceptanceCriteriaContent };
+  return {
+    isValid,
+    missingSections,
+    severeShrinkage,
+    missingMainFlowNumbering,
+    missingAcceptanceCriteriaContent,
+    previousCompleteness,
+    currentCompleteness,
+    completenessRegression,
+    belowMinimumCompleteness,
+  };
 }
 
 export function enforceFeatureIntegrity(
@@ -125,9 +182,21 @@ export function enforceFeatureIntegrity(
       if (result.missingAcceptanceCriteriaContent) {
         reasons.push('missing Acceptance Criteria content');
       }
+      if (result.completenessRegression) {
+        reasons.push(`feature completeness regressed (${result.previousCompleteness}/10 -> ${result.currentCompleteness}/10)`);
+      }
+      if (result.belowMinimumCompleteness) {
+        reasons.push(`feature completeness below minimum (${result.currentCompleteness}/10 < ${MIN_FEATURE_COMPLETENESS}/10)`);
+      }
 
       current.features[currIdx] = { ...prevFeature };
-      restorations.push({ featureId: prevFeature.id, reasons });
+      restorations.push({
+        featureId: prevFeature.id,
+        reasons,
+        qualityRegression: result.completenessRegression || result.belowMinimumCompleteness,
+        previousCompleteness: result.previousCompleteness,
+        currentCompleteness: result.currentCompleteness,
+      });
       console.warn(`🛡️ Feature integrity restored: ${prevFeature.id} (${reasons.join('; ')})`);
     }
   }

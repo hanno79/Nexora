@@ -48,16 +48,57 @@ interface RawSection {
   body: string;
 }
 
+function normalizeBrokenHeadingBoundaries(markdown: string): string {
+  // Some model outputs place "## Heading" inline after a sentence.
+  // Normalize these cases so section splitting remains deterministic.
+  return markdown.replace(/([^\n])[ \t]+(#{1,2}\s+[^\n#]+)/g, '$1\n\n$2');
+}
+
+function normalizeFeatureId(value: string): string {
+  const match = String(value || '').toUpperCase().match(/F-(\d+)/);
+  if (!match) return '';
+  return `F-${match[1].padStart(2, '0')}`;
+}
+
+function dedupeFeatures(features: FeatureSpec[]): FeatureSpec[] {
+  const byId = new Map<string, FeatureSpec>();
+  for (const feature of features) {
+    const id = normalizeFeatureId(feature.id);
+    if (!id) continue;
+
+    const normalized: FeatureSpec = { ...feature, id };
+    const existing = byId.get(id);
+    if (!existing) {
+      byId.set(id, normalized);
+      continue;
+    }
+
+    // Prefer richer content when duplicate IDs appear.
+    const currentLen = (normalized.rawContent || '').length;
+    const existingLen = (existing.rawContent || '').length;
+    if (currentLen > existingLen) {
+      byId.set(id, normalized);
+    }
+  }
+
+  return Array.from(byId.values()).sort((a, b) =>
+    a.id.localeCompare(b.id, undefined, { numeric: true })
+  );
+}
+
 function splitIntoSections(markdown: string): RawSection[] {
   const sections: RawSection[] = [];
-  const lines = markdown.split('\n');
+  const normalizedMarkdown = normalizeBrokenHeadingBoundaries(markdown);
+  const lines = normalizedMarkdown.split('\n');
 
   let currentHeading = '';
   let currentLevel = 0;
   let currentBody: string[] = [];
 
   for (const line of lines) {
-    const headingMatch = line.match(/^(#{1,3})\s+(.+)$/);
+    // Treat only H1/H2 as top-level section boundaries.
+    // H3+ is commonly used inside feature specs and must stay in-section.
+    const headingMatch = line.match(/^(#{1,2})\s+(.+)$/);
 
     if (headingMatch) {
       if (currentHeading || currentBody.length > 0) {
@@ -134,7 +175,7 @@ function parseFeatureSubsections(rawContent: string): Partial<Pick<FeatureSpec, 
     const subsectionBoundaries: { field: string; matchStart: number; contentStart: number; isArray: boolean }[] = [];
 
     for (const sub of SUBSECTION_ORDER) {
-      const pattern = new RegExp(`(?:^|\\n)\\s*(?:\\*\\*)?${sub.num}\\.\\s*(?:\\*\\*)?\\s*${sub.label}\\s*[:\\s]*(?:\\*\\*)?`, 'i');
+      const pattern = new RegExp(`(?:^|\\n)\\s*(?:#{1,6}\\s*)?(?:\\*\\*)?${sub.num}\\.\\s*(?:\\*\\*)?\\s*${sub.label}\\s*[:\\s]*(?:\\*\\*)?`, 'i');
       const match = rawContent.match(pattern);
       if (match && match.index !== undefined) {
         const isArray = sub.field === 'mainFlow' || sub.field === 'alternateFlows' || sub.field === 'acceptanceCriteria';
@@ -178,6 +219,15 @@ function parseFeatureBlocks(body: string): { features: FeatureSpec[]; introText:
   const bodyWithNewline = '\n' + body;
 
   const splitPoints: { index: number; id: string; name: string }[] = [];
+  const addSplitPoint = (index: number, id: string, name: string) => {
+    const normalizedId = normalizeFeatureId(id);
+    if (!normalizedId) return;
+    splitPoints.push({
+      index,
+      id: normalizedId,
+      name: (name || normalizedId).trim() || normalizedId,
+    });
+  };
 
   const inlinePattern = /(?:^|\n)(?:#{2,4}\s+)?(?:\*{0,2})(?:Feature\s+(?:ID:\s*)?|Feature\s+ID:\s*)(F-\d+)(?:\*{0,2})[: —–-]+(?!\n)(?:\*{0,2})([^\n]+?)(?:\*{0,2})(?:\n|$)/gi;
   let match: RegExpExecArray | null;
@@ -185,73 +235,89 @@ function parseFeatureBlocks(body: string): { features: FeatureSpec[]; introText:
   while ((match = inlinePattern.exec(bodyWithNewline)) !== null) {
     const name = match[2].trim().replace(/\*+/g, '').trim();
     if (name && !name.toLowerCase().startsWith('feature name')) {
-      splitPoints.push({
-        index: match.index,
-        id: match[1].toUpperCase(),
-        name,
-      });
+      addSplitPoint(match.index, match[1], name);
     }
   }
 
-  if (splitPoints.length === 0) {
-    const twoLinePattern = /(?:^|\n)\s*(?:#{1,6}\s+)?(?:\*{0,2})Feature\s+ID:\s*(F-\d+)(?:\*{0,2})\s*\n\s*\*{0,2}Feature\s+Name:?\*{0,2}\s*(.+?)(?:\*{0,2})\s*(?:\n|$)/gi;
-    let twoLineMatch: RegExpExecArray | null;
-    while ((twoLineMatch = twoLinePattern.exec(bodyWithNewline)) !== null) {
-      const rawName = twoLineMatch[2].trim().replace(/\*+/g, '').trim();
-      splitPoints.push({
-        index: twoLineMatch.index,
-        id: twoLineMatch[1].toUpperCase(),
-        name: rawName || twoLineMatch[1].toUpperCase(),
-      });
-    }
+  const twoLinePattern = /(?:^|\n)\s*(?:#{1,6}\s+)?(?:\*{0,2})Feature\s+ID(?:\*{0,2})?\s*:?\s*(?:\*{0,2})\s*(F-\d+)\b[^\n]*\n\s*(?:\*{0,2})Feature\s+Name(?:\*{0,2})?\s*:?\s*(?:\*{0,2})\s*(.+?)\s*(?:\n|$)/gi;
+  let twoLineMatch: RegExpExecArray | null;
+  while ((twoLineMatch = twoLinePattern.exec(bodyWithNewline)) !== null) {
+    const rawName = twoLineMatch[2].trim().replace(/\*+/g, '').trim();
+    addSplitPoint(twoLineMatch.index, twoLineMatch[1], rawName || twoLineMatch[1]);
   }
 
-  if (splitPoints.length === 0) {
-    const boldIdPattern = /(?:^|\n)\s*\*{2}Feature\s+ID:\s*(F-\d+)\*{2}\s*\n/gi;
-    const featureNamePattern = /\*{0,2}Feature\s+Name:?\*{0,2}\s*(.+?)(?:\*{0,2})\s*$/im;
+  const boldIdPattern = /(?:^|\n)\s*\*{2}Feature\s+ID\s*:?\s*(F-\d+)\*{2}\s*\n/gi;
+  const featureNamePattern = /\*{0,2}Feature\s+Name:?\*{0,2}\s*(.+?)(?:\*{0,2})\s*$/im;
 
-    let boldMatch: RegExpExecArray | null;
-    while ((boldMatch = boldIdPattern.exec(bodyWithNewline)) !== null) {
-      const featureId = boldMatch[1].toUpperCase();
-      const afterIndex = boldMatch.index + boldMatch[0].length;
-      const nextChunk = bodyWithNewline.substring(afterIndex, afterIndex + 200);
-      const nameMatch = nextChunk.match(featureNamePattern);
-      const rawName = nameMatch
-        ? nameMatch[1].trim().replace(/\*+/g, '').trim()
-        : featureId;
-      const featureName = rawName.replace(/^Feature\s+Name:\s*/i, '').trim() || featureId;
+  let boldMatch: RegExpExecArray | null;
+  while ((boldMatch = boldIdPattern.exec(bodyWithNewline)) !== null) {
+    const featureId = normalizeFeatureId(boldMatch[1]);
+    const afterIndex = boldMatch.index + boldMatch[0].length;
+    const nextChunk = bodyWithNewline.substring(afterIndex, afterIndex + 200);
+    const nameMatch = nextChunk.match(featureNamePattern);
+    const rawName = nameMatch
+      ? nameMatch[1].trim().replace(/\*+/g, '').trim()
+      : featureId;
+    const featureName = rawName.replace(/^Feature\s+Name:\s*/i, '').trim() || featureId;
 
-      splitPoints.push({
-        index: boldMatch.index,
-        id: featureId,
-        name: featureName,
-      });
-    }
+    addSplitPoint(boldMatch.index, featureId, featureName);
   }
 
-  if (splitPoints.length === 0) {
-    const headingPattern = /(?:^|\n)(#{2,4})\s+(?:\*{0,2})(?:Feature\s+)?(?:ID:\s*)?(F-\d+)(?:\*{0,2})[:\s—–-]*(?:\*{0,2})(.*?)(?:\*{0,2})\s*(?:\n|$)/gi;
-    let headingMatch: RegExpExecArray | null;
-    while ((headingMatch = headingPattern.exec(bodyWithNewline)) !== null) {
-      splitPoints.push({
-        index: headingMatch.index,
-        id: headingMatch[2].toUpperCase(),
-        name: headingMatch[3].trim().replace(/\*+/g, '').trim() || headingMatch[2].toUpperCase(),
-      });
+  // Common output format:
+  // **Feature ID:** F-01
+  // **Feature Name:** ...
+  const featureIdLinePattern = /(?:^|\n)\s*(?:\*{0,2})Feature\s+ID(?:\*{0,2})?\s*:?\s*(?:\*{0,2})\s*(F-\d+)\b[^\n]*(?:\n|$)/gi;
+  let featureIdLineMatch: RegExpExecArray | null;
+  while ((featureIdLineMatch = featureIdLinePattern.exec(bodyWithNewline)) !== null) {
+    const featureId = normalizeFeatureId(featureIdLineMatch[1]);
+    const afterIndex = featureIdLineMatch.index + featureIdLineMatch[0].length;
+    const preview = bodyWithNewline.substring(afterIndex, afterIndex + 320);
+    const nameMatch = preview.match(/(?:^|\n)\s*(?:\*{0,2})Feature\s+Name(?:\*{0,2})?\s*:?\s*(?:\*{0,2})\s*(.+?)\s*(?:\n|$)/i);
+    let featureName = nameMatch
+      ? nameMatch[1].trim().replace(/\*+/g, '').trim()
+      : featureId;
+    if (!nameMatch) {
+      // Fallback: detect nearby "Feature Specification: <Name>" heading.
+      const prefix = bodyWithNewline.substring(Math.max(0, featureIdLineMatch.index - 220), featureIdLineMatch.index);
+      const specHeadingMatch = prefix.match(/Feature\s+Specification\s*:\s*([^\n#]+)/i);
+      if (specHeadingMatch) {
+        featureName = specHeadingMatch[1].trim();
+      }
     }
+    addSplitPoint(featureIdLineMatch.index, featureId, featureName || featureId);
   }
 
-  const firstFeatureIndex = splitPoints.length > 0 ? splitPoints[0].index : bodyWithNewline.length;
+  const headingPattern = /(?:^|\n)(#{2,4})\s+(?:\*{0,2})(?:Feature\s+)?(?:ID:\s*)?(F-\d+)(?:\*{0,2})[:\s—–-]*(?:\*{0,2})(.*?)(?:\*{0,2})\s*(?:\n|$)/gi;
+  let headingMatch: RegExpExecArray | null;
+  while ((headingMatch = headingPattern.exec(bodyWithNewline)) !== null) {
+    addSplitPoint(
+      headingMatch.index,
+      headingMatch[2],
+      headingMatch[3].trim().replace(/\*+/g, '').trim() || headingMatch[2]
+    );
+  }
+
+  splitPoints.sort((a, b) => a.index - b.index);
+  const uniqueSplitPoints: typeof splitPoints = [];
+  const seenAt = new Set<string>();
+  for (const point of splitPoints) {
+    const key = `${point.index}:${point.id}`;
+    if (seenAt.has(key)) continue;
+    seenAt.add(key);
+    uniqueSplitPoints.push(point);
+  }
+
+  const firstFeatureIndex = uniqueSplitPoints.length > 0 ? uniqueSplitPoints[0].index : bodyWithNewline.length;
   const introText = bodyWithNewline.substring(0, firstFeatureIndex).trim();
 
-  for (let i = 0; i < splitPoints.length; i++) {
-    const start = splitPoints[i].index;
-    const end = i + 1 < splitPoints.length ? splitPoints[i + 1].index : bodyWithNewline.length;
+  for (let i = 0; i < uniqueSplitPoints.length; i++) {
+    const start = uniqueSplitPoints[i].index;
+    const end = i + 1 < uniqueSplitPoints.length ? uniqueSplitPoints[i + 1].index : bodyWithNewline.length;
     const rawContent = bodyWithNewline.substring(start, end).trim();
 
     features.push({
-      id: splitPoints[i].id,
-      name: splitPoints[i].name,
+      id: uniqueSplitPoints[i].id,
+      name: uniqueSplitPoints[i].name,
       rawContent,
       ...parseFeatureSubsections(rawContent),
     });
@@ -279,7 +345,13 @@ export function parsePRDToStructure(markdown: string): PRDStructure {
       .trim()
       .toLowerCase();
 
-    const isFeatureCatalogue = FEATURE_CATALOGUE_HEADINGS.some(
+    const isExplicitNonFunctional =
+      normalizedHeading.includes('non-functional requirements') ||
+      normalizedHeading.includes('non functional requirements') ||
+      normalizedHeading.includes('nicht-funktionale anforderungen') ||
+      normalizedHeading.includes('nicht funktionale anforderungen');
+
+    const isFeatureCatalogue = !isExplicitNonFunctional && FEATURE_CATALOGUE_HEADINGS.some(
       h => normalizedHeading.includes(h)
     );
 
@@ -296,14 +368,24 @@ export function parsePRDToStructure(markdown: string): PRDStructure {
       continue;
     }
 
-    const mappedKey = Object.entries(KNOWN_SECTION_MAP).find(
-      ([pattern]) => normalizedHeading.includes(pattern)
-    );
+    const mappedKey = Object.entries(KNOWN_SECTION_MAP).find(([pattern]) => {
+      if (pattern.length <= 3) {
+        const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`\\b${escaped}\\b`, 'i').test(normalizedHeading);
+      }
+      return normalizedHeading.includes(pattern);
+    });
 
     if (mappedKey) {
       const key = mappedKey[1];
       if (key !== 'features' && key !== 'otherSections') {
-        (structure as any)[key] = section.body;
+        const currentVal = (structure as any)[key];
+        const currentLen = typeof currentVal === 'string' ? currentVal.trim().length : 0;
+        const nextLen = typeof section.body === 'string' ? section.body.trim().length : 0;
+        // Keep the richer section when duplicate headings/aliases appear.
+        if (nextLen >= currentLen) {
+          (structure as any)[key] = section.body;
+        }
       }
     } else {
       const featureMatch = normalizedHeading.match(/^(?:feature\s+(?:id:\s*)?)?(?:feature\s+id:\s*)?(f-\d+)/);
@@ -315,7 +397,7 @@ export function parsePRDToStructure(markdown: string): PRDStructure {
           .replace(/\*+/g, '')
           .trim();
         structure.features.push({
-          id: featureId,
+          id: normalizeFeatureId(featureId),
           name: featureName || featureId,
           rawContent: section.body,
           ...parseFeatureSubsections(section.body),
@@ -325,6 +407,13 @@ export function parsePRDToStructure(markdown: string): PRDStructure {
       }
     }
   }
+
+  // Global fallback: salvage feature specs even if section structure drifted.
+  const globalFeatureScan = parseFeatureBlocks(markdown);
+  if (globalFeatureScan.features.length > 0) {
+    structure.features.push(...globalFeatureScan.features);
+  }
+  structure.features = dedupeFeatures(structure.features);
 
   return structure;
 }

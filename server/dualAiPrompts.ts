@@ -546,11 +546,16 @@ interface CompilerDiagnostics {
   fullRegenerations: number;
   featurePreservations: number;
   featureIntegrityRestores: number;
+  featureQualityRegressions?: number;
+  autoRecoveredFeatures?: number;
+  avgFeatureCompleteness?: number;
   driftEvents: number;
   // Feature Freeze Engine
   featureFreezeActive?: boolean;
   blockedRegenerationAttempts?: number;
   freezeSeedSource?: 'none' | 'existingContent' | 'compiledExpansion';
+  nfrGlobalCategoryAdds?: number;
+  nfrFeatureCriteriaAdds?: number;
 }
 
 interface IterativeResponse {
