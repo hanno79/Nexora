@@ -12,6 +12,9 @@ import { initializeTemplates } from "./initTemplates";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { parsePRDToStructure } from "./prdParser";
+import { computeCompleteness } from "./prdCompleteness";
+import type { PRDStructure } from "./prdStructure";
 
 /**
  * Synchronizes PRD content header metadata with actual PRD data.
@@ -300,19 +303,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // If content is being updated, synchronize header metadata
       let updateData = { ...req.body };
       if (updateData.content) {
+        // Save raw incoming content BEFORE header sync for comparison
+        const rawIncomingContent = updateData.content;
+
         // Get current version count to determine version number
         const versions = await storage.getPrdVersions(id);
         const versionNumber = versions.length > 0 ? `v${versions.length}` : null;
         const status = updateData.status || prd.status;
-        
+
         // Sync the header metadata in the content
         updateData.content = syncPrdHeaderMetadata(
           updateData.content,
           versionNumber,
           status
         );
+
+        // Only invalidate structuredContent when the user actually changed the content body.
+        // Skip invalidation when the incoming content matches what's stored (e.g. frontend
+        // saving back the same AI-generated content that the server already autosaved).
+        if (!updateData.structuredContent && (prd as any).structuredContent) {
+          const contentChanged = rawIncomingContent.trim() !== prd.content.trim();
+          if (contentChanged) {
+            updateData.structuredContent = null;
+            updateData.structuredAt = null;
+          }
+        } else if (!updateData.structuredContent && !(prd as any).structuredContent) {
+          // No existing structure to preserve - nothing to do
+        }
       }
-      
+
       const updated = await storage.updatePrd(id, updateData);
       res.json(updated);
     } catch (error) {
@@ -773,7 +792,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         prdId
       );
       
-      res.json(result);
+      // Signal to frontend whether server will autosave (so frontend skips content in PATCH)
+      const saveRequested = !!(prdId && result.finalContent && result.structuredContent);
+      res.json({ ...result, autoSaveRequested: saveRequested });
+
+      // Background autosave: persist structuredContent alongside content if prdId provided
+      if (saveRequested) {
+        (async () => {
+          try {
+            const existingPrd = await storage.getPrd(prdId);
+            if (!existingPrd) return;
+            await storage.updatePrd(prdId, {
+              content: result.finalContent,
+              structuredContent: result.structuredContent,
+              structuredAt: new Date(),
+            } as any);
+            console.log(`[dual-ai] autosave with structure: prdId=${prdId}`);
+          } catch (saveError) {
+            console.error('[dual-ai] autosave failed:', saveError);
+          }
+        })();
+      }
     } catch (error: any) {
       console.error("Error in Dual-AI generation:", error);
       
@@ -919,7 +958,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const contentToPersist = slimResult.finalContent;
       const saveRequested = !!(prdId && contentToPersist && contentToPersist.trim().length > 0);
       slimResult.autoSaveRequested = saveRequested;
-      slimResult.autoSaved = false;
       console.log(`[iterative] autosave decision: prdId=${prdId || 'none'}, requested=${saveRequested}`);
 
       // Respond first to avoid blocking UI on DB writes for large runs.
@@ -940,8 +978,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             await storage.updatePrd(prdId, {
               content: contentToPersist,
               iterationLog: result.iterationLog || null,
-            });
-            console.log(`[iterative] autosave complete: prdId=${prdId}, contentLength=${contentToPersist.length}`);
+              structuredContent: result.structuredContent || null,
+              structuredAt: result.structuredContent ? new Date() : undefined,
+            } as any);
+            console.log(`[iterative] autosave complete: prdId=${prdId}, contentLength=${contentToPersist.length}, hasStructure=${!!result.structuredContent}`);
           } catch (saveError) {
             console.error("[iterative] autosave failed:", saveError);
           }
@@ -1266,18 +1306,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status
       );
       
-      // Restore complete state from version (with synced header)
+      // Restore complete state from version (with synced header + structured content if available)
       const updatedPrd = await storage.updatePrd(prdId, {
         title: version.title,
         description: version.description,
         content: syncedContent,
+        structuredContent: (version as any).structuredContent || null,
+        structuredAt: (version as any).structuredContent ? new Date() : null,
         status: status,
-      });
+      } as any);
       
       res.json(updatedPrd);
     } catch (error) {
       console.error('Error restoring version:', error);
       res.status(500).json({ message: "Failed to restore version" });
+    }
+  });
+
+  // Structured content endpoints
+  app.get('/api/prds/:id/structure', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { prd, structure } = await storage.getPrdWithStructure(id);
+
+      if (!structure) {
+        return res.status(404).json({ message: "No structured content available" });
+      }
+
+      const source = (prd as any).structuredContent ? 'stored' : 'parsed';
+      res.json({
+        structure,
+        source,
+        structuredAt: (prd as any).structuredAt,
+        completeness: computeCompleteness(structure),
+      });
+    } catch (error: any) {
+      console.error("Error fetching PRD structure:", error);
+      res.status(500).json({ message: error.message || "Failed to fetch structure" });
+    }
+  });
+
+  app.post('/api/prds/:id/reparse', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const prd = await storage.getPrd(id);
+      if (!prd) {
+        return res.status(404).json({ message: "PRD not found" });
+      }
+
+      const structure = parsePRDToStructure(prd.content);
+      await storage.updatePrdStructure(id, structure);
+
+      res.json({
+        featureCount: structure.features.length,
+        completeness: computeCompleteness(structure),
+      });
+    } catch (error: any) {
+      console.error("Error reparsing PRD:", error);
+      res.status(500).json({ message: error.message || "Failed to reparse PRD" });
+    }
+  });
+
+  app.get('/api/prds/:id/completeness', isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const { structure } = await storage.getPrdWithStructure(id);
+
+      if (!structure) {
+        return res.status(404).json({ message: "No structured content available for completeness check" });
+      }
+
+      res.json(computeCompleteness(structure));
+    } catch (error: any) {
+      console.error("Error computing completeness:", error);
+      res.status(500).json({ message: error.message || "Failed to compute completeness" });
     }
   });
 

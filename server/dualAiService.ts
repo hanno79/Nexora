@@ -26,6 +26,7 @@ import { countFeatureCompleteness, enforceFeatureIntegrity, type IntegrityRestor
 import { detectTargetSection, regenerateSection } from './prdSectionRegenerator';
 import { regenerateSectionAsJson } from './prdSectionJsonRegenerator';
 import type { PRDStructure, FeatureSpec } from './prdStructure';
+import { mergeExpansionIntoStructure } from './prdStructureMerger';
 import { db } from './db';
 import { users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
@@ -120,6 +121,7 @@ Create an improved version that incorporates the new requirements while keeping 
     }
 
     // Feature Identification Layer (runs after vision generation, before review)
+    let enrichedStructure: PRDStructure | undefined;
     if (mode !== 'review-only') {
       try {
         console.log('🧩 Feature Identification Layer: Extracting atomic features...');
@@ -133,6 +135,17 @@ Create an improved version that incorporates the new requirements while keeping 
           console.log('🏗️ Feature Expansion Engine: Starting modular expansion...');
           const expansionResult = await expandAllFeatures(userInput, vision, featureResult.featureList, client);
           console.log(`🏗️ Feature Expansion complete: ${expansionResult.expandedFeatures.length} features, ${expansionResult.totalTokens} tokens`);
+
+          // Merge expansion into structured representation for persistence
+          if (expansionResult.expandedFeatures.length > 0) {
+            try {
+              const baseStructure = parsePRDToStructure(generatorResponse.content);
+              enrichedStructure = mergeExpansionIntoStructure(baseStructure, expansionResult.expandedFeatures);
+              console.log(`📦 Structure enriched: ${enrichedStructure.features.length} features with structured fields`);
+            } catch (mergeError: any) {
+              console.warn('⚠️ Structure merge failed (non-blocking):', mergeError.message);
+            }
+          }
         } catch (expansionError: any) {
           console.warn('⚠️ Feature Expansion Engine failed (non-blocking):', expansionError.message);
         }
@@ -206,10 +219,13 @@ Create an improved version that incorporates the new requirements while keeping 
     const rawFinalContent = improvedVersion?.content || generatorResponse.content;
     const cleanedFinalContent = this.extractCleanPRD(rawFinalContent);
 
-    // Structured PRD representation (read-only, logging only)
+    // Structured PRD representation - use enriched structure if available, else parse
+    let finalStructuredContent: PRDStructure | undefined = enrichedStructure;
     try {
-      const structured = parsePRDToStructure(cleanedFinalContent);
-      logStructureValidation(structured);
+      if (!finalStructuredContent) {
+        finalStructuredContent = parsePRDToStructure(cleanedFinalContent);
+      }
+      logStructureValidation(finalStructuredContent);
     } catch (parseError: any) {
       console.warn('⚠️ PRD structure parsing failed (non-blocking):', parseError.message);
     }
@@ -220,7 +236,8 @@ Create an improved version that incorporates the new requirements while keeping 
       reviewerResponse,
       improvedVersion,
       totalTokens,
-      modelsUsed
+      modelsUsed,
+      structuredContent: finalStructuredContent
     };
   }
 
@@ -308,6 +325,7 @@ Create an improved version that incorporates the new requirements while keeping 
     let featuresFrozen = false;
     let freezeActivated = false;
     let blockedRegenerationAttempts = 0;
+    let iterativeEnrichedStructure: PRDStructure | undefined;
     console.log("❄️ Feature Freeze Engine initialisiert (wartet auf erste Kompilierung)");
 
     // Improvement mode: use existing parsed features as authoritative baseline.
@@ -597,6 +615,16 @@ Your task:
                   console.log('   Baseline catalogue size: ' + freezeBaselineStructure.features.length);
                 }
                 console.log('   Full regeneration will be blocked from next iteration');
+              }
+            }
+
+            // Merge expansion into structured representation for persistence
+            if (expansionResult.expandedFeatures.length > 0 && firstIterationStructure) {
+              try {
+                iterativeEnrichedStructure = mergeExpansionIntoStructure(firstIterationStructure, expansionResult.expandedFeatures);
+                console.log(`📦 Iterative structure enriched: ${iterativeEnrichedStructure.features.length} features with structured fields`);
+              } catch (mergeError: any) {
+                console.warn('⚠️ Iterative structure merge failed (non-blocking):', mergeError.message);
               }
             }
           } catch (expansionError: any) {
@@ -940,8 +968,26 @@ Your task:
     }
 
     // Final hardening: guarantee all required non-feature sections are present in final output.
+    let finalHardenedStructure: PRDStructure | undefined;
     try {
       let finalStructure = parsePRDToStructure(currentPRD);
+
+      // Merge enriched expansion data into final structure if available
+      if (iterativeEnrichedStructure) {
+        finalStructure = mergeExpansionIntoStructure(finalStructure,
+          iterativeEnrichedStructure.features.map(f => ({
+            featureId: f.id,
+            featureName: f.name,
+            content: f.rawContent,
+            model: 'merged',
+            usage: {},
+            retried: false,
+            valid: true,
+            compiled: true,
+          }))
+        );
+      }
+
       if (featuresFrozen && freezeBaselineStructure) {
         finalStructure = this.mergeWithFreezeBaseline(finalStructure, freezeBaselineStructure);
       }
@@ -957,6 +1003,7 @@ Your task:
       diagnostics.nfrGlobalCategoryAdds = (diagnostics.nfrGlobalCategoryAdds || 0) + nfrHardening.globalCategoryAdds;
       diagnostics.nfrFeatureCriteriaAdds = (diagnostics.nfrFeatureCriteriaAdds || 0) + nfrHardening.featureCriteriaAdds;
       hardenedStructure = this.normalizeSectionAliases(hardenedStructure);
+      finalHardenedStructure = hardenedStructure;
       currentPRD = assembleStructureToMarkdown(hardenedStructure);
       if (iterations.length > 0) {
         iterations[iterations.length - 1].mergedPRD = currentPRD;
@@ -982,9 +1029,9 @@ Your task:
     
     console.log(`\n✅ Iterative workflow complete! Total tokens: ${totalTokens}`);
 
-    // Structured PRD representation (read-only, logging only)
+    // Structured PRD representation - use hardened structure if available, else parse
     try {
-      const structured = parsePRDToStructure(currentPRD);
+      const structured = finalHardenedStructure || parsePRDToStructure(currentPRD);
       logStructureValidation(structured);
       diagnostics.totalFeatureCount = structured.features.length;
       diagnostics.structuredFeatureCount = structured.features.filter(f =>
@@ -1045,7 +1092,8 @@ Your task:
         finalReview,
         totalTokens,
         modelsUsed: Array.from(modelsUsed),
-        diagnostics
+        diagnostics,
+        structuredContent: finalHardenedStructure,
       };
     }
 
@@ -1111,7 +1159,8 @@ Your task:
       finalReview,
       totalTokens,
       modelsUsed: Array.from(modelsUsed),
-      diagnostics
+      diagnostics,
+      structuredContent: finalHardenedStructure,
     };
   }
 
@@ -2302,7 +2351,7 @@ Your task:
     if (/\n\s*[-*]\s*$/.test(trimmed)) return true;
     if (/\n\s*\d+\.\s*$/.test(trimmed)) return true;
     if (/[*_`#:\-,(]$/.test(trimmed)) return true;
-    return true;
+    return false;
   }
 
   private validateFinalOutputConsistency(params: {

@@ -24,6 +24,9 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, sql } from "drizzle-orm";
+import type { PRDStructure } from "./prdStructure";
+import { assembleStructureToMarkdown } from "./prdAssembler";
+import { parsePRDToStructure } from "./prdParser";
 
 export interface IStorage {
   // User operations (required for Replit Auth)
@@ -63,6 +66,10 @@ export interface IStorage {
   getApproval(prdId: string): Promise<Approval | undefined>;
   createApproval(approval: InsertApproval): Promise<Approval>;
   updateApproval(id: string, data: { status: string; completedBy: string; completedAt: Date }): Promise<Approval>;
+
+  // Structured content operations
+  updatePrdStructure(id: string, structure: PRDStructure): Promise<Prd>;
+  getPrdWithStructure(id: string): Promise<{ prd: Prd; structure: PRDStructure | null }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -140,13 +147,14 @@ export class DatabaseStorage implements IStorage {
       
       const versionNumber = `v${(Number(versionCount[0]?.count) || 0) + 1}`;
       
-      // Capture complete state: title, description, content, status
+      // Capture complete state: title, description, content, structured content, status
       await this.createPrdVersion({
         prdId: id,
         versionNumber,
         title: currentPrd.title,
         description: currentPrd.description,
         content: currentPrd.content,
+        structuredContent: (currentPrd as any).structuredContent || null,
         status: currentPrd.status,
         createdBy: currentPrd.userId,
       });
@@ -273,6 +281,33 @@ export class DatabaseStorage implements IStorage {
       .where(eq(approvals.id, id))
       .returning();
     return approval;
+  }
+  // Structured content operations
+  async updatePrdStructure(id: string, structure: PRDStructure): Promise<Prd> {
+    const markdown = assembleStructureToMarkdown(structure);
+    return this.updatePrd(id, {
+      content: markdown,
+      structuredContent: structure as any,
+      structuredAt: new Date(),
+    } as any);
+  }
+
+  async getPrdWithStructure(id: string): Promise<{ prd: Prd; structure: PRDStructure | null }> {
+    const prd = await this.getPrd(id);
+    if (!prd) throw new Error('PRD not found');
+
+    // If persisted structured content exists, use it
+    if ((prd as any).structuredContent) {
+      return { prd, structure: (prd as any).structuredContent as PRDStructure };
+    }
+
+    // Fallback: parse from markdown (backward compatibility)
+    try {
+      const structure = parsePRDToStructure(prd.content);
+      return { prd, structure };
+    } catch {
+      return { prd, structure: null };
+    }
   }
 }
 

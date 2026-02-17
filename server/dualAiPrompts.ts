@@ -526,6 +526,7 @@ interface DualAiResponse {
   improvedVersion?: GeneratorResponse;
   totalTokens: number;
   modelsUsed: string[];
+  structuredContent?: import('./prdStructure').PRDStructure;
 }
 
 // Iterative workflow types
@@ -578,6 +579,7 @@ interface IterativeResponse {
   totalTokens: number;
   modelsUsed: string[];
   diagnostics?: CompilerDiagnostics;
+  structuredContent?: import('./prdStructure').PRDStructure;
 }
 
 export type {

@@ -108,6 +108,8 @@ export const prds = pgTable("prds", {
   dartDocUrl: varchar("dart_doc_url"), // Dart AI doc URL if exported
   dartFolder: varchar("dart_folder"), // Dart AI folder/dartboard where doc is stored
   iterationLog: text("iteration_log"), // Iteration protocol from iterative AI workflow
+  structuredContent: jsonb("structured_content"), // PRDStructure as JSONB (Single Source of Truth when present)
+  structuredAt: timestamp("structured_at"), // When structured content was last computed/updated
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -123,6 +125,7 @@ export const insertPrdSchema = createInsertSchema(prds, {
   id: true,
   createdAt: true,
   updatedAt: true,
+  structuredAt: true,
 });
 
 export type InsertPrd = z.infer<typeof insertPrdSchema>;
@@ -135,6 +138,7 @@ export const prdVersions = pgTable("prd_versions", {
   title: varchar("title").notNull(),
   description: text("description"),
   content: text("content").notNull(),
+  structuredContent: jsonb("structured_content"), // PRDStructure snapshot for this version
   status: varchar("status").notNull().default('draft'),
   createdBy: varchar("created_by").notNull().references(() => users.id),
   createdAt: timestamp("created_at").defaultNow(),

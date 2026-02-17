@@ -226,11 +226,15 @@ export default function Editor() {
     const patchData: any = {
       title,
       description,
-      content: newContent,
       status,
     };
-    if (newIterationLog) {
-      patchData.iterationLog = newIterationLog;
+    // When server already autosaved content + structuredContent, skip sending
+    // content in PATCH to avoid wiping the persisted structure via invalidation.
+    if (!response.autoSaveRequested) {
+      patchData.content = newContent;
+      if (newIterationLog) {
+        patchData.iterationLog = newIterationLog;
+      }
     }
     
     apiRequest("PATCH", `/api/prds/${prdId}`, patchData).then(() => {
