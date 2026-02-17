@@ -560,6 +560,7 @@ interface CompilerDiagnostics {
 
 interface IterativeResponse {
   finalContent: string;
+  mergedPRD?: string;
   iterationLog: string;
   iterations: IterationData[];
   finalReview?: {

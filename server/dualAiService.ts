@@ -976,8 +976,15 @@ Your task:
     console.log('   Avg Feature Completeness: ' + (diagnostics.avgFeatureCompleteness || 0));
     console.log('   Quality Regressions Recovered: ' + (diagnostics.featureQualityRegressions || 0));
 
+    const canonicalMergedPRD = this.buildCanonicalMergedPRD(currentPRD, iterations);
+    currentPRD = canonicalMergedPRD;
+    if (iterations.length > 0) {
+      iterations[iterations.length - 1].mergedPRD = canonicalMergedPRD;
+    }
+
     return {
-      finalContent: currentPRD,
+      finalContent: canonicalMergedPRD,
+      mergedPRD: canonicalMergedPRD,
       iterationLog,
       iterations,
       finalReview,
@@ -1869,6 +1876,66 @@ Your task:
       lines.push(`- ${ac.replace(/^-+\s*/, '')}`);
     }
     return lines.join('\n').trim();
+  }
+
+  private buildCanonicalMergedPRD(currentPRD: string, iterations: IterativeResponse['iterations']): string {
+    const latestMerged = iterations.length > 0 ? iterations[iterations.length - 1].mergedPRD : '';
+    let canonical = (latestMerged && latestMerged.trim()) ? latestMerged : currentPRD;
+
+    try {
+      const normalized = this.normalizeSectionAliases(parsePRDToStructure(canonical));
+      canonical = assembleStructureToMarkdown(normalized);
+    } catch {
+      // Keep raw content if parser fails; dedupe still applies below.
+    }
+
+    return this.deduplicateMarkdownContent(canonical);
+  }
+
+  private deduplicateMarkdownContent(markdown: string): string {
+    const lines = markdown.split('\n');
+    const seenH2 = new Set<string>();
+    const out: string[] = [];
+    let currentSection = '__root__';
+    const seenListItemPerSection = new Map<string, Set<string>>();
+
+    const getSeenListItems = (section: string): Set<string> => {
+      const existing = seenListItemPerSection.get(section);
+      if (existing) return existing;
+      const created = new Set<string>();
+      seenListItemPerSection.set(section, created);
+      return created;
+    };
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      if (/^##\s+/.test(trimmed)) {
+        const headingKey = trimmed.toLowerCase().replace(/\s+/g, ' ');
+        if (seenH2.has(headingKey)) continue;
+        seenH2.add(headingKey);
+        currentSection = headingKey;
+        out.push(line);
+        continue;
+      }
+
+      if (!trimmed) {
+        if (out.length > 0 && out[out.length - 1].trim() === '') continue;
+        out.push(line);
+        continue;
+      }
+
+      if (/^[-*]\s|\d+\.\s/.test(trimmed)) {
+        const listKey = trimmed.toLowerCase().replace(/\s+/g, ' ');
+        const seen = getSeenListItems(currentSection);
+        if (seen.has(listKey)) continue;
+        seen.add(listKey);
+      }
+
+      out.push(line);
+    }
+
+    return `${out.join('\n').trim()}\n`;
   }
 
   private enforceNfrCoverage(
