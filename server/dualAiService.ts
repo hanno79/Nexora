@@ -2125,38 +2125,38 @@ Your task:
     const lines: string[] = [];
     lines.push(`### ${feature.id}: ${feature.name}`);
     lines.push('');
-    lines.push(`1. Purpose`);
+    lines.push(`**1. Purpose**`);
     lines.push(feature.purpose || '');
     lines.push('');
-    lines.push(`2. Actors`);
+    lines.push(`**2. Actors**`);
     lines.push(feature.actors || '');
     lines.push('');
-    lines.push(`3. Trigger`);
+    lines.push(`**3. Trigger**`);
     lines.push(feature.trigger || '');
     lines.push('');
-    lines.push(`4. Preconditions`);
+    lines.push(`**4. Preconditions**`);
     lines.push(feature.preconditions || '');
     lines.push('');
-    lines.push(`5. Main Flow`);
+    lines.push(`**5. Main Flow**`);
     for (const step of feature.mainFlow || []) {
       lines.push(step);
     }
     lines.push('');
-    lines.push(`6. Alternate Flows`);
+    lines.push(`**6. Alternate Flows**`);
     for (const flow of feature.alternateFlows || []) {
       lines.push(`- ${flow.replace(/^-+\s*/, '')}`);
     }
     lines.push('');
-    lines.push(`7. Postconditions`);
+    lines.push(`**7. Postconditions**`);
     lines.push(feature.postconditions || '');
     lines.push('');
-    lines.push(`8. Data Impact`);
+    lines.push(`**8. Data Impact**`);
     lines.push(feature.dataImpact || '');
     lines.push('');
-    lines.push(`9. UI Impact`);
+    lines.push(`**9. UI Impact**`);
     lines.push(feature.uiImpact || '');
     lines.push('');
-    lines.push(`10. Acceptance Criteria`);
+    lines.push(`**10. Acceptance Criteria**`);
     for (const ac of feature.acceptanceCriteria || []) {
       lines.push(`- ${ac.replace(/^-+\s*/, '')}`);
     }
@@ -2294,10 +2294,14 @@ Your task:
     for (const line of lines) {
       const trimmed = line.trim();
 
-      if (/^##\s+/.test(trimmed)) {
+      if (/^#{2,3}\s+/.test(trimmed)) {
         const headingKey = trimmed.toLowerCase().replace(/\s+/g, ' ');
-        if (seenH2.has(headingKey)) continue;
-        seenH2.add(headingKey);
+        // Only deduplicate H2 headings; H3 feature headings (### F-01, ### F-02, ...)
+        // are always unique and serve as section boundaries for list-item dedup.
+        if (/^##\s+[^#]/.test(trimmed)) {
+          if (seenH2.has(headingKey)) continue;
+          seenH2.add(headingKey);
+        }
         currentSection = headingKey;
         out.push(line);
         continue;
@@ -2309,7 +2313,7 @@ Your task:
         continue;
       }
 
-      if (/^[-*]\s|\d+\.\s/.test(trimmed)) {
+      if (/^(?:[-*]\s|\d+\.\s)/.test(trimmed)) {
         const listKey = trimmed.toLowerCase().replace(/\s+/g, ' ');
         const seen = getSeenListItems(currentSection);
         if (seen.has(listKey)) continue;
