@@ -288,6 +288,25 @@ REQUIRED STRUCTURE of your output:
 
 ---
 
+## Feature Delta (JSON)
+\`\`\`json
+{
+  "addedFeatures": [
+    { "featureId": "F-XX", "name": "New feature name", "shortDescription": "one-line scope" }
+  ],
+  "updatedFeatures": [
+    { "featureId": "F-01", "notes": "what was improved in this iteration" }
+  ]
+}
+\`\`\`
+
+Rules for Feature Delta:
+- The JSON block is MANDATORY in every iteration
+- Use empty arrays if there are no additions or updates
+- "addedFeatures" MUST contain only truly NEW features introduced by this iteration
+- "updatedFeatures" MUST reference existing F-XX IDs that were clarified/hardened
+- Do NOT list duplicates of already existing features in "addedFeatures"
+
 ## Questions for Improvement
 1. [Concrete question about missing detail]
 2. [Concrete question about unclear requirement]
@@ -315,6 +334,7 @@ OUTPUT RULES:
 - Do NOT label the PRD section as "## Revised PRD" or "## Überarbeitetes PRD" — start directly with the actual PRD content
 - Do NOT include meta-commentary about what you changed
 - Do NOT include "## Open Points & Gaps" sections — instead, address all gaps through your questions
+- Do NOT include any markdown after the JSON and questions sections except valid PRD content/sections
 - The PRD content must start directly with the first heading (e.g., "# [Product Name]" or "## Part A")
 - Separate the PRD from questions using a "---" divider
 
@@ -530,6 +550,7 @@ interface CompilerDiagnostics {
   // Feature Freeze Engine
   featureFreezeActive?: boolean;
   blockedRegenerationAttempts?: number;
+  freezeSeedSource?: 'none' | 'existingContent' | 'compiledExpansion';
 }
 
 interface IterativeResponse {

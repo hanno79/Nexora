@@ -68,13 +68,13 @@ export async function getUserAiUsageStats(userId: string) {
       .from(aiUsage)
       .where(eq(aiUsage.userId, userId));
     
-    const totalCost = usageRecords.reduce((sum, record) => {
+    const totalCost = usageRecords.reduce((sum: number, record: typeof usageRecords[number]) => {
       return sum + parseFloat(record.totalCost);
     }, 0);
     
     const totalCalls = usageRecords.length;
     
-    const byTier = usageRecords.reduce((acc: any, record) => {
+    const byTier = usageRecords.reduce((acc: Record<string, number>, record: typeof usageRecords[number]) => {
       acc[record.tier] = (acc[record.tier] || 0) + 1;
       return acc;
     }, {});

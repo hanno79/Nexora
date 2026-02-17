@@ -41,7 +41,14 @@ for (const [key, name] of Object.entries(SECTION_DISPLAY_NAMES)) {
   DISPLAY_NAME_TO_KEY[name.toLowerCase()] = key as keyof PRDStructure;
 }
 
-export function detectTargetSection(reviewText: string): keyof PRDStructure | null {
+interface DetectTargetSectionOptions {
+  allowFeatureContext?: boolean;
+}
+
+export function detectTargetSection(
+  reviewText: string,
+  options?: DetectTargetSectionOptions
+): keyof PRDStructure | null {
   console.log(`\n🔍 [detectTargetSection] Analyzing reviewer feedback (${reviewText.length} chars)...`);
   console.log(`🔍 [detectTargetSection] Feedback preview: "${reviewText.substring(0, 200)}..."`);
 
@@ -79,9 +86,13 @@ export function detectTargetSection(reviewText: string): keyof PRDStructure | nu
 
   const featurePatterns = [/\bf-\d{2}\b/i, /\bfeature\s+(spec|catalogue|catalog)\b/i];
   const hasFeatureContext = featurePatterns.some(p => p.test(reviewText));
-  if (hasFeatureContext) {
+  const allowFeatureContext = options?.allowFeatureContext === true;
+  if (hasFeatureContext && !allowFeatureContext) {
     console.log(`🔍 [detectTargetSection] Feature context detected (F-XX pattern). Skipping section targeting.`);
     return null;
+  }
+  if (hasFeatureContext && allowFeatureContext) {
+    console.log(`🔍 [detectTargetSection] Feature context detected but allowed (freeze patch mode).`);
   }
 
   const displayName = (SECTION_DISPLAY_NAMES as Record<string, string>)[bestKey as string] || String(bestKey);

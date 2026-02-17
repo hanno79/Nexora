@@ -121,6 +121,7 @@ export interface ExpandedFeature {
   usage: any;
   retried: boolean;
   valid: boolean;
+  compiled: boolean;
 }
 
 export async function expandFeature(
@@ -158,6 +159,7 @@ export async function expandFeature(
         usage: result.usage,
         retried: attempt > 1,
         valid: true,
+        compiled: true,
       };
     }
 
@@ -176,6 +178,7 @@ export async function expandFeature(
         usage: result.usage,
         retried: true,
         valid: false,
+        compiled: false,
       };
     }
   }

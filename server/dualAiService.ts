@@ -18,17 +18,36 @@ import {
   type CompilerDiagnostics
 } from './dualAiPrompts';
 import { generateFeatureList } from './services/llm/generateFeatureList';
-import { expandAllFeatures } from './services/llm/expandFeature';
+import { expandAllFeatures, expandFeature } from './services/llm/expandFeature';
 import { parsePRDToStructure, logStructureValidation } from './prdParser';
 import { compareStructures, logStructuralDrift, restoreRemovedFeatures } from './prdStructureDiff';
 import { assembleStructureToMarkdown } from './prdAssembler';
 import { enforceFeatureIntegrity, type IntegrityRestoration } from './prdFeatureValidator';
 import { detectTargetSection, regenerateSection } from './prdSectionRegenerator';
 import { regenerateSectionAsJson } from './prdSectionJsonRegenerator';
-import type { PRDStructure } from './prdStructure';
+import type { PRDStructure, FeatureSpec } from './prdStructure';
 import { db } from './db';
 import { users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
+
+interface StructuredFeatureDelta {
+  addedFeatures: Array<{
+    featureId?: string;
+    name: string;
+    shortDescription?: string;
+  }>;
+  updatedFeatures: Array<{
+    featureId: string;
+    notes?: string;
+  }>;
+}
+
+interface StructuredFeatureDeltaParseResult {
+  found: boolean;
+  valid: boolean;
+  delta: StructuredFeatureDelta;
+  error?: string;
+}
 
 export class DualAiService {
   async generatePRD(request: DualAiRequest, userId?: string): Promise<DualAiResponse> {
@@ -255,8 +274,10 @@ Create an improved version that incorporates the new requirements while keeping 
     
     const iterations: IterationData[] = [];
     let currentPRD = existingContent || '';
+    const workflowInputText = additionalRequirements || existingContent || '';
     const modelsUsed = new Set<string>();
     let previousStructure: PRDStructure | null = null;
+    let freezeBaselineStructure: PRDStructure | null = null;
     const allDriftWarnings: Map<number, string[]> = new Map();
     const allPreservationActions: Map<number, string[]> = new Map();
     const allIntegrityRestorations: Map<number, IntegrityRestoration[]> = new Map();
@@ -273,6 +294,7 @@ Create an improved version that incorporates the new requirements while keeping 
       driftEvents: 0,
       featureFreezeActive: false,
       blockedRegenerationAttempts: 0,
+      freezeSeedSource: 'none',
     };
 
     // Feature Freeze Engine - State Variables
@@ -281,9 +303,29 @@ Create an improved version that incorporates the new requirements while keeping 
     let blockedRegenerationAttempts = 0;
     console.log("❄️ Feature Freeze Engine initialisiert (wartet auf erste Kompilierung)");
 
+    // Improvement mode: use existing parsed features as authoritative baseline.
+    // This prevents first-iteration collapse from redefining the freeze base.
+    if (isImprovement && trimmedContent.length > 0) {
+      try {
+        const baselineStructure = parsePRDToStructure(existingContent);
+        if (baselineStructure.features.length > 0) {
+          previousStructure = baselineStructure;
+          freezeBaselineStructure = baselineStructure;
+          featuresFrozen = true;
+          freezeActivated = true;
+          diagnostics.freezeSeedSource = 'existingContent';
+          console.log("🧊 FEATURE CATALOGUE FROZEN – Baseline loaded from existing content");
+          console.log("   " + baselineStructure.features.length + " baseline feature(s) locked");
+        }
+      } catch (baselineParseError: any) {
+        console.warn("⚠️ Failed to parse improvement baseline for freeze seeding:", baselineParseError.message);
+      }
+    }
+
     // Iterative Q&A Loop
     for (let i = 1; i <= iterationCount; i++) {
       console.log(`\n📝 Iteration ${i}/${iterationCount}`);
+      const previousIteration = iterations[iterations.length - 1];
       
       // Step 1: AI #1 (Generator) - Creates PRD draft + asks questions
       // Try section-level regeneration first (iterations >= 2 only)
@@ -291,9 +333,16 @@ Create an improved version that incorporates the new requirements while keeping 
 
       if (i >= 2 && previousStructure) {
         try {
-          const prevIteration = iterations[iterations.length - 1];
-          const feedbackText = prevIteration.answererOutput;
-          const targetSection = detectTargetSection(feedbackText);
+          const feedbackText = previousIteration.answererOutput;
+          let targetSection = detectTargetSection(feedbackText, {
+            allowFeatureContext: featuresFrozen
+          });
+          if (!targetSection && featuresFrozen) {
+            targetSection = this.pickFallbackPatchSection(previousStructure);
+            if (targetSection) {
+              console.log(`🎯 Iteration ${i}: Freeze fallback patch section selected: "${String(targetSection)}"`);
+            }
+          }
 
           if (targetSection && typeof previousStructure[targetSection] === 'string') {
             console.log(`🎯 Iteration ${i}: JSON Mode Triggered for Section: "${String(targetSection)}"`);
@@ -379,6 +428,24 @@ Create an improved version that incorporates the new requirements while keeping 
       }
 
       if (!genResult) {
+        if (featuresFrozen && i >= 2) {
+          console.warn('🚫 FULL REGENERATION BLOCKED (freeze patch mode)');
+          const prevIteration = iterations[iterations.length - 1];
+          if (prevIteration) {
+            blockedRegenerationAttempts++;
+            genResult = {
+              content: prevIteration.mergedPRD,
+              usage: { total_tokens: 0, prompt_tokens: 0, completion_tokens: 0 },
+              model: 'freeze-patch-fallback',
+              tier: 'fallback',
+              usedFallback: true
+            };
+            console.log(`✅ Iteration ${i}: Reused previous PRD because no safe patch target was available`);
+          }
+        }
+      }
+
+      if (!genResult) {
         diagnostics.fullRegenerations++;
         console.log(`🤖 AI #1: Generating PRD draft and identifying gaps...`);
         
@@ -408,8 +475,6 @@ Your task:
             generatorPrompt = `INITIAL INPUT:\n${additionalRequirements || existingContent}\n\nCreate an initial PRD draft and ask questions about open points.`;
           }
         } else {
-          const prevIteration = iterations[iterations.length - 1];
-
           // FEATURE FREEZE: Add freeze rules to prompt when frozen and iteration >= 2
           let freezeRule = '';
           if (featuresFrozen && i >= 2) {
@@ -440,7 +505,7 @@ If you modify or remove existing features, your output will be discarded.
 ${currentPRD}
 
 ANSWERS FROM PREVIOUS ITERATION (MUST be incorporated into the PRD):
-${prevIteration.answererOutput}
+${previousIteration.answererOutput}
 
 Your task:
 1. PRESERVE all existing sections and content
@@ -461,6 +526,20 @@ Your task:
         modelsUsed.add(genResult.model);
         console.log(`✅ Generated ${genResult.usage.completion_tokens} tokens with ${genResult.model}`);
       }
+
+      if (featuresFrozen && i >= 2) {
+        const deltaSection = await this.generateStructuredDeltaSection({
+          currentPrd: currentPRD,
+          generatorOutput: genResult.content,
+          reviewerFeedback: previousIteration?.answererOutput || '',
+          client,
+          langInstruction
+        });
+        if (deltaSection && !/##\s*Feature Delta(?:\s*\(JSON\))?/i.test(genResult.content)) {
+          genResult.content = `${genResult.content.trim()}\n\n---\n\n${deltaSection}`;
+          console.log(`🧩 Iteration ${i}: Structured Feature Delta appended via delta-only pass`);
+        }
+      }
       
       // Feature Identification Layer + Expansion Engine (first iteration only)
       let expansionResult: any = null;
@@ -468,25 +547,34 @@ Your task:
         try {
           console.log('🧩 Feature Identification Layer (iterative): Extracting atomic features...');
           const vision = this.extractVisionFromContent(genResult.content);
-          const inputText = additionalRequirements || existingContent || '';
-          const featureResult = await generateFeatureList(inputText, vision, client);
+          const featureResult = await generateFeatureList(workflowInputText, vision, client);
           console.log(`🧩 Feature List (model: ${featureResult.model}, retried: ${featureResult.retried}):`);
           console.log(featureResult.featureList);
 
           // Feature Expansion Engine (modular, parallel to monolithic PRD — testing phase)
           try {
             console.log('🏗️ Feature Expansion Engine (iterative): Starting modular expansion...');
-            expansionResult = await expandAllFeatures(inputText, vision, featureResult.featureList, client);
+            expansionResult = await expandAllFeatures(workflowInputText, vision, featureResult.featureList, client);
             console.log(`🏗️ Feature Expansion complete: ${expansionResult.expandedFeatures.length} features, ${expansionResult.totalTokens} tokens`);
 
             // FEATURE FREEZE: Activate freeze after first successful compilation
             if (expansionResult && expansionResult.expandedFeatures.length > 0) {
-              const compiledCount = expansionResult.expandedFeatures.filter((f: any) => f.state === 'compiled').length;
+              const compiledCount = expansionResult.expandedFeatures.filter(
+                (f: any) => f.compiled === true || f.valid === true
+              ).length;
+              const expansionBaseline = this.buildFreezeBaselineFromExpansion(expansionResult, previousStructure);
+              if (expansionBaseline) {
+                freezeBaselineStructure = expansionBaseline;
+              }
               if (compiledCount > 0 && !freezeActivated) {
                 featuresFrozen = true;
                 freezeActivated = true;
+                diagnostics.freezeSeedSource = 'compiledExpansion';
                 console.log('🧊 FEATURE CATALOGUE FROZEN – First compilation detected');
                 console.log('   ' + compiledCount + ' feature(s) in compiled state');
+                if (freezeBaselineStructure?.features.length) {
+                  console.log('   Baseline catalogue size: ' + freezeBaselineStructure.features.length);
+                }
                 console.log('   Full regeneration will be blocked from next iteration');
               }
             }
@@ -498,14 +586,49 @@ Your task:
         }
       }
 
-      // Extract questions from generator output
-      const questions = this.extractQuestionsFromIterativeOutput(genResult.content);
+      let structuredDeltaResult = this.extractStructuredFeatureDeltaWithStatus(genResult.content);
+      if (featuresFrozen && i >= 2 && !structuredDeltaResult.valid) {
+        blockedRegenerationAttempts++;
+        console.warn('🚫 STRICT DELTA JSON REQUIRED (iteration >= 2, freeze active)');
+        console.warn(`   Invalid or missing Feature Delta JSON: ${structuredDeltaResult.error || 'not found'}`);
+        const prevIteration = iterations[iterations.length - 1];
+        if (prevIteration) {
+          genResult = {
+            content: `${prevIteration.mergedPRD}\n\n${this.buildEmptyFeatureDeltaSection()}`,
+            usage: { total_tokens: 0, prompt_tokens: 0, completion_tokens: 0 },
+            model: 'strict-delta-fallback',
+            tier: 'fallback',
+            usedFallback: true
+          };
+          structuredDeltaResult = this.extractStructuredFeatureDeltaWithStatus(genResult.content);
+        }
+      }
+
+      const provisionalCleanPRD = this.extractCleanPRD(genResult.content);
+
+      // Extract questions from generator output (robust) and synthesize fallback questions if needed
+      let questions = this.extractQuestionsFromIterativeOutput(genResult.content);
+      if (questions.length < 3 && i < iterationCount) {
+        const fallbackQuestions = await this.generateClarifyingQuestions(
+          provisionalCleanPRD,
+          client,
+          langInstruction,
+          3
+        );
+        questions = this.mergeQuestions(questions, fallbackQuestions);
+        if (fallbackQuestions.length > 0) {
+          console.log(`🧭 Synthesized ${fallbackQuestions.length} fallback clarifying question(s)`);
+        }
+      }
       console.log(`📋 Extracted ${questions.length} questions`);
       
       // Step 2: AI #2 (Answerer) - Answers with best practices
       console.log(`🧠 AI #2: Answering questions with best practices...`);
       
-      const answererPrompt = `The following PRD is being developed:\n\n${genResult.content}\n\nAnswer ALL questions with best practices. Also identify and resolve any Open Points, Gaps, or unresolved areas in the PRD. Your answers will be incorporated directly into the next PRD revision.`;
+      const explicitQuestionBlock = questions.length > 0
+        ? questions.map((q, idx) => `${idx + 1}. ${q}`).join('\n')
+        : '1. Identify the top unresolved product scope risk.\n2. Identify the top unresolved UX risk.\n3. Identify the top unresolved data/operational risk.';
+      const answererPrompt = `The following PRD is being developed:\n\n${genResult.content}\n\nQuestions to answer explicitly:\n${explicitQuestionBlock}\n\nAnswer ALL questions with best practices. Also identify and resolve any Open Points, Gaps, or unresolved areas in the PRD. Your answers will be incorporated directly into the next PRD revision.`;
       
       const answerResult = await client.callWithFallback(
         'reviewer',  // Using reviewer model for answerer role
@@ -518,47 +641,58 @@ Your task:
       console.log(`✅ Answered with ${answerResult.usage.completion_tokens} tokens using ${answerResult.model}`);
       
       // Step 3: Extract clean PRD (without Q&A sections) and build iteration log
-      const cleanPRD = this.extractCleanPRD(genResult.content);
+      const cleanPRD = provisionalCleanPRD;
+      const structuredDelta = structuredDeltaResult.delta;
 
       // FEATURE FREEZE: Validate no feature loss when frozen
-      if (featuresFrozen && previousStructure) {
-        const previousIds = previousStructure.features.map(f => f.id);
-        const newStructureForCheck = parsePRDToStructure(cleanPRD);
+      if (featuresFrozen && freezeBaselineStructure) {
+        const previousIds = freezeBaselineStructure.features.map(f => f.id);
+        let newStructureForCheck = parsePRDToStructure(cleanPRD);
+        const freezeWriteProjectionActive = !!freezeBaselineStructure;
+        if (freezeWriteProjectionActive) {
+          newStructureForCheck = {
+            ...newStructureForCheck,
+            features: freezeBaselineStructure.features.map(f => ({ ...f })),
+          };
+        }
         const newIds = newStructureForCheck.features.map(f => f.id);
 
         const lostFeature = previousIds.some(id => !newIds.includes(id));
 
         if (lostFeature) {
           console.warn('❌ FEATURE LOSS DETECTED WHILE FROZEN');
-          console.warn('   Previous features: ' + previousIds.join(', '));
+          console.warn('   Baseline features: ' + previousIds.join(', '));
           console.warn('   New features: ' + newIds.join(', '));
-          console.warn('   Reverting to previous PRD');
+          console.warn('   Regeneration attempt marked; baseline restoration will be enforced');
           blockedRegenerationAttempts++;
-          const prevIteration = iterations[iterations.length - 1];
-          if (prevIteration) {
-            currentPRD = prevIteration.mergedPRD;
-            continue;
-          }
         }
 
-        if (newStructureForCheck.features.length < previousStructure.features.length) {
+        if (newStructureForCheck.features.length < freezeBaselineStructure.features.length) {
           console.warn('❌ FEATURE COUNT DECREASED WHILE FROZEN');
-          console.warn('   Previous: ' + previousStructure.features.length + ' features');
+          console.warn('   Baseline: ' + freezeBaselineStructure.features.length + ' features');
           console.warn('   New: ' + newStructureForCheck.features.length + ' features');
-          console.warn('   Reverting to previous PRD');
+          console.warn('   Regeneration attempt marked; baseline restoration will be enforced');
           blockedRegenerationAttempts++;
-          const prevIteration = iterations[iterations.length - 1];
-          if (prevIteration) {
-            currentPRD = prevIteration.mergedPRD;
-            continue;
-          }
         }
       }
 
       // Structural drift detection + feature preservation (non-blocking)
       let preservedPRD = cleanPRD;
+      let candidateStructure: PRDStructure | null = null;
       try {
         let currentStructure = parsePRDToStructure(cleanPRD);
+        let forceReassembleFromStructure = false;
+        const featureWriteLockActive = featuresFrozen && !!freezeBaselineStructure;
+
+        if (featureWriteLockActive && freezeBaselineStructure) {
+          currentStructure = {
+            ...currentStructure,
+            features: freezeBaselineStructure.features.map(f => ({ ...f })),
+          };
+          forceReassembleFromStructure = true;
+          console.log(`🔐 Iteration ${i}: Feature write-lock active (direct F-XX rewrites ignored)`);
+        }
+
         if (previousStructure) {
           const diff = compareStructures(previousStructure, currentStructure);
           const warnings = logStructuralDrift(i, diff);
@@ -567,34 +701,135 @@ Your task:
             diagnostics.driftEvents += warnings.length;
           }
 
-          if (diff.removedFeatures.length > 0) {
+          if (!featureWriteLockActive && diff.removedFeatures.length > 0) {
             console.log(`🔧 Iteration ${i}: Restoring ${diff.removedFeatures.length} lost feature(s)...`);
             currentStructure = restoreRemovedFeatures(previousStructure, currentStructure, diff.removedFeatures);
             preservedPRD = assembleStructureToMarkdown(currentStructure);
+            forceReassembleFromStructure = true;
             allPreservationActions.set(i, [...diff.removedFeatures]);
             diagnostics.featurePreservations += diff.removedFeatures.length;
             console.log(`✅ Iteration ${i}: Feature preservation complete, PRD reassembled`);
           }
 
-          try {
+          if (!featureWriteLockActive) {
+            try {
             const integrityResult = enforceFeatureIntegrity(previousStructure, currentStructure);
             currentStructure = integrityResult.structure;
             if (integrityResult.restorations.length > 0) {
               preservedPRD = assembleStructureToMarkdown(currentStructure);
+              forceReassembleFromStructure = true;
               allIntegrityRestorations.set(i, integrityResult.restorations);
               diagnostics.featureIntegrityRestores += integrityResult.restorations.length;
               console.log(`🛡️ Iteration ${i}: Feature integrity enforced, ${integrityResult.restorations.length} feature(s) restored`);
             }
-          } catch (integrityError: any) {
-            console.warn(`⚠️ Feature integrity check failed for iteration ${i} (non-blocking):`, integrityError.message);
+            } catch (integrityError: any) {
+              console.warn(`⚠️ Feature integrity check failed for iteration ${i} (non-blocking):`, integrityError.message);
+            }
           }
         } else {
           logStructureValidation(currentStructure);
         }
-        previousStructure = currentStructure;
+
+        // Enforce frozen catalogue baseline independently of iterative drift context.
+        if (featuresFrozen && freezeBaselineStructure) {
+          const freezeDiff = compareStructures(freezeBaselineStructure, currentStructure);
+          if (!featureWriteLockActive && freezeDiff.removedFeatures.length > 0) {
+            console.log(`🔒 Freeze baseline restore: ${freezeDiff.removedFeatures.length} feature(s)`);
+            currentStructure = restoreRemovedFeatures(freezeBaselineStructure, currentStructure, freezeDiff.removedFeatures);
+            preservedPRD = assembleStructureToMarkdown(currentStructure);
+            forceReassembleFromStructure = true;
+            const existing = allPreservationActions.get(i) || [];
+            allPreservationActions.set(
+              i,
+              Array.from(new Set([...existing, ...freezeDiff.removedFeatures]))
+            );
+            diagnostics.featurePreservations += freezeDiff.removedFeatures.length;
+          }
+
+          if (!featureWriteLockActive) {
+            const freezeIntegrity = enforceFeatureIntegrity(freezeBaselineStructure, currentStructure);
+            currentStructure = freezeIntegrity.structure;
+            if (freezeIntegrity.restorations.length > 0) {
+              preservedPRD = assembleStructureToMarkdown(currentStructure);
+              forceReassembleFromStructure = true;
+              const existing = allIntegrityRestorations.get(i) || [];
+              allIntegrityRestorations.set(i, [...existing, ...freezeIntegrity.restorations]);
+              diagnostics.featureIntegrityRestores += freezeIntegrity.restorations.length;
+              console.log(`🛡️ Freeze baseline integrity enforced, ${freezeIntegrity.restorations.length} feature(s) restored`);
+            }
+          }
+
+          // Delta compiler: process only truly new features, block duplicates.
+          const deltaResult = await this.compileFeatureDelta({
+            currentStructure,
+            freezeBaseline: freezeBaselineStructure,
+            visionContext: this.extractVisionFromContent(currentPRD || cleanPRD),
+            workflowInputText,
+            structuredDelta,
+            enforceStructuredDeltaOnly: featuresFrozen && i >= 2,
+            client
+          });
+          currentStructure = deltaResult.structure;
+          freezeBaselineStructure = deltaResult.freezeBaseline;
+          if (deltaResult.addedFeatureIds.length > 0) {
+            console.log(`🆕 Iteration ${i}: New feature delta compiled (${deltaResult.addedFeatureIds.join(', ')})`);
+            preservedPRD = assembleStructureToMarkdown(currentStructure);
+            forceReassembleFromStructure = true;
+          }
+          if (deltaResult.droppedDuplicates.length > 0) {
+            console.log(`🧹 Iteration ${i}: Dropped duplicate feature candidates (${deltaResult.droppedDuplicates.join(', ')})`);
+            preservedPRD = assembleStructureToMarkdown(currentStructure);
+            forceReassembleFromStructure = true;
+          }
+        }
+
+        if (forceReassembleFromStructure) {
+          preservedPRD = assembleStructureToMarkdown(currentStructure);
+        }
+
+        candidateStructure = currentStructure;
       } catch (preserveError: any) {
         console.warn(`⚠️ Feature preservation failed for iteration ${i} (non-blocking, using cleanPRD):`, preserveError.message);
         preservedPRD = cleanPRD;
+      }
+
+      // Hard acceptance gates: reject unsafe iteration outputs and keep last stable state.
+      if (!candidateStructure) {
+        try {
+          candidateStructure = parsePRDToStructure(preservedPRD);
+        } catch (parseGateError: any) {
+          console.warn(`⚠️ Iteration ${i}: Gate parse failed: ${parseGateError.message}`);
+        }
+      }
+
+      const gateResult = this.validateIterationAcceptance({
+        structure: candidateStructure,
+        freezeBaseline: freezeBaselineStructure,
+        featuresFrozen,
+        iterationNumber: i,
+        structuredDeltaResult,
+      });
+
+      if (!gateResult.accepted) {
+        console.warn(`🚫 Iteration ${i}: Rejected by acceptance gates`);
+        for (const reason of gateResult.reasons) {
+          console.warn(`   - ${reason}`);
+        }
+
+        const prevIteration = iterations[iterations.length - 1];
+        if (prevIteration) {
+          blockedRegenerationAttempts++;
+          preservedPRD = prevIteration.mergedPRD;
+          try {
+            candidateStructure = parsePRDToStructure(preservedPRD);
+          } catch {
+            candidateStructure = previousStructure;
+          }
+        }
+      }
+
+      if (candidateStructure) {
+        previousStructure = candidateStructure;
       }
 
       currentPRD = preservedPRD;
@@ -678,38 +913,153 @@ Your task:
   }
 
   private extractQuestionsFromIterativeOutput(generatorOutput: string): string[] {
-    const questions: string[] = [];
-    
-    // Look for question sections in multiple languages
     const questionPatterns = [
-      /## (?:Fragen zur Verbesserung|Questions for Improvement)([\s\S]*?)(?=##|$)/i,
-      /## (?:Offene Fragen|Open Questions)([\s\S]*?)(?=##|$)/i,
+      /##\s*(?:Fragen zur Verbesserung|Questions for Improvement|Offene Fragen|Open Questions)\s*([\s\S]*?)(?=##|$)/i,
     ];
-    
-    let questionSection: string | null = null;
+
+    let questionSection = '';
     for (const pattern of questionPatterns) {
       const match = generatorOutput.match(pattern);
-      if (match) {
+      if (match?.[1]) {
         questionSection = match[1];
         break;
       }
     }
-    
-    if (questionSection) {
-      const lines = questionSection.split('\n');
-      
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.match(/^\d+\.\s+/) && trimmed.includes('?')) {
-          const question = trimmed.replace(/^\d+\.\s+/, '').trim();
-          if (question.length > 10) {
-            questions.push(question);
-          }
+
+    if (!questionSection.trim()) {
+      return [];
+    }
+
+    const rawLines = questionSection
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean);
+
+    const extracted: string[] = [];
+    for (const line of rawLines) {
+      const question = this.normalizeQuestionLine(line);
+      if (question) {
+        extracted.push(question);
+      }
+    }
+
+    return this.mergeQuestions([], extracted);
+  }
+
+  private normalizeQuestionLine(line: string): string | null {
+    const stripped = line
+      .replace(/^\d+[\.\)]\s+/, '')
+      .replace(/^[-*]\s+/, '')
+      .replace(/^\*{0,2}(?:Question|Frage)\s*\d*\s*:\*{0,2}\s*/i, '')
+      .trim();
+
+    if (stripped.length < 8) return null;
+    const looksLikeQuestion =
+      stripped.includes('?') ||
+      /^(?:how|what|which|why|when|where|wer|wie|was|welche|warum|wann|wo)\b/i.test(stripped);
+
+    if (!looksLikeQuestion) return null;
+    return stripped.endsWith('?') ? stripped : `${stripped}?`;
+  }
+
+  private mergeQuestions(primary: string[], secondary: string[]): string[] {
+    const seen = new Set<string>();
+    const merged: string[] = [];
+
+    for (const q of [...primary, ...secondary]) {
+      const normalized = q.trim();
+      if (!normalized) continue;
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(normalized);
+    }
+
+    return merged.slice(0, 5);
+  }
+
+  private validateIterationAcceptance(params: {
+    structure: PRDStructure | null;
+    freezeBaseline: PRDStructure | null;
+    featuresFrozen: boolean;
+    iterationNumber: number;
+    structuredDeltaResult: StructuredFeatureDeltaParseResult;
+  }): { accepted: boolean; reasons: string[] } {
+    const reasons: string[] = [];
+    const { structure, freezeBaseline, featuresFrozen, iterationNumber, structuredDeltaResult } = params;
+
+    if (!structure) {
+      reasons.push('structure unavailable after preservation step');
+      return { accepted: false, reasons };
+    }
+
+    const idSeen = new Set<string>();
+    const nameSeen = new Set<string>();
+    for (const feature of structure.features) {
+      if (idSeen.has(feature.id)) {
+        reasons.push(`duplicate feature id detected: ${feature.id}`);
+      } else {
+        idSeen.add(feature.id);
+      }
+
+      const normalizedName = this.normalizeFeatureName(feature.name);
+      if (normalizedName.length > 0) {
+        if (nameSeen.has(normalizedName)) {
+          reasons.push(`duplicate feature name detected: ${feature.name}`);
+        } else {
+          nameSeen.add(normalizedName);
         }
       }
     }
-    
-    return questions;
+
+    if (featuresFrozen && freezeBaseline) {
+      if (structure.features.length < freezeBaseline.features.length) {
+        reasons.push(`feature count below freeze baseline (${structure.features.length} < ${freezeBaseline.features.length})`);
+      }
+
+      const currentIds = new Set(structure.features.map(f => f.id));
+      for (const frozenFeature of freezeBaseline.features) {
+        if (!currentIds.has(frozenFeature.id)) {
+          reasons.push(`frozen feature missing: ${frozenFeature.id}`);
+        }
+      }
+    }
+
+    if (featuresFrozen && iterationNumber >= 2 && !structuredDeltaResult.valid) {
+      reasons.push(`invalid structured feature delta (${structuredDeltaResult.error || 'unknown'})`);
+    }
+
+    return {
+      accepted: reasons.length === 0,
+      reasons,
+    };
+  }
+
+  private async generateClarifyingQuestions(
+    prdContent: string,
+    client: OpenRouterClient,
+    langInstruction: string,
+    minCount: number
+  ): Promise<string[]> {
+    try {
+      const prompt = `Review this PRD and generate ${minCount} to 5 concrete clarifying questions about unresolved scope, UX, and operational gaps.\n\nReturn ONLY numbered questions.\n\nPRD:\n${prdContent}`;
+      const result = await client.callWithFallback(
+        'reviewer',
+        REVIEWER_SYSTEM_PROMPT + langInstruction,
+        prompt,
+        1500
+      );
+      const lines = result.content.split('\n').map(l => l.trim()).filter(Boolean);
+      const parsed: string[] = [];
+      for (const line of lines) {
+        const question = this.normalizeQuestionLine(line);
+        if (question) parsed.push(question);
+      }
+      return this.mergeQuestions([], parsed).slice(0, Math.max(3, minCount));
+    } catch (error: any) {
+      console.warn(`⚠️ Fallback question synthesis failed: ${error.message}`);
+      return [];
+    }
   }
 
   private extractCleanPRD(generatorOutput: string): string {
@@ -724,10 +1074,12 @@ Your task:
     // Step 2: Remove Q&A and meta sections (at end of document, after --- divider or without)
     const qaSections = [
       /\n---\s*\n+## (?:Questions for Improvement|Fragen zur Verbesserung)[\s\S]*/i,
+      /\n---\s*\n+## (?:Feature Delta(?:\s*\(JSON\))?)[\s\S]*/i,
       /\n---\s*\n+## (?:Open Points|Offene Punkte)[\s\S]*/i,
       /\n---\s*\n+## Best Practice Empfehlungen[\s\S]*/i,
       /\n---\s*\n+## Final Review Feedback[\s\S]*/i,
       /\n## (?:Questions for Improvement|Fragen zur Verbesserung)[\s\S]*?(?=\n## (?!Questions|Fragen)|$)/i,
+      /\n## (?:Feature Delta(?:\s*\(JSON\))?)[\s\S]*?(?=\n## (?!Feature Delta)|$)/i,
       /\n## (?:Open Points(?: & Gaps)?|Offene Punkte(?: (?:&|und) Lücken)?)[\s\S]*?(?=\n## (?!Open|Offene)|$)/i,
       /\n## (?:Open Questions|Offene Fragen)[\s\S]*?(?=\n## (?!Open|Offene)|$)/i,
     ];
@@ -883,6 +1235,411 @@ Your task:
     }
     
     return lines.join('\n');
+  }
+
+  private pickFallbackPatchSection(structure: PRDStructure): keyof PRDStructure | null {
+    const orderedCandidates: (keyof PRDStructure)[] = [
+      'globalBusinessRules',
+      'errorHandling',
+      'deployment',
+      'definitionOfDone',
+      'systemBoundaries',
+      'nonFunctional',
+      'domainModel',
+      'systemVision',
+    ];
+
+    for (const key of orderedCandidates) {
+      const value = structure[key];
+      if (typeof value === 'string' && value.trim().length > 0) {
+        return key;
+      }
+    }
+
+    return null;
+  }
+
+  private async compileFeatureDelta(params: {
+    currentStructure: PRDStructure;
+    freezeBaseline: PRDStructure;
+    visionContext: string;
+    workflowInputText: string;
+    structuredDelta?: StructuredFeatureDelta;
+    enforceStructuredDeltaOnly?: boolean;
+    client: OpenRouterClient;
+  }): Promise<{
+    structure: PRDStructure;
+    freezeBaseline: PRDStructure;
+    addedFeatureIds: string[];
+    droppedDuplicates: string[];
+  }> {
+    const {
+      currentStructure,
+      freezeBaseline,
+      visionContext,
+      workflowInputText,
+      structuredDelta,
+      enforceStructuredDeltaOnly,
+      client
+    } = params;
+    const baselineIds = new Set(freezeBaseline.features.map(f => f.id));
+    const baselineFeatures = freezeBaseline.features.map(f => ({ ...f }));
+    const currentAdditions = currentStructure.features.filter(f => !baselineIds.has(f.id));
+    const structuredAdditions = this.toFeatureCandidatesFromDelta(structuredDelta);
+
+    const candidatePool = enforceStructuredDeltaOnly
+      ? structuredAdditions
+      : (structuredAdditions.length > 0 ? structuredAdditions : currentAdditions);
+
+    if (candidatePool.length === 0) {
+      return {
+        structure: currentStructure,
+        freezeBaseline,
+        addedFeatureIds: [],
+        droppedDuplicates: [],
+      };
+    }
+
+    const dedupeResult = this.filterDuplicateNewFeatures(candidatePool, baselineFeatures);
+    const droppedDuplicates = dedupeResult.dropped.map(f => `${f.id}:${f.name}`);
+    const acceptedCandidates = dedupeResult.accepted;
+
+    const compiledNewFeatures: FeatureSpec[] = [];
+    const usedIds = new Set(currentStructure.features.map(f => f.id));
+    for (const candidate of acceptedCandidates) {
+      const resolvedId = this.nextAvailableFeatureId(candidate.id, usedIds);
+      usedIds.add(resolvedId);
+
+      let compiledRaw = candidate.rawContent;
+      try {
+        const expansion = await expandFeature(
+          workflowInputText,
+          visionContext,
+          resolvedId,
+          candidate.name,
+          this.deriveShortDescription(candidate),
+          client
+        );
+        compiledRaw = expansion.content || candidate.rawContent;
+      } catch (deltaCompileError: any) {
+        console.warn(`⚠️ Delta compile failed for ${candidate.id} (${candidate.name}): ${deltaCompileError.message}`);
+      }
+
+      compiledNewFeatures.push({
+        id: resolvedId,
+        name: candidate.name,
+        rawContent: compiledRaw,
+      });
+    }
+
+    const rebuiltFeatures = [
+      ...currentStructure.features.filter(f => baselineIds.has(f.id)),
+      ...compiledNewFeatures
+    ];
+
+    const mergedBaseline = {
+      ...freezeBaseline,
+      features: [
+        ...freezeBaseline.features,
+        ...compiledNewFeatures
+      ]
+    };
+    mergedBaseline.features.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+
+    return {
+      structure: { ...currentStructure, features: rebuiltFeatures },
+      freezeBaseline: mergedBaseline,
+      addedFeatureIds: compiledNewFeatures.map(f => f.id),
+      droppedDuplicates,
+    };
+  }
+
+  private toFeatureCandidatesFromDelta(delta?: StructuredFeatureDelta): FeatureSpec[] {
+    if (!delta || !Array.isArray(delta.addedFeatures) || delta.addedFeatures.length === 0) {
+      return [];
+    }
+
+    const features: FeatureSpec[] = [];
+    for (const entry of delta.addedFeatures) {
+      const name = String(entry?.name || '').trim();
+      if (!name) continue;
+      const shortDescription = String(entry?.shortDescription || '').trim();
+      const id = String(entry?.featureId || '').trim().toUpperCase();
+      features.push({
+        id: id || 'F-XX',
+        name,
+        rawContent: `${name}\n${shortDescription}`.trim()
+      });
+    }
+
+    return features;
+  }
+
+  private filterDuplicateNewFeatures(
+    candidates: FeatureSpec[],
+    baseline: FeatureSpec[]
+  ): { accepted: FeatureSpec[]; dropped: FeatureSpec[] } {
+    const accepted: FeatureSpec[] = [];
+    const dropped: FeatureSpec[] = [];
+
+    for (const candidate of candidates) {
+      const duplicateInBaseline = baseline.some(existing => this.isDuplicateFeature(existing, candidate));
+      const duplicateInAccepted = accepted.some(existing => this.isDuplicateFeature(existing, candidate));
+      if (duplicateInBaseline || duplicateInAccepted) {
+        dropped.push(candidate);
+        continue;
+      }
+      accepted.push(candidate);
+    }
+
+    return { accepted, dropped };
+  }
+
+  private isDuplicateFeature(a: FeatureSpec, b: FeatureSpec): boolean {
+    if (a.id === b.id) return true;
+
+    const aName = this.normalizeFeatureName(a.name);
+    const bName = this.normalizeFeatureName(b.name);
+    if (aName && bName && aName === bName) return true;
+    if (aName && bName && (aName.includes(bName) || bName.includes(aName)) && Math.min(aName.length, bName.length) >= 8) {
+      return true;
+    }
+
+    const aTokens = new Set(aName.split(' ').filter(Boolean));
+    const bTokens = new Set(bName.split(' ').filter(Boolean));
+    let intersection = 0;
+    for (const token of Array.from(aTokens)) {
+      if (bTokens.has(token)) intersection++;
+    }
+    const union = new Set(
+      Array.from(aTokens).concat(Array.from(bTokens))
+    ).size || 1;
+    const similarity = intersection / union;
+    if (similarity >= 0.8) return true;
+
+    const aSig = this.normalizeFeatureName(a.rawContent).slice(0, 120);
+    const bSig = this.normalizeFeatureName(b.rawContent).slice(0, 120);
+    return aSig.length > 40 && aSig === bSig;
+  }
+
+  private normalizeFeatureName(value: string): string {
+    return value
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\b(feature|todo|item|app|webapp|system|module)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private nextAvailableFeatureId(preferredId: string, usedIds: Set<string>): string {
+    if (preferredId && !usedIds.has(preferredId)) {
+      return preferredId;
+    }
+
+    let maxNum = 0;
+    for (const id of Array.from(usedIds)) {
+      const match = id.match(/^F-(\d{2,})$/i);
+      if (match) {
+        maxNum = Math.max(maxNum, Number(match[1]));
+      }
+    }
+
+    let candidateNum = maxNum + 1;
+    while (true) {
+      const candidate = `F-${String(candidateNum).padStart(2, '0')}`;
+      if (!usedIds.has(candidate)) return candidate;
+      candidateNum++;
+    }
+  }
+
+  private deriveShortDescription(feature: FeatureSpec): string {
+    const oneLine = feature.rawContent
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 220);
+    return oneLine || feature.name;
+  }
+
+  private async generateStructuredDeltaSection(params: {
+    currentPrd: string;
+    generatorOutput: string;
+    reviewerFeedback: string;
+    client: OpenRouterClient;
+    langInstruction: string;
+  }): Promise<string | null> {
+    const { currentPrd, generatorOutput, reviewerFeedback, client, langInstruction } = params;
+    const systemPrompt = `You are part of the Nexora Requirements Compiler.
+Return ONLY valid JSON with this schema:
+{
+  "addedFeatures": [
+    { "featureId": "F-XX", "name": "string", "shortDescription": "string" }
+  ],
+  "updatedFeatures": [
+    { "featureId": "F-XX", "notes": "string" }
+  ]
+}
+
+Rules:
+- No markdown, no explanations, JSON only
+- Use empty arrays if no changes
+- Do not duplicate existing features in addedFeatures
+- Keep addedFeatures minimal and concrete`;
+
+    const userPrompt = `CURRENT PRD:
+${currentPrd}
+
+LATEST GENERATOR OUTPUT:
+${generatorOutput}
+
+LATEST REVIEWER FEEDBACK:
+${reviewerFeedback}
+
+Extract only the feature delta between CURRENT PRD and LATEST GENERATOR OUTPUT.
+Return JSON only.`;
+
+    try {
+      const result = await client.callWithFallback(
+        'reviewer',
+        systemPrompt + langInstruction,
+        userPrompt,
+        1200
+      );
+
+      const parsed = this.parseLooseJsonObject(result.content);
+      if (!parsed) return null;
+
+      const addedRaw = Array.isArray(parsed.addedFeatures) ? parsed.addedFeatures : [];
+      const updatedRaw = Array.isArray(parsed.updatedFeatures) ? parsed.updatedFeatures : [];
+      const normalized = {
+        addedFeatures: addedRaw
+          .map((f: any) => ({
+            featureId: typeof f?.featureId === 'string' ? f.featureId.trim().toUpperCase() : 'F-XX',
+            name: String(f?.name || '').trim(),
+            shortDescription: String(f?.shortDescription || '').trim(),
+          }))
+          .filter((f: any) => f.name.length > 0),
+        updatedFeatures: updatedRaw
+          .map((f: any) => ({
+            featureId: String(f?.featureId || '').trim().toUpperCase(),
+            notes: typeof f?.notes === 'string' ? f.notes.trim() : '',
+          }))
+          .filter((f: any) => /^F-\d{2,}$/i.test(f.featureId)),
+      };
+
+      const json = JSON.stringify(normalized, null, 2);
+      return `## Feature Delta (JSON)\n\`\`\`json\n${json}\n\`\`\``;
+    } catch (error: any) {
+      console.warn(`⚠️ Delta-only extraction failed: ${error.message}`);
+      return null;
+    }
+  }
+
+  private parseLooseJsonObject(raw: string): any | null {
+    const trimmed = raw.trim();
+    const codeBlock = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    const candidate = codeBlock ? codeBlock[1].trim() : trimmed;
+
+    try {
+      return JSON.parse(candidate);
+    } catch {
+    }
+
+    const objectMatch = candidate.match(/\{[\s\S]*\}/);
+    if (!objectMatch) return null;
+
+    try {
+      return JSON.parse(objectMatch[0]);
+    } catch {
+      return null;
+    }
+  }
+
+  private buildEmptyFeatureDeltaSection(): string {
+    return `---\n\n## Feature Delta (JSON)\n\`\`\`json\n{\n  "addedFeatures": [],\n  "updatedFeatures": []\n}\n\`\`\`\n`;
+  }
+
+  private extractStructuredFeatureDelta(generatorOutput: string): StructuredFeatureDelta {
+    return this.extractStructuredFeatureDeltaWithStatus(generatorOutput).delta;
+  }
+
+  private extractStructuredFeatureDeltaWithStatus(generatorOutput: string): StructuredFeatureDeltaParseResult {
+    const empty: StructuredFeatureDelta = { addedFeatures: [], updatedFeatures: [] };
+    const sectionPattern = /##\s*Feature Delta(?:\s*\(JSON\))?\s*([\s\S]*?)(?=\n##\s|$)/i;
+    const sectionMatch = generatorOutput.match(sectionPattern);
+    if (!sectionMatch) {
+      return { found: false, valid: false, delta: empty, error: 'Feature Delta section missing' };
+    }
+
+    const sectionBody = sectionMatch[1];
+    const fencedJson = sectionBody.match(/```json\s*([\s\S]*?)```/i) || sectionBody.match(/```\s*([\s\S]*?)```/i);
+    const rawJson = (fencedJson ? fencedJson[1] : sectionBody).trim();
+    if (!rawJson) {
+      return { found: true, valid: false, delta: empty, error: 'Feature Delta JSON content missing' };
+    }
+
+    try {
+      const parsed = JSON.parse(rawJson);
+      const added = Array.isArray(parsed?.addedFeatures) ? parsed.addedFeatures : [];
+      const updated = Array.isArray(parsed?.updatedFeatures) ? parsed.updatedFeatures : [];
+      const delta: StructuredFeatureDelta = {
+        addedFeatures: added
+          .map((f: any) => ({
+            featureId: typeof f?.featureId === 'string' ? f.featureId : undefined,
+            name: String(f?.name || '').trim(),
+            shortDescription: typeof f?.shortDescription === 'string' ? f.shortDescription : undefined,
+          }))
+          .filter((f: any) => f.name.length > 0),
+        updatedFeatures: updated
+          .map((f: any) => ({
+            featureId: String(f?.featureId || '').trim().toUpperCase(),
+            notes: typeof f?.notes === 'string' ? f.notes : undefined,
+          }))
+          .filter((f: any) => /^F-\d{2,}$/i.test(f.featureId)),
+      };
+      return { found: true, valid: true, delta };
+    } catch (error: any) {
+      console.warn(`⚠️ Structured feature delta parse failed: ${error.message}`);
+      return { found: true, valid: false, delta: empty, error: error.message };
+    }
+  }
+
+  private buildFreezeBaselineFromExpansion(
+    expansionResult: any,
+    anchor?: PRDStructure | null
+  ): PRDStructure | null {
+    const expanded = expansionResult?.expandedFeatures;
+    if (!Array.isArray(expanded) || expanded.length === 0) {
+      return null;
+    }
+
+    const compiledFeatures = expanded
+      .filter((f: any) => f && (f.compiled === true || f.valid === true))
+      .map((f: any): FeatureSpec => ({
+        id: String(f.featureId || '').trim().toUpperCase(),
+        name: String(f.featureName || f.featureId || '').trim(),
+        rawContent: String(f.content || '').trim(),
+      }))
+      .filter((f: FeatureSpec) => f.id.length > 0 && f.rawContent.length > 0);
+
+    if (compiledFeatures.length === 0) {
+      return null;
+    }
+
+    compiledFeatures.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+
+    return {
+      systemVision: anchor?.systemVision,
+      systemBoundaries: anchor?.systemBoundaries,
+      domainModel: anchor?.domainModel,
+      globalBusinessRules: anchor?.globalBusinessRules,
+      featureCatalogueIntro: anchor?.featureCatalogueIntro,
+      features: compiledFeatures,
+      nonFunctional: anchor?.nonFunctional,
+      errorHandling: anchor?.errorHandling,
+      deployment: anchor?.deployment,
+      definitionOfDone: anchor?.definitionOfDone,
+      otherSections: anchor?.otherSections ? { ...anchor.otherSections } : {},
+    };
   }
 
   private extractVisionFromContent(content: string): string {

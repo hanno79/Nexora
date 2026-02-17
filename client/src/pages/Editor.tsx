@@ -206,6 +206,9 @@ export default function Editor() {
       featurePreservations: 0,
       featureIntegrityRestores: 0,
       driftEvents: 0,
+      featureFreezeActive: false,
+      blockedRegenerationAttempts: 0,
+      freezeSeedSource: 'none',
     } : null);
     if (diag) {
       setCompilerDiagnostics(diag);
@@ -757,6 +760,18 @@ export default function Editor() {
                       <div className="flex justify-between py-2 border-b border-input" data-testid="diag-integrity-restores">
                         <span className="text-muted-foreground">Feature Integrity Restores</span>
                         <span className="text-foreground font-medium">{compilerDiagnostics.featureIntegrityRestores}</span>
+                      </div>
+                      <div className="flex justify-between py-2 border-b border-input" data-testid="diag-freeze-active">
+                        <span className="text-muted-foreground">Feature Freeze Active</span>
+                        <span className="text-foreground font-medium">{compilerDiagnostics.featureFreezeActive ? 'Yes' : 'No'}</span>
+                      </div>
+                      <div className="flex justify-between py-2 border-b border-input" data-testid="diag-freeze-seed-source">
+                        <span className="text-muted-foreground">Freeze Seed Source</span>
+                        <span className="text-foreground font-medium">{compilerDiagnostics.freezeSeedSource || 'none'}</span>
+                      </div>
+                      <div className="flex justify-between py-2 border-b border-input" data-testid="diag-blocked-regens">
+                        <span className="text-muted-foreground">Blocked Regeneration Attempts</span>
+                        <span className="text-foreground font-medium">{compilerDiagnostics.blockedRegenerationAttempts ?? 0}</span>
                       </div>
                       <div className="flex justify-between py-2" data-testid="diag-drift-events">
                         <span className="text-muted-foreground">Structural Drift Events</span>

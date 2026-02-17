@@ -8,8 +8,52 @@ import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
 
-if (!process.env.REPLIT_DOMAINS) {
-  throw new Error("Environment variable REPLIT_DOMAINS not provided");
+const DEMO_AUTH_ENABLED =
+  process.env.LOCAL_DEMO_AUTH === "true" ||
+  process.env.REPLIT_DOMAINS === "localhost" ||
+  !process.env.REPLIT_DOMAINS ||
+  !process.env.REPL_ID;
+
+const DEMO_USER_ID = "demo-user-local";
+const DEMO_USER_EMAIL = "demo+nexora-local@localhost";
+
+function buildDemoSessionUser() {
+  const expiresAt = Math.floor(Date.now() / 1000) + 24 * 60 * 60;
+  return {
+    id: DEMO_USER_ID,
+    claims: {
+      sub: DEMO_USER_ID,
+      email: DEMO_USER_EMAIL,
+      first_name: "Demo",
+      last_name: "User",
+      profile_image_url: null,
+      exp: expiresAt,
+    },
+    expires_at: expiresAt,
+  };
+}
+
+async function ensureDemoUser() {
+  const byId = await storage.getUser(DEMO_USER_ID);
+  if (byId) return;
+
+  const byEmail = await storage.getUserByEmail(DEMO_USER_EMAIL);
+  if (byEmail) {
+    await storage.updateUser(byEmail.id, {
+      firstName: "Demo",
+      lastName: "User",
+      profileImageUrl: null,
+    });
+    return;
+  }
+
+  await storage.upsertUser({
+    id: DEMO_USER_ID,
+    email: DEMO_USER_EMAIL,
+    firstName: "Demo",
+    lastName: "User",
+    profileImageUrl: null,
+  });
 }
 
 const getOidcConfig = memoize(
@@ -67,6 +111,25 @@ async function upsertUser(
 }
 
 export async function setupAuth(app: Express) {
+  if (DEMO_AUTH_ENABLED) {
+    console.warn("⚠️ Demo auth enabled. Replit OIDC is bypassed for local development.");
+    await ensureDemoUser();
+
+    app.get("/api/login", (_req, res) => {
+      res.redirect("/");
+    });
+
+    app.get("/api/callback", (_req, res) => {
+      res.redirect("/");
+    });
+
+    app.get("/api/logout", (_req, res) => {
+      res.redirect("/");
+    });
+
+    return;
+  }
+
   app.set("trust proxy", 1);
   app.use(getSession());
   app.use(passport.initialize());
@@ -134,6 +197,17 @@ export async function setupAuth(app: Express) {
 }
 
 export const isAuthenticated: RequestHandler = async (req, res, next) => {
+  if (DEMO_AUTH_ENABLED) {
+    try {
+      await ensureDemoUser();
+      req.user = buildDemoSessionUser() as any;
+      return next();
+    } catch (error) {
+      console.error("Failed to provision demo user:", error);
+      return res.status(500).json({ message: "Demo auth initialization failed" });
+    }
+  }
+
   const user = req.user as any;
 
   if (!req.isAuthenticated() || !user.expires_at) {
