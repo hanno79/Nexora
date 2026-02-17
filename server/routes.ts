@@ -63,6 +63,7 @@ function syncPrdHeaderMetadata(
   return updatedContent;
 }
 
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Initialize templates
   await initializeTemplates();
@@ -136,6 +137,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         generatorModel: activeTierModels.generatorModel || stored.generatorModel || 'google/gemini-2.5-flash',
         reviewerModel: activeTierModels.reviewerModel || stored.reviewerModel || 'anthropic/claude-sonnet-4',
         fallbackModel: activeTierModels.fallbackModel || stored.fallbackModel || 'deepseek/deepseek-r1-0528:free',
+        iterativeTimeoutMinutes: stored.iterativeTimeoutMinutes || 30,
       };
       
       res.json(preferences);
@@ -832,6 +834,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Support both old format (initialContent) and new format (existingContent + additionalRequirements + mode)
       const { initialContent, existingContent, additionalRequirements, mode, iterationCount, useFinalReview, prdId } = req.body;
       const userId = req.user.claims.sub;
+      console.log(`[iterative] request received: userId=${userId}, prdId=${prdId || 'none'}, mode=${mode || 'legacy'}`);
       
       // Detect which format is being used
       const hasExistingContent = existingContent && existingContent.trim().length > 0;
@@ -886,52 +889,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
         useFinalReview || false,
         userId
       );
-      
-      // Log AI usage for iterative workflow
-      // Log each iteration's generator and answerer usage
-      for (const iteration of result.iterations) {
-        // Generator usage
-        await logAiUsage(
-          userId,
-          'generator',
-          result.modelsUsed[0] || 'unknown',  // First model is typically generator
-          'development',  // Using development tier for tests
-          { 
-            prompt_tokens: 0,  // Approximation - would need actual values
-            completion_tokens: iteration.tokensUsed / 2,
-            total_tokens: iteration.tokensUsed / 2
-          },
-          prdId
-        );
-        
-        // Answerer usage
-        await logAiUsage(
-          userId,
-          'reviewer',  // Answerer uses reviewer model
-          result.modelsUsed[1] || result.modelsUsed[0] || 'unknown',
-          'development',
-          { 
-            prompt_tokens: 0,
-            completion_tokens: iteration.tokensUsed / 2,
-            total_tokens: iteration.tokensUsed / 2
-          },
-          prdId
-        );
+      console.log(`[iterative] service complete: prdId=${prdId || 'none'}, finalContentLen=${(result.finalContent || '').length}, iterations=${result.iterations?.length || 0}`);
+
+      const includeVerboseIterations = process.env.DEBUG_ITERATIVE_VERBOSE === "true";
+      const slimResult: any = {
+        finalContent: result.finalContent || (result as any).mergedPRD || '',
+        iterationLog: result.iterationLog,
+        totalTokens: result.totalTokens,
+        modelsUsed: result.modelsUsed,
+        diagnostics: result.diagnostics,
+        finalReview: result.finalReview
+          ? {
+              model: result.finalReview.model,
+              usage: result.finalReview.usage,
+              tier: result.finalReview.tier,
+            }
+          : undefined,
+        iterations: includeVerboseIterations
+          ? result.iterations
+          : result.iterations.map((it: any) => ({
+              iterationNumber: it.iterationNumber,
+              tokensUsed: it.tokensUsed,
+              questions: Array.isArray(it.questions) ? it.questions : [],
+              answererOutputTruncated: !!it.answererOutputTruncated,
+            })),
+      };
+      console.log(`[iterative] response payload ready: prdId=${prdId || 'none'}, finalContentLen=${(slimResult.finalContent || '').length}, verbose=${includeVerboseIterations}`);
+
+      const contentToPersist = slimResult.finalContent;
+      const saveRequested = !!(prdId && contentToPersist && contentToPersist.trim().length > 0);
+      slimResult.autoSaveRequested = saveRequested;
+      slimResult.autoSaved = false;
+      console.log(`[iterative] autosave decision: prdId=${prdId || 'none'}, requested=${saveRequested}`);
+
+      // Respond first to avoid blocking UI on DB writes for large runs.
+      res.json(slimResult);
+      console.log(`[iterative] response sent: prdId=${prdId || 'none'}`);
+
+      // Persist iterative results server-side in background so long-running
+      // workflows are not lost even if the client disconnects.
+      if (saveRequested) {
+        (async () => {
+          try {
+            const existingPrd = await storage.getPrd(prdId);
+            if (!existingPrd) {
+              console.warn(`[iterative] autosave skipped: PRD not found (${prdId})`);
+              return;
+            }
+
+            await storage.updatePrd(prdId, {
+              content: contentToPersist,
+              iterationLog: result.iterationLog || null,
+            });
+            console.log(`[iterative] autosave complete: prdId=${prdId}, contentLength=${contentToPersist.length}`);
+          } catch (saveError) {
+            console.error("[iterative] autosave failed:", saveError);
+          }
+        })();
       }
-      
-      // Log final review if used
-      if (result.finalReview) {
-        await logAiUsage(
-          userId,
-          'reviewer',
-          result.finalReview.model,
-          result.finalReview.tier as any,
-          result.finalReview.usage,
-          prdId
-        );
-      }
-      
-      res.json(result);
+
+      // AI usage logging is best-effort and must never block response completion.
+      (async () => {
+        try {
+          for (const iteration of result.iterations) {
+            await logAiUsage(
+              userId,
+              'generator',
+              result.modelsUsed[0] || 'unknown',
+              'development',
+              {
+                prompt_tokens: 0,
+                completion_tokens: iteration.tokensUsed / 2,
+                total_tokens: iteration.tokensUsed / 2
+              },
+              prdId
+            );
+
+            await logAiUsage(
+              userId,
+              'reviewer',
+              result.modelsUsed[1] || result.modelsUsed[0] || 'unknown',
+              'development',
+              {
+                prompt_tokens: 0,
+                completion_tokens: iteration.tokensUsed / 2,
+                total_tokens: iteration.tokensUsed / 2
+              },
+              prdId
+            );
+          }
+
+          if (result.finalReview) {
+            await logAiUsage(
+              userId,
+              'reviewer',
+              result.finalReview.model,
+              result.finalReview.tier as any,
+              result.finalReview.usage,
+              prdId
+            );
+          }
+        } catch (usageError) {
+          console.error('[iterative] async usage logging failed:', usageError);
+        }
+      })();
+
+      return;
     } catch (error: any) {
       console.error("Error in iterative AI generation:", error);
       

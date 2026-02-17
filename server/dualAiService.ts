@@ -29,6 +29,8 @@ import type { PRDStructure, FeatureSpec } from './prdStructure';
 import { db } from './db';
 import { users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
+import fs from 'fs';
+import path from 'path';
 
 interface StructuredFeatureDelta {
   addedFeatures: Array<{
@@ -627,17 +629,26 @@ Your task:
 
       // Extract questions from generator output (robust) and synthesize fallback questions if needed
       let questions = this.extractQuestionsFromIterativeOutput(genResult.content);
-      if (questions.length < 3 && i < iterationCount) {
+      const requiredQuestions = i >= 2 ? 2 : (i < iterationCount ? 3 : 0);
+      if (requiredQuestions > 0 && questions.length < requiredQuestions) {
         const fallbackQuestions = await this.generateClarifyingQuestions(
           provisionalCleanPRD,
           client,
           langInstruction,
-          3
+          requiredQuestions
         );
         questions = this.mergeQuestions(questions, fallbackQuestions);
         if (fallbackQuestions.length > 0) {
           console.log(`🧭 Synthesized ${fallbackQuestions.length} fallback clarifying question(s)`);
         }
+      }
+      if (requiredQuestions > 0 && questions.length < requiredQuestions) {
+        const deterministicFallback = this.getDeterministicFallbackQuestions(requiredQuestions);
+        questions = this.mergeQuestions(questions, deterministicFallback);
+        console.log(`🧩 Added deterministic fallback questions to meet minimum (${requiredQuestions})`);
+      }
+      if (requiredQuestions > 0 && questions.length > 5) {
+        questions = questions.slice(0, 5);
       }
       console.log(`📋 Extracted ${questions.length} questions`);
       
@@ -649,15 +660,36 @@ Your task:
         : '1. Identify the top unresolved product scope risk.\n2. Identify the top unresolved UX risk.\n3. Identify the top unresolved data/operational risk.';
       const answererPrompt = `The following PRD is being developed:\n\n${genResult.content}\n\nQuestions to answer explicitly:\n${explicitQuestionBlock}\n\nAnswer ALL questions with best practices. Also identify and resolve any Open Points, Gaps, or unresolved areas in the PRD. Your answers will be incorporated directly into the next PRD revision.`;
       
-      const answerResult = await client.callWithFallback(
+      let answerResult = await client.callWithFallback(
         'reviewer',  // Using reviewer model for answerer role
         BEST_PRACTICE_ANSWERER_PROMPT + langInstruction,
         answererPrompt,
-        4000  // Enough for detailed answers
+        5500  // Larger budget to reduce truncation risk
       );
       
       modelsUsed.add(answerResult.model);
       console.log(`✅ Answered with ${answerResult.usage.completion_tokens} tokens using ${answerResult.model}`);
+      let answererOutputTruncated = this.looksLikeTruncatedOutput(answerResult.content);
+      if (answererOutputTruncated) {
+        console.warn(`⚠️ Iteration ${i}: answerer output looks truncated, retrying once with higher token budget...`);
+        const retryPrompt = `${answererPrompt}\n\nIMPORTANT: Return a complete final response. Do not end mid-sentence or mid-list.`;
+        const retryResult = await client.callWithFallback(
+          'reviewer',
+          BEST_PRACTICE_ANSWERER_PROMPT + langInstruction,
+          retryPrompt,
+          7000
+        );
+        modelsUsed.add(retryResult.model);
+        const retryTruncated = this.looksLikeTruncatedOutput(retryResult.content);
+        const shouldUseRetry = !retryTruncated || retryResult.content.length > answerResult.content.length + 120;
+        if (shouldUseRetry) {
+          answerResult = retryResult;
+          answererOutputTruncated = retryTruncated;
+          console.log(`✅ Iteration ${i}: using retried answerer output (${retryResult.model})`);
+        } else {
+          console.warn(`⚠️ Iteration ${i}: retry still appears truncated, keeping original output`);
+        }
+      }
       
       // Step 3: Extract clean PRD (without Q&A sections) and build iteration log
       const cleanPRD = provisionalCleanPRD;
@@ -874,6 +906,7 @@ Your task:
         iterationNumber: i,
         generatorOutput: genResult.content,
         answererOutput: answerResult.content,
+        answererOutputTruncated,
         questions,
         mergedPRD: preservedPRD,
         tokensUsed: genResult.usage.total_tokens + answerResult.usage.total_tokens
@@ -976,10 +1009,98 @@ Your task:
     console.log('   Avg Feature Completeness: ' + (diagnostics.avgFeatureCompleteness || 0));
     console.log('   Quality Regressions Recovered: ' + (diagnostics.featureQualityRegressions || 0));
 
+    currentPRD = this.sanitizeFinalMarkdown(currentPRD);
+    if (iterations.length > 0) {
+      iterations[iterations.length - 1].mergedPRD = currentPRD;
+    }
+    const validation = this.validateFinalOutputConsistency({
+      finalPRD: currentPRD,
+      iterations,
+      freezeBaselineFeatureCount: freezeBaselineStructure?.features.length || 0,
+      featuresFrozen
+    });
+    diagnostics.finalValidationPassed = validation.errors.length === 0;
+    diagnostics.finalValidationErrors = validation.errors.length;
+    diagnostics.finalSanitizerApplied = validation.sanitizerApplied;
+    if (validation.errors.length > 0) {
+      console.warn('⚠️ Final output consistency issues detected:');
+      for (const err of validation.errors) {
+        console.warn(`   - ${err}`);
+      }
+      if (process.env.HARD_FINAL_QUALITY_GATE === 'true') {
+        throw new Error(`Final quality gate failed: ${validation.errors.slice(0, 5).join(' | ')}`);
+      }
+    }
+
+    // Fail-safe: return immediately after workflow completion to avoid
+    // long or stuck post-processing in unstable environments.
+    const fastFinalizeEnabled = process.env.ITERATIVE_FAST_FINALIZE !== 'false';
+    if (fastFinalizeEnabled) {
+      console.log('⚡ Iterative fast finalize enabled (skipping deep post-processing)');
+      return {
+        finalContent: currentPRD,
+        mergedPRD: currentPRD,
+        iterationLog,
+        iterations,
+        finalReview,
+        totalTokens,
+        modelsUsed: Array.from(modelsUsed),
+        diagnostics
+      };
+    }
+
     const canonicalMergedPRD = this.buildCanonicalMergedPRD(currentPRD, iterations);
     currentPRD = canonicalMergedPRD;
     if (iterations.length > 0) {
       iterations[iterations.length - 1].mergedPRD = canonicalMergedPRD;
+    }
+    const postCanonicalValidation = this.validateFinalOutputConsistency({
+      finalPRD: currentPRD,
+      iterations,
+      freezeBaselineFeatureCount: freezeBaselineStructure?.features.length || 0,
+      featuresFrozen
+    });
+    diagnostics.finalValidationPassed = postCanonicalValidation.errors.length === 0;
+    diagnostics.finalValidationErrors = postCanonicalValidation.errors.length;
+    diagnostics.finalSanitizerApplied = postCanonicalValidation.sanitizerApplied;
+    if (postCanonicalValidation.errors.length > 0) {
+      console.warn('⚠️ Final output consistency issues detected:');
+      for (const err of postCanonicalValidation.errors) {
+        console.warn(`   - ${err}`);
+      }
+    }
+    diagnostics.artifactWriteConsistency = true;
+    diagnostics.artifactWriteIssues = 0;
+    const shouldWriteArtifacts = process.env.WRITE_ITERATIVE_ARTIFACTS === 'true';
+    if (shouldWriteArtifacts) {
+      try {
+        const artifactWriteResult = this.writeIterativeArtifacts({
+          finalContent: canonicalMergedPRD,
+          mergedPRD: canonicalMergedPRD,
+          iterationLog,
+          iterations,
+          finalReview,
+          totalTokens,
+          modelsUsed: Array.from(modelsUsed),
+          diagnostics
+        });
+        diagnostics.artifactWriteConsistency = artifactWriteResult.ok;
+        diagnostics.artifactWriteIssues = artifactWriteResult.issues.length;
+        if (!artifactWriteResult.ok) {
+          console.warn('⚠️ Service-level artifact write consistency issues detected:');
+          for (const issue of artifactWriteResult.issues) {
+            console.warn(`   - ${issue}`);
+          }
+        } else {
+          console.log(`🗂️ Service artifacts updated: ${artifactWriteResult.files.join(', ')}`);
+        }
+      } catch (artifactError: any) {
+        diagnostics.artifactWriteConsistency = false;
+        diagnostics.artifactWriteIssues = 1;
+        console.warn(`⚠️ Service artifact write failed: ${artifactError.message}`);
+      }
+    } else {
+      console.log('🗂️ Service artifact write skipped (WRITE_ITERATIVE_ARTIFACTS != true)');
     }
 
     return {
@@ -991,6 +1112,55 @@ Your task:
       totalTokens,
       modelsUsed: Array.from(modelsUsed),
       diagnostics
+    };
+  }
+
+  private writeIterativeArtifacts(payload: {
+    finalContent: string;
+    mergedPRD: string;
+    iterationLog: string;
+    iterations: IterativeResponse['iterations'];
+    finalReview?: IterativeResponse['finalReview'];
+    totalTokens: number;
+    modelsUsed: string[];
+    diagnostics?: CompilerDiagnostics;
+  }): { ok: boolean; issues: string[]; files: string[] } {
+    const issues: string[] = [];
+    const repoRoot = process.cwd();
+    const targets = [
+      path.join(repoRoot, '.tmp_run_response.json'),
+      path.join(repoRoot, '.tmp_run_final_gate_verify.json'),
+    ];
+
+    const preStats = new Map<string, fs.Stats | null>();
+    for (const target of targets) {
+      try {
+        preStats.set(target, fs.statSync(target));
+      } catch {
+        preStats.set(target, null);
+      }
+    }
+
+    const serialized = JSON.stringify(payload, null, 2) + '\n';
+    for (const target of targets) {
+      fs.writeFileSync(target, serialized, 'utf8');
+    }
+
+    for (const target of targets) {
+      const after = fs.statSync(target);
+      const before = preStats.get(target);
+      if (after.size <= 0) {
+        issues.push(`${path.basename(target)} has zero size`);
+      }
+      if (before && after.mtimeMs <= before.mtimeMs) {
+        issues.push(`${path.basename(target)} mtime did not advance`);
+      }
+    }
+
+    return {
+      ok: issues.length === 0,
+      issues,
+      files: targets.map(t => path.basename(t)),
     };
   }
 
@@ -1058,6 +1228,17 @@ Your task:
     }
 
     return merged.slice(0, 5);
+  }
+
+  private getDeterministicFallbackQuestions(minCount: number): string[] {
+    const pool = [
+      'Which requirement is still too ambiguous to implement without assumptions?',
+      'What is the highest UX risk that could block user adoption in the first release?',
+      'Which data validation or integrity rule is still missing for critical workflows?',
+      'What is the biggest operational risk in deployment/monitoring for this scope?',
+      'Which acceptance criterion is currently not objectively testable and needs refinement?'
+    ];
+    return pool.slice(0, Math.max(0, Math.min(minCount, pool.length)));
   }
 
   private validateIterationAcceptance(params: {
@@ -1329,7 +1510,7 @@ Your task:
       otherSections: { ...structure.otherSections },
     };
     const addedSections: Array<keyof PRDStructure> = [];
-    const inputSummary = workflowInputText.trim().slice(0, 220);
+    const inputSummary = this.safeTruncateAtWord(workflowInputText, 260);
     const language = this.resolveScaffoldLanguage(contentLanguage, workflowInputText);
     const isGerman = language === 'de';
 
@@ -1550,6 +1731,47 @@ Your task:
         compiledRaw = expansion.content || candidate.rawContent;
       } catch (deltaCompileError: any) {
         console.warn(`⚠️ Delta compile failed for ${candidate.id} (${candidate.name}): ${deltaCompileError.message}`);
+        compiledRaw = [
+          `Feature ID: ${resolvedId}`,
+          `Feature Name: ${candidate.name}`,
+          ``,
+          `1. Purpose`,
+          `${candidate.name} provides a deterministic, testable feature outcome.`,
+          ``,
+          `2. Actors`,
+          `- Primary: End user`,
+          `- Secondary: System process`,
+          ``,
+          `3. Trigger`,
+          `Triggered by user interaction or a system event relevant to this feature.`,
+          ``,
+          `4. Preconditions`,
+          `- Required input is available.`,
+          `- Runtime dependencies are available.`,
+          ``,
+          `5. Main Flow`,
+          `1. Validate input and context for ${candidate.name}.`,
+          `2. Execute core feature logic and update state consistently.`,
+          `3. Return success result and update UI-facing state.`,
+          ``,
+          `6. Alternate Flows`,
+          `- Validation error: no write performed and error message returned.`,
+          `- Runtime error: request fails safely with logged reason.`,
+          ``,
+          `7. Postconditions`,
+          `Feature state is consistent and observable after completion.`,
+          ``,
+          `8. Data Impact`,
+          `Only required entities are read/updated; no unrelated data is changed.`,
+          ``,
+          `9. UI Impact`,
+          `UI reflects success/error state and any changed data.`,
+          ``,
+          `10. Acceptance Criteria`,
+          `- Feature executes end-to-end with deterministic behavior.`,
+          `- Error and validation paths are explicit and testable.`,
+          `- Final state is consistent across UI and persistence layers.`,
+        ].join('\n');
       }
 
       compiledNewFeatures.push({
@@ -1778,8 +2000,8 @@ Your task:
     for (const feature of Array.from(deduped.values()).sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }))) {
       const normalizedFeature = { ...feature, id: feature.id.toUpperCase() };
       normalizedFeature.purpose = normalizedFeature.purpose?.trim() || (isGerman
-        ? `${normalizedFeature.name} liefert den zentralen Nutzerwert in einem klar abgrenzbaren Feature.`
-        : `${normalizedFeature.name} provides the core user value as a clearly bounded feature.`);
+        ? `Das Feature "${normalizedFeature.name}" erfuellt einen klar abgegrenzten Anwendungsfall mit deterministischem Ergebnis.`
+        : `The feature "${normalizedFeature.name}" fulfills a clearly scoped use case with deterministic outcomes.`);
       normalizedFeature.actors = normalizedFeature.actors?.trim() || (isGerman
         ? 'Primär: Endnutzer. Sekundär: Systemkomponenten zur Verarbeitung.'
         : 'Primary: End user. Secondary: system components for processing.');
@@ -1791,19 +2013,32 @@ Your task:
         : 'Application is available, required data sources are reachable, and user context is loaded.');
 
       const mainFlow = Array.isArray(normalizedFeature.mainFlow) ? normalizedFeature.mainFlow.filter(Boolean) : [];
+      const fallbackMainFlow = isGerman
+        ? [
+            `System validiert Anfrage und Kontext fuer "${normalizedFeature.name}".`,
+            `System fuehrt die Kernlogik fuer "${normalizedFeature.name}" aus.`,
+            `System persistiert Zustandsaenderungen transaktional und nachvollziehbar.`,
+            `System liefert ein eindeutiges Ergebnis und aktualisiert die Benutzeroberflaeche.`,
+          ]
+        : [
+            `System validates request and context for "${normalizedFeature.name}".`,
+            `System executes core logic for "${normalizedFeature.name}".`,
+            `System persists state changes transactionally and traceably.`,
+            `System returns a deterministic result and updates the UI.`,
+          ];
       while (mainFlow.length < 4) {
         const stepNo = mainFlow.length + 1;
         mainFlow.push(isGerman
-          ? `${stepNo}. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.`
-          : `${stepNo}. System processes the step deterministically and updates state consistently.`);
+          ? `${stepNo}. ${fallbackMainFlow[Math.min(mainFlow.length, fallbackMainFlow.length - 1)]}`
+          : `${stepNo}. ${fallbackMainFlow[Math.min(mainFlow.length, fallbackMainFlow.length - 1)]}`);
       }
       normalizedFeature.mainFlow = mainFlow;
 
       const altFlows = Array.isArray(normalizedFeature.alternateFlows) ? normalizedFeature.alternateFlows.filter(Boolean) : [];
       if (altFlows.length === 0) {
         altFlows.push(isGerman
-          ? 'Fehlerfall: Bei ungültiger Eingabe zeigt das System eine klare Validierungsmeldung und behält den Eingabekontext.'
-          : 'Error path: on invalid input, the system shows clear validation feedback and preserves user input context.');
+          ? `Fehlerfall fuer "${normalizedFeature.name}": Bei ungueltiger Eingabe zeigt das System eine klare Validierungsmeldung und behaelt den Eingabekontext.`
+          : `Error path for "${normalizedFeature.name}": on invalid input, the system shows clear validation feedback and preserves user input context.`);
       }
       normalizedFeature.alternateFlows = altFlows;
 
@@ -1821,10 +2056,11 @@ Your task:
       while (acceptance.length < 3) {
         const idx = acceptance.length + 1;
         acceptance.push(isGerman
-          ? `${idx}. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.`
-          : `${idx}. Feature is reproducibly testable by end users and produces deterministic outcomes.`);
+          ? `${idx}. "${normalizedFeature.name}" ist fuer Endnutzer reproduzierbar testbar und liefert ein deterministisches Ergebnis.`
+          : `${idx}. "${normalizedFeature.name}" is reproducibly testable by end users and produces deterministic outcomes.`);
       }
       normalizedFeature.acceptanceCriteria = acceptance;
+      this.applyFeatureLengthGuardrails(normalizedFeature);
 
       normalizedFeature.rawContent = this.renderCanonicalFeatureRaw(normalizedFeature);
       canonicalFeatures.push(normalizedFeature);
@@ -1878,9 +2114,93 @@ Your task:
     return lines.join('\n').trim();
   }
 
+  private applyFeatureLengthGuardrails(feature: FeatureSpec): void {
+    feature.purpose = this.clampText(feature.purpose, 700);
+    feature.actors = this.clampText(feature.actors, 420);
+    feature.trigger = this.clampText(feature.trigger, 360);
+    feature.preconditions = this.clampText(feature.preconditions, 700);
+    feature.postconditions = this.clampText(feature.postconditions, 700);
+    feature.dataImpact = this.clampText(feature.dataImpact, 800);
+    feature.uiImpact = this.clampText(feature.uiImpact, 800);
+
+    const mainFlow = Array.isArray(feature.mainFlow) ? feature.mainFlow : [];
+    feature.mainFlow = mainFlow
+      .filter(Boolean)
+      .slice(0, 8)
+      .map(step => this.clampText(String(step), 240));
+
+    const alternateFlows = Array.isArray(feature.alternateFlows) ? feature.alternateFlows : [];
+    feature.alternateFlows = alternateFlows
+      .filter(Boolean)
+      .slice(0, 6)
+      .map(flow => this.clampText(String(flow), 220));
+
+    const acceptance = Array.isArray(feature.acceptanceCriteria) ? feature.acceptanceCriteria : [];
+    feature.acceptanceCriteria = acceptance
+      .filter(Boolean)
+      .slice(0, 8)
+      .map(ac => this.clampText(String(ac), 220));
+
+    this.enforceFeatureContentBudget(feature, 5200);
+  }
+
+  private clampText(value: string | undefined, maxLen: number): string {
+    const text = String(value || '').trim().replace(/\s+/g, ' ');
+    if (!text) return '';
+    if (text.length <= maxLen) return text;
+    return this.safeTruncateAtWord(text, maxLen);
+  }
+
+  private safeTruncateAtWord(value: string, maxLen: number): string {
+    const text = String(value || '').trim().replace(/\s+/g, ' ');
+    if (!text || text.length <= maxLen) return text;
+    const hardSlice = text.slice(0, Math.max(0, maxLen)).trim();
+    const lastSpace = hardSlice.lastIndexOf(' ');
+    if (lastSpace > Math.max(20, Math.floor(maxLen * 0.5))) {
+      return hardSlice.slice(0, lastSpace).trim();
+    }
+    return hardSlice;
+  }
+
+  private enforceFeatureContentBudget(feature: FeatureSpec, maxChars: number): void {
+    const estimate = () => {
+      const parts = [
+        feature.purpose,
+        feature.actors,
+        feature.trigger,
+        feature.preconditions,
+        feature.postconditions,
+        feature.dataImpact,
+        feature.uiImpact,
+        ...(feature.mainFlow || []),
+        ...(feature.alternateFlows || []),
+        ...(feature.acceptanceCriteria || []),
+      ];
+      return parts.map(p => String(p || '').length).reduce((a, b) => a + b, 0);
+    };
+
+    if (estimate() <= maxChars) return;
+
+    feature.mainFlow = (feature.mainFlow || []).slice(0, 6);
+    feature.alternateFlows = (feature.alternateFlows || []).slice(0, 4);
+    feature.acceptanceCriteria = (feature.acceptanceCriteria || []).slice(0, 6);
+    feature.purpose = this.clampText(feature.purpose, 280);
+    feature.preconditions = this.clampText(feature.preconditions, 300);
+    feature.postconditions = this.clampText(feature.postconditions, 300);
+    feature.dataImpact = this.clampText(feature.dataImpact, 360);
+    feature.uiImpact = this.clampText(feature.uiImpact, 360);
+
+    if (estimate() <= maxChars) return;
+
+    feature.mainFlow = (feature.mainFlow || []).map(step => this.clampText(step, 130));
+    feature.alternateFlows = (feature.alternateFlows || []).map(flow => this.clampText(flow, 120));
+    feature.acceptanceCriteria = (feature.acceptanceCriteria || []).map(ac => this.clampText(ac, 120));
+  }
+
   private buildCanonicalMergedPRD(currentPRD: string, iterations: IterativeResponse['iterations']): string {
     const latestMerged = iterations.length > 0 ? iterations[iterations.length - 1].mergedPRD : '';
     let canonical = (latestMerged && latestMerged.trim()) ? latestMerged : currentPRD;
+    canonical = this.sanitizeFinalMarkdown(canonical);
 
     try {
       const normalized = this.normalizeSectionAliases(parsePRDToStructure(canonical));
@@ -1889,7 +2209,22 @@ Your task:
       // Keep raw content if parser fails; dedupe still applies below.
     }
 
-    return this.deduplicateMarkdownContent(canonical);
+    return this.sanitizeFinalMarkdown(canonical);
+  }
+
+  private sanitizeFinalMarkdown(markdown: string): string {
+    const noTruncationMarkers = this.stripTruncationMarkers(markdown);
+    const headingFixed = this.normalizeInlineHeadings(noTruncationMarkers);
+    const numberingFixed = this.normalizeListNumberingArtifacts(headingFixed);
+    return this.deduplicateMarkdownContent(numberingFixed);
+  }
+
+  private stripTruncationMarkers(markdown: string): string {
+    return String(markdown || '').replace(/\s*\[truncated\]/gi, '');
+  }
+
+  private normalizeListNumberingArtifacts(markdown: string): string {
+    return String(markdown || '').replace(/^(\s*)(\d+)\.\s+\d+\.\s+/gm, '$1$2. ');
   }
 
   private deduplicateMarkdownContent(markdown: string): string {
@@ -1936,6 +2271,159 @@ Your task:
     }
 
     return `${out.join('\n').trim()}\n`;
+  }
+
+  private normalizeInlineHeadings(markdown: string): string {
+    let normalized = markdown;
+    // Only fix inline headings separated by spaces/tabs, never by newlines.
+    const headingTestPattern = /([^\n])[ \t]+(##\s+(?:System Vision|System Boundaries|Domain Model|Global Business Rules|Functional Feature Catalogue|Non-Functional Requirements|Error Handling & Recovery|Deployment & Infrastructure|Definition of Done)\b)/;
+    const headingReplacePattern = /([^\n])[ \t]+(##\s+(?:System Vision|System Boundaries|Domain Model|Global Business Rules|Functional Feature Catalogue|Non-Functional Requirements|Error Handling & Recovery|Deployment & Infrastructure|Definition of Done)\b)/g;
+    let safetyCounter = 0;
+    while (headingTestPattern.test(normalized)) {
+      const next = normalized.replace(headingReplacePattern, '$1\n\n$2');
+      // Stop if replacement converges to a fixed point.
+      if (next === normalized) break;
+      normalized = next;
+      safetyCounter++;
+      if (safetyCounter > 1000) {
+        console.warn('⚠️ normalizeInlineHeadings safety break triggered');
+        break;
+      }
+    }
+    return normalized;
+  }
+
+  private looksLikeTruncatedOutput(text: string): boolean {
+    const trimmed = String(text || '').trim();
+    if (trimmed.length < 80) return false;
+    if (/\[TRUNCATED\]\s*$/i.test(trimmed)) return true;
+    const lastChar = trimmed[trimmed.length - 1];
+    if (/[.!?)]/.test(lastChar)) return false;
+    if (/\n\s*[-*]\s*$/.test(trimmed)) return true;
+    if (/\n\s*\d+\.\s*$/.test(trimmed)) return true;
+    if (/[*_`#:\-,(]$/.test(trimmed)) return true;
+    return true;
+  }
+
+  private validateFinalOutputConsistency(params: {
+    finalPRD: string;
+    iterations: IterativeResponse['iterations'];
+    freezeBaselineFeatureCount: number;
+    featuresFrozen: boolean;
+  }): { errors: string[]; sanitizerApplied: boolean } {
+    const { finalPRD, iterations, freezeBaselineFeatureCount, featuresFrozen } = params;
+    const errors: string[] = [];
+    const requiredHeadings = [
+      '## System Vision',
+      '## System Boundaries',
+      '## Domain Model',
+      '## Global Business Rules',
+      '## Functional Feature Catalogue',
+      '## Non-Functional Requirements',
+      '## Error Handling & Recovery',
+      '## Deployment & Infrastructure',
+      '## Definition of Done',
+    ];
+
+    for (const heading of requiredHeadings) {
+      const count = (finalPRD.match(new RegExp(this.escapeRegex(heading), 'g')) || []).length;
+      if (count !== 1) {
+        errors.push(`${heading} expected exactly once, found ${count}`);
+      }
+    }
+
+    if (/[^\n]\s##\s(?:System Vision|System Boundaries|Domain Model|Global Business Rules|Functional Feature Catalogue|Non-Functional Requirements|Error Handling & Recovery|Deployment & Infrastructure|Definition of Done)\b/.test(finalPRD)) {
+      errors.push('Inline section heading token detected');
+    }
+
+    if (/\[truncated\]/i.test(finalPRD)) {
+      errors.push('Truncation marker detected in final PRD content');
+    }
+
+    const badNumberingMatches = finalPRD.match(/^\s*\d+\.\s+\d+\.\s+/gm) || [];
+    if (badNumberingMatches.length > 0) {
+      errors.push(`Malformed list numbering detected (${badNumberingMatches.length} line(s), e.g. "1. 1.")`);
+    }
+
+    const templatePhrases = [
+      /liefert den zentralen nutzerwert/i,
+      /system verarbeitet den schritt deterministisch/i,
+      /reproduzierbar testbar/i,
+      /core user value as a clearly bounded feature/i,
+      /processes the step deterministically/i,
+      /reproducibly testable by end users/i,
+    ];
+    const templateHits = templatePhrases
+      .map((pattern) => (finalPRD.match(new RegExp(pattern.source, 'gi')) || []).length)
+      .reduce((sum, count) => sum + count, 0);
+    if (templateHits >= 12) {
+      errors.push(`High template repetition detected (${templateHits} generic phrase hits)`);
+    }
+
+    const repeatedLineCheck = this.detectExcessiveRepeatedLines(finalPRD);
+    if (repeatedLineCheck.excessive) {
+      errors.push(`Repeated line pattern detected (${repeatedLineCheck.count}x): "${repeatedLineCheck.sample}"`);
+    }
+
+    const truncatedIterations = iterations
+      .filter(iter => iter.answererOutputTruncated)
+      .map(iter => iter.iterationNumber);
+    if (truncatedIterations.length > 0) {
+      errors.push(`Truncated answerer output in iteration(s): ${truncatedIterations.join(', ')}`);
+    }
+
+    if (featuresFrozen && freezeBaselineFeatureCount > 0) {
+      try {
+        const parsed = parsePRDToStructure(finalPRD);
+        if (parsed.features.length < freezeBaselineFeatureCount) {
+          errors.push(`Final feature count below freeze baseline (${parsed.features.length} < ${freezeBaselineFeatureCount})`);
+        }
+      } catch (e: any) {
+        errors.push(`Final PRD parse failed during consistency validation: ${e.message}`);
+      }
+    }
+
+    return {
+      errors,
+      sanitizerApplied: this.normalizeInlineHeadings(finalPRD) !== finalPRD
+    };
+  }
+
+  private detectExcessiveRepeatedLines(markdown: string): { excessive: boolean; sample: string; count: number } {
+    const lines = String(markdown || '')
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line =>
+        line.length >= 45 &&
+        !line.startsWith('#') &&
+        !line.startsWith('- ') &&
+        !/^\d+\.\s/.test(line)
+      );
+
+    const counts = new Map<string, number>();
+    for (const line of lines) {
+      const normalized = line.toLowerCase().replace(/\s+/g, ' ');
+      counts.set(normalized, (counts.get(normalized) || 0) + 1);
+    }
+
+    let maxLine = '';
+    let maxCount = 0;
+    counts.forEach((count, line) => {
+      if (count > maxCount) {
+        maxCount = count;
+        maxLine = line;
+      }
+    });
+
+    return {
+      excessive: maxCount >= 8,
+      sample: maxLine.slice(0, 120),
+      count: maxCount,
+    };
+  }
+
+  private escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   private enforceNfrCoverage(

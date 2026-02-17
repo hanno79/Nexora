@@ -98,7 +98,7 @@ class OpenRouterClient {
     modelType: 'generator' | 'reviewer',
     systemPrompt: string,
     userPrompt: string,
-    maxTokens: number = 4000,
+    maxTokens: number = 6000,
     temperature: number = 0.7
   ): Promise<{ content: string; usage: any; model: string }> {
     if (!this.apiKey) {
@@ -124,6 +124,10 @@ class OpenRouterClient {
       temperature
     };
 
+    const timeoutMs = Number(process.env.OPENROUTER_TIMEOUT_MS || 90000);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -135,8 +139,10 @@ class OpenRouterClient {
             : 'https://nexora.app',
           'X-Title': 'NEXORA - AI PRD Platform'
         },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(requestBody),
+        signal: controller.signal
       });
+      clearTimeout(timeout);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -191,7 +197,12 @@ class OpenRouterClient {
         model: data.model
       };
     } catch (error: any) {
+      clearTimeout(timeout);
       console.error(`Error calling ${modelName}:`, error.message);
+
+      if (error?.name === 'AbortError') {
+        throw new Error(`Model ${modelName} timed out after ${timeoutMs}ms. The system will try a fallback model.`);
+      }
       
       // Network errors
       if (error.message.includes('fetch failed') || error.message.includes('ECONNREFUSED')) {

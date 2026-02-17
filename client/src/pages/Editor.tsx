@@ -191,6 +191,15 @@ export default function Editor() {
   });
 
   const handleDualAiContentGenerated = (newContent: string, response: any) => {
+    if (!newContent || !newContent.trim()) {
+      toast({
+        title: "Error",
+        description: "Generated content is empty. Existing content was kept.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setContent(newContent);
     
     const newIterationLog = response.iterationLog || "";
@@ -825,6 +834,7 @@ export default function Editor() {
             open={showDualAiDialog}
             onOpenChange={setShowDualAiDialog}
             currentContent={content}
+            prdId={prdId}
             onContentGenerated={handleDualAiContentGenerated}
           />
           

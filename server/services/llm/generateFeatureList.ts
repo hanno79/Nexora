@@ -104,7 +104,7 @@ export async function generateFeatureList(
       'generator',
       systemPrompt,
       userPrompt,
-      3000
+      4000
     );
 
     const validation = validateFeatureList(result.content);

@@ -46,6 +46,7 @@ interface DualAiDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   currentContent: string;
+  prdId?: string;
   onContentGenerated: (content: string, response: any) => void;
 }
 
@@ -53,6 +54,7 @@ export function DualAiDialog({
   open,
   onOpenChange,
   currentContent,
+  prdId,
   onContentGenerated
 }: DualAiDialogProps) {
   const hasRealContent = !isScaffoldOnly(currentContent);
@@ -66,6 +68,7 @@ export function DualAiDialog({
   // Workflow mode: simple, iterative, or guided (new)
   const [workflowMode, setWorkflowMode] = useState<'simple' | 'iterative' | 'guided'>('simple');
   const [iterationCount, setIterationCount] = useState(3);
+  const [iterativeTimeoutMinutes, setIterativeTimeoutMinutes] = useState(30);
   const [useFinalReview, setUseFinalReview] = useState(false);
   const [currentIteration, setCurrentIteration] = useState(0);
   const [totalIterations, setTotalIterations] = useState(0);
@@ -89,12 +92,28 @@ export function DualAiDialog({
         if (settings.iterationCount) {
           setIterationCount(settings.iterationCount);
         }
+        if (settings.iterativeTimeoutMinutes) {
+          setIterativeTimeoutMinutes(settings.iterativeTimeoutMinutes);
+        }
         if (settings.useFinalReview !== undefined) {
           setUseFinalReview(settings.useFinalReview);
         }
       }
     } catch (err) {
       console.error('Failed to load AI settings:', err);
+    }
+  };
+
+  const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs: number): Promise<Response> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
     }
   };
 
@@ -116,7 +135,11 @@ export function DualAiDialog({
       }
     } catch (err: any) {
       console.error('AI generation error:', err);
-      setError(err.message || 'Failed to generate content');
+      if (err?.name === 'AbortError') {
+        setError('Generation timed out in UI. If the backend run completed, reload the PRD to see auto-saved results.');
+      } else {
+        setError(err.message || 'Failed to generate content');
+      }
       setCurrentStep('idle');
       setCurrentIteration(0);
       setTotalIterations(0);
@@ -126,15 +149,17 @@ export function DualAiDialog({
   };
 
   const handleSimpleGeneration = async () => {
-    const response = await fetch('/api/ai/generate-dual', {
+    const response = await fetchWithTimeout('/api/ai/generate-dual', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         userInput: userInput.trim(),
         existingContent: hasRealContent ? currentContent : undefined,
-        mode: hasRealContent ? 'improve' : 'generate'
-      })
-    });
+        mode: hasRealContent ? 'improve' : 'generate',
+        prdId
+      }),
+      credentials: 'include',
+    }, iterativeTimeoutMinutes * 60 * 1000);
 
     if (!response.ok) {
       const errorData = await response.json();
@@ -142,12 +167,16 @@ export function DualAiDialog({
     }
 
     const data = await response.json();
+    const finalContent = data.finalContent || data.mergedPRD || '';
+    if (!finalContent || !finalContent.trim()) {
+      throw new Error('AI returned no content. Please retry.');
+    }
     
     setGeneratorModel(data.generatorResponse.model);
     setReviewerModel(data.reviewerResponse.model);
     setCurrentStep('done');
     
-    onContentGenerated(data.finalContent, data);
+    onContentGenerated(finalContent, data);
     
     setTimeout(() => {
       onOpenChange(false);
@@ -159,7 +188,7 @@ export function DualAiDialog({
     setTotalIterations(iterationCount);
     setCurrentIteration(0);
     
-    const response = await fetch('/api/ai/generate-iterative', {
+    const response = await fetchWithTimeout('/api/ai/generate-iterative', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -167,9 +196,11 @@ export function DualAiDialog({
         additionalRequirements: userInput.trim() || undefined,
         mode: hasRealContent ? 'improve' : 'generate',
         iterationCount,
-        useFinalReview
-      })
-    });
+        useFinalReview,
+        prdId
+      }),
+      credentials: 'include',
+    }, iterativeTimeoutMinutes * 60 * 1000);
 
     if (!response.ok) {
       const errorData = await response.json();
@@ -177,6 +208,10 @@ export function DualAiDialog({
     }
 
     const data = await response.json();
+    const finalContent = data.finalContent || data.mergedPRD || '';
+    if (!finalContent || !finalContent.trim()) {
+      throw new Error('AI returned no content. Please retry.');
+    }
     
     setCurrentStep('iterating');
     
@@ -192,7 +227,7 @@ export function DualAiDialog({
     }
     
     setCurrentStep('done');
-    onContentGenerated(data.finalContent, data);
+    onContentGenerated(finalContent, data);
     
     setTimeout(() => {
       onOpenChange(false);

@@ -533,6 +533,7 @@ interface IterationData {
   iterationNumber: number;
   generatorOutput: string; // PRD draft + questions
   answererOutput: string; // Best practice answers
+  answererOutputTruncated?: boolean;
   questions: string[];
   mergedPRD: string;
   tokensUsed: number;
@@ -556,6 +557,11 @@ interface CompilerDiagnostics {
   freezeSeedSource?: 'none' | 'existingContent' | 'compiledExpansion';
   nfrGlobalCategoryAdds?: number;
   nfrFeatureCriteriaAdds?: number;
+  finalValidationPassed?: boolean;
+  finalValidationErrors?: number;
+  finalSanitizerApplied?: boolean;
+  artifactWriteConsistency?: boolean;
+  artifactWriteIssues?: number;
 }
 
 interface IterativeResponse {

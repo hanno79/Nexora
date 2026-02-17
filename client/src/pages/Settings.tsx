@@ -44,6 +44,7 @@ export default function Settings() {
   const [savedTierModels, setSavedTierModels] = useState<Record<string, { generatorModel?: string; reviewerModel?: string; fallbackModel?: string }>>({});
   const [iterativeMode, setIterativeMode] = useState(false);
   const [iterationCount, setIterationCount] = useState(3);
+  const [iterativeTimeoutMinutes, setIterativeTimeoutMinutes] = useState(30);
   const [useFinalReview, setUseFinalReview] = useState(false);
   const [guidedQuestionRounds, setGuidedQuestionRounds] = useState(3);
 
@@ -97,6 +98,7 @@ export default function Settings() {
     };
     iterativeMode?: boolean;
     iterationCount?: number;
+    iterativeTimeoutMinutes?: number;
     useFinalReview?: boolean;
     guidedQuestionRounds?: number;
   }>({
@@ -114,6 +116,7 @@ export default function Settings() {
       setTierDefaults(aiPreferences.tierDefaults || {});
       setIterativeMode(aiPreferences.iterativeMode || false);
       setIterationCount(aiPreferences.iterationCount || 3);
+      setIterativeTimeoutMinutes(aiPreferences.iterativeTimeoutMinutes || 30);
       setUseFinalReview(aiPreferences.useFinalReview || false);
       setGuidedQuestionRounds(aiPreferences.guidedQuestionRounds || 3);
     }
@@ -243,6 +246,7 @@ export default function Settings() {
         tierDefaults,
         iterativeMode,
         iterationCount,
+        iterativeTimeoutMinutes,
         useFinalReview,
         guidedQuestionRounds,
       });
@@ -693,6 +697,27 @@ export default function Settings() {
                       />
                       <p className="text-xs text-muted-foreground">
                         Number of Q&A cycles between AI #1 and AI #2 (2-5 iterations)
+                      </p>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="iterative-timeout-minutes">
+                          Iterative Timeout: {iterativeTimeoutMinutes} min
+                        </Label>
+                      </div>
+                      <Slider
+                        id="iterative-timeout-minutes"
+                        min={5}
+                        max={120}
+                        step={5}
+                        value={[iterativeTimeoutMinutes]}
+                        onValueChange={(value) => setIterativeTimeoutMinutes(value[0])}
+                        className="w-full"
+                        data-testid="slider-iterative-timeout"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Maximum wait time in the UI for iterative generation (5-120 minutes)
                       </p>
                     </div>
 
