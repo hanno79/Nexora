@@ -48,19 +48,19 @@ interface RawSection {
   body: string;
 }
 
-function normalizeBrokenHeadingBoundaries(markdown: string): string {
+export function normalizeBrokenHeadingBoundaries(markdown: string): string {
   // Some model outputs place "## Heading" inline after a sentence.
   // Normalize these cases so section splitting remains deterministic.
   return markdown.replace(/([^\n])[ \t]+(#{1,2}\s+[^\n#]+)/g, '$1\n\n$2');
 }
 
-function normalizeFeatureId(value: string): string {
+export function normalizeFeatureId(value: string): string {
   const match = String(value || '').toUpperCase().match(/F-(\d+)/);
   if (!match) return '';
   return `F-${match[1].padStart(2, '0')}`;
 }
 
-function dedupeFeatures(features: FeatureSpec[]): FeatureSpec[] {
+export function dedupeFeatures(features: FeatureSpec[]): FeatureSpec[] {
   const byId = new Map<string, FeatureSpec>();
   for (const feature of features) {
     const id = normalizeFeatureId(feature.id);
@@ -86,7 +86,7 @@ function dedupeFeatures(features: FeatureSpec[]): FeatureSpec[] {
   );
 }
 
-function splitIntoSections(markdown: string): RawSection[] {
+export function splitIntoSections(markdown: string): RawSection[] {
   const sections: RawSection[] = [];
   const normalizedMarkdown = normalizeBrokenHeadingBoundaries(markdown);
   const lines = normalizedMarkdown.split('\n');

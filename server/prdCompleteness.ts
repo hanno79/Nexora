@@ -1,7 +1,7 @@
 import type { PRDStructure, PRDStructureMetadata, FeatureCompleteness, FeatureSpec, STRUCTURED_FIELD_NAMES } from './prdStructure';
 import { STRUCTURED_FIELD_NAMES as FIELDS } from './prdStructure';
 
-function hasValue(val: unknown): boolean {
+export function hasValue(val: unknown): boolean {
   if (Array.isArray(val)) return val.length > 0;
   if (typeof val === 'string') return val.trim().length > 0;
   return false;

@@ -9,12 +9,19 @@ import { exportToDart, updateDartDoc, checkDartConnection, getDartboards } from 
 import { generatePDF, generateWord } from "./exportUtils";
 import { generateClaudeMD } from "./claudemdGenerator";
 import { initializeTemplates } from "./initTemplates";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { parsePRDToStructure } from "./prdParser";
 import { computeCompleteness } from "./prdCompleteness";
 import type { PRDStructure } from "./prdStructure";
+import {
+  updateUserSchema,
+  createTemplateSchema,
+  updatePrdSchema,
+  requestApprovalSchema,
+  respondApprovalSchema,
+} from "./schemas";
 
 /**
  * Synchronizes PRD content header metadata with actual PRD data.
@@ -92,36 +99,34 @@ async function requirePrdAccess(
   return prd;
 }
 
-// Validation schemas for endpoints that previously lacked Zod validation
-const updateUserSchema = z.object({
-  firstName: z.string().max(100).nullish(),
-  lastName: z.string().max(100).nullish(),
-  company: z.string().max(200).nullish(),
-  role: z.string().max(100).nullish(),
-});
+// Rate-limiter factory — reusable in-memory per-IP limiter
+function createRateLimiter(maxRequests: number, windowMs: number = 60000) {
+  const map = new Map<string, { count: number; resetAt: number }>();
+  return (req: any, res: any, next: any) => {
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+    const now = Date.now();
+    const entry = map.get(ip);
+    if (entry && now < entry.resetAt) {
+      if (entry.count >= maxRequests) {
+        return res.status(429).json({ message: 'Too many requests' });
+      }
+      entry.count++;
+    } else {
+      map.set(ip, { count: 1, resetAt: now + windowMs });
+    }
+    if (map.size > 1000) {
+      for (const [key, val] of map) {
+        if (now >= val.resetAt) map.delete(key);
+      }
+    }
+    next();
+  };
+}
 
-const createTemplateSchema = z.object({
-  name: z.string().min(1, "Name is required").max(200),
-  description: z.string().max(2000).nullish(),
-  category: z.string().max(50).default('custom'),
-  content: z.string().min(1, "Content is required"),
-});
-
-const updatePrdSchema = z.object({
-  title: z.string().min(1).max(500).optional(),
-  description: z.string().max(5000).nullish(),
-  content: z.string().optional(),
-  status: z.enum(['draft', 'in-progress', 'review', 'pending-approval', 'approved', 'completed']).optional(),
-  language: z.string().max(10).optional(),
-}).passthrough(); // Allow structuredContent, structuredAt, iterationLog, etc.
-
-const requestApprovalSchema = z.object({
-  reviewers: z.array(z.string()).min(1, "At least one reviewer is required").max(20),
-});
-
-const respondApprovalSchema = z.object({
-  approved: z.boolean(),
-});
+const aiRateLimiter = createRateLimiter(5, 60000);     // 5 AI calls/min
+const writeRateLimiter = createRateLimiter(30, 60000);  // 30 writes/min
+const authRateLimiter = createRateLimiter(10, 60000);   // 10 auth attempts/min
+const errorRateLimiter = createRateLimiter(10, 60000);  // 10 error reports/min
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Initialize templates
@@ -129,6 +134,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // Auth middleware
   await setupAuth(app);
+
+  // Health-check endpoint (no auth required)
+  app.get('/api/health', async (_req, res) => {
+    try {
+      await pool.query('SELECT 1');
+      res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    } catch {
+      res.status(503).json({ status: 'error', timestamp: new Date().toISOString() });
+    }
+  });
 
   // Auth routes
   app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
@@ -142,7 +157,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch('/api/auth/user', isAuthenticated, async (req: any, res) => {
+  app.patch('/api/auth/user', isAuthenticated, authRateLimiter, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
       const validated = updateUserSchema.parse(req.body);
@@ -326,7 +341,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/prds', isAuthenticated, async (req: any, res) => {
+  app.post('/api/prds', isAuthenticated, writeRateLimiter, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
       const prdData = insertPrdSchema.parse({
@@ -345,7 +360,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch('/api/prds/:id', isAuthenticated, async (req: any, res) => {
+  app.patch('/api/prds/:id', isAuthenticated, writeRateLimiter, async (req: any, res) => {
     try {
       const { id } = req.params;
       const prd = await requirePrdAccess(req, res, id, 'edit');
@@ -397,7 +412,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete('/api/prds/:id', isAuthenticated, async (req: any, res) => {
+  app.delete('/api/prds/:id', isAuthenticated, writeRateLimiter, async (req: any, res) => {
     try {
       const { id } = req.params;
       const prd = await storage.getPrd(id);
@@ -441,7 +456,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/templates', isAuthenticated, async (req: any, res) => {
+  app.post('/api/templates', isAuthenticated, writeRateLimiter, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
       const validated = createTemplateSchema.parse(req.body);
@@ -798,7 +813,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // AI generation route (legacy - uses single Anthropic model)
-  app.post('/api/ai/generate', isAuthenticated, async (req: any, res) => {
+  app.post('/api/ai/generate', isAuthenticated, aiRateLimiter, async (req: any, res) => {
     try {
       const { prompt, currentContent } = req.body;
       
@@ -834,7 +849,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { getDualAiService } = await import('./dualAiService');
   const { logAiUsage } = await import('./aiUsageLogger');
   
-  app.post('/api/ai/generate-dual', isAuthenticated, async (req: any, res) => {
+  app.post('/api/ai/generate-dual', isAuthenticated, aiRateLimiter, async (req: any, res) => {
     try {
       // Check if OpenRouter is configured
       if (!isOpenRouterConfigured()) {
@@ -906,7 +921,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/ai/review', isAuthenticated, async (req: any, res) => {
+  app.post('/api/ai/review', isAuthenticated, aiRateLimiter, async (req: any, res) => {
     try {
       // Check if OpenRouter is configured
       if (!isOpenRouterConfigured()) {
@@ -945,7 +960,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/ai/generate-iterative', isAuthenticated, async (req: any, res) => {
+  app.post('/api/ai/generate-iterative', isAuthenticated, aiRateLimiter, async (req: any, res) => {
     try {
       // Check if OpenRouter is configured
       if (!isOpenRouterConfigured()) {
@@ -1132,7 +1147,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { getGuidedAiService } = await import('./guidedAiService');
   
   // Start guided workflow - returns initial analysis + questions
-  app.post('/api/ai/guided-start', isAuthenticated, async (req: any, res) => {
+  app.post('/api/ai/guided-start', isAuthenticated, aiRateLimiter, async (req: any, res) => {
     try {
       if (!isOpenRouterConfigured()) {
         return res.status(503).json({ 
@@ -1158,7 +1173,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Process user answers - returns refined plan + optional follow-up questions
-  app.post('/api/ai/guided-answer', isAuthenticated, async (req: any, res) => {
+  app.post('/api/ai/guided-answer', isAuthenticated, aiRateLimiter, async (req: any, res) => {
     try {
       if (!isOpenRouterConfigured()) {
         return res.status(503).json({ 
@@ -1192,7 +1207,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Finalize PRD generation after guided workflow
-  app.post('/api/ai/guided-finalize', isAuthenticated, async (req: any, res) => {
+  app.post('/api/ai/guided-finalize', isAuthenticated, aiRateLimiter, async (req: any, res) => {
     try {
       if (!isOpenRouterConfigured()) {
         return res.status(503).json({ 
@@ -1230,7 +1245,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Skip guided workflow and generate PRD directly
-  app.post('/api/ai/guided-skip', isAuthenticated, async (req: any, res) => {
+  app.post('/api/ai/guided-skip', isAuthenticated, aiRateLimiter, async (req: any, res) => {
     try {
       if (!isOpenRouterConfigured()) {
         return res.status(503).json({ 
@@ -1469,29 +1484,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Error logging endpoint — rate-limited, sanitized input
-  const errorRateMap = new Map<string, { count: number; resetAt: number }>();
-  const ERROR_RATE_LIMIT = 10; // max 10 per minute per IP
-
-  app.post('/api/errors', (req: any, res, next) => {
-    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
-    const now = Date.now();
-    const entry = errorRateMap.get(ip);
-    if (entry && now < entry.resetAt) {
-      if (entry.count >= ERROR_RATE_LIMIT) {
-        return res.status(429).json({ message: 'Too many error reports' });
-      }
-      entry.count++;
-    } else {
-      errorRateMap.set(ip, { count: 1, resetAt: now + 60000 });
-    }
-    // Cleanup stale entries every 100 requests
-    if (errorRateMap.size > 1000) {
-      for (const [key, val] of errorRateMap) {
-        if (now >= val.resetAt) errorRateMap.delete(key);
-      }
-    }
-    next();
-  }, async (req: any, res) => {
+  app.post('/api/errors', errorRateLimiter, async (req: any, res) => {
     try {
       const message = String(req.body.message || '').slice(0, 2000);
       const stack = String(req.body.stack || '').slice(0, 2000);
