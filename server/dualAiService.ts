@@ -2046,73 +2046,182 @@ Your task:
     }
 
     const canonicalFeatures: FeatureSpec[] = [];
+    // Rotate through variant pools so each feature gets distinct default text
+    const pick = <T>(variants: T[], idx: number): T => variants[idx % variants.length];
+    let featureIndex = 0;
     for (const feature of Array.from(deduped.values()).sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }))) {
       const normalizedFeature = { ...feature, id: feature.id.toUpperCase() };
-      normalizedFeature.purpose = normalizedFeature.purpose?.trim() || (isGerman
-        ? `Das Feature "${normalizedFeature.name}" erfuellt einen klar abgegrenzten Anwendungsfall mit deterministischem Ergebnis.`
-        : `The feature "${normalizedFeature.name}" fulfills a clearly scoped use case with deterministic outcomes.`);
-      normalizedFeature.actors = normalizedFeature.actors?.trim() || (isGerman
-        ? 'Primär: Endnutzer. Sekundär: Systemkomponenten zur Verarbeitung.'
-        : 'Primary: End user. Secondary: system components for processing.');
-      normalizedFeature.trigger = normalizedFeature.trigger?.trim() || (isGerman
-        ? 'Wird ausgelöst, wenn der Nutzer die zugehörige Aktion in der Oberfläche startet.'
-        : 'Triggered when the user initiates the corresponding action in the interface.');
-      normalizedFeature.preconditions = normalizedFeature.preconditions?.trim() || (isGerman
-        ? 'Anwendung ist verfügbar, notwendige Datenquellen sind erreichbar, Nutzerkontext ist geladen.'
-        : 'Application is available, required data sources are reachable, and user context is loaded.');
+      const n = normalizedFeature.name;
+      const fi = featureIndex;
 
+      // --- purpose ---
+      normalizedFeature.purpose = normalizedFeature.purpose?.trim() || pick(isGerman ? [
+        `"${n}" deckt einen eigenstaendigen Anwendungsfall ab und liefert ein klar definiertes Ergebnis.`,
+        `Das Feature "${n}" ermoeglicht eine abgeschlossene Nutzerinteraktion mit pruefbarem Resultat.`,
+        `"${n}" stellt eine atomare Funktionseinheit dar, die unabhaengig getestet und ausgeliefert werden kann.`,
+      ] : [
+        `"${n}" covers a self-contained use case and produces a well-defined outcome.`,
+        `The feature "${n}" enables a complete user interaction with a verifiable result.`,
+        `"${n}" represents an atomic functional unit that can be tested and shipped independently.`,
+      ], fi);
+
+      // --- actors ---
+      normalizedFeature.actors = normalizedFeature.actors?.trim() || pick(isGerman ? [
+        `Hauptakteur: Endnutzer, der "${n}" auslöst. Unterstuetzend: Backend-Services zur Datenverarbeitung.`,
+        `Anwender im Kontext von "${n}". Sekundaer: Datenhaltungs- und Validierungskomponenten.`,
+        `Nutzer interagiert direkt mit "${n}". Systemseitig: Persistenz- und Benachrichtigungsdienste.`,
+      ] : [
+        `Primary actor: end user invoking "${n}". Supporting: backend services for data processing.`,
+        `Application user in the context of "${n}". Secondary: persistence and validation layers.`,
+        `User interacts directly with "${n}". System-side: storage and notification services.`,
+      ], fi);
+
+      // --- trigger ---
+      normalizedFeature.trigger = normalizedFeature.trigger?.trim() || pick(isGerman ? [
+        `Nutzer startet "${n}" ueber die entsprechende Aktion in der Oberflaeche.`,
+        `Ausgeloest durch explizite Nutzerinteraktion im Kontext von "${n}".`,
+        `Systemereignis oder Nutzereingabe initiiert den Ablauf von "${n}".`,
+      ] : [
+        `User starts "${n}" via the corresponding action in the interface.`,
+        `Triggered by explicit user interaction in the context of "${n}".`,
+        `System event or user input initiates the "${n}" workflow.`,
+      ], fi);
+
+      // --- preconditions ---
+      normalizedFeature.preconditions = normalizedFeature.preconditions?.trim() || pick(isGerman ? [
+        `Anwendung ist geladen, Nutzerkontext fuer "${n}" ist verfuegbar, Datenquellen erreichbar.`,
+        `System ist betriebsbereit und alle fuer "${n}" benoetigten Abhaengigkeiten sind initialisiert.`,
+        `Authentifizierung (falls erforderlich) ist abgeschlossen, "${n}" kann aufgerufen werden.`,
+      ] : [
+        `Application is loaded, user context for "${n}" is available, data sources reachable.`,
+        `System is operational and all dependencies required by "${n}" are initialized.`,
+        `Authentication (if required) is complete, "${n}" can be invoked.`,
+      ], fi);
+
+      // --- mainFlow ---
       const mainFlow = Array.isArray(normalizedFeature.mainFlow) ? normalizedFeature.mainFlow.filter(Boolean) : [];
-      const fallbackMainFlow = isGerman
-        ? [
-            `System validiert Anfrage und Kontext fuer "${normalizedFeature.name}".`,
-            `System fuehrt die Kernlogik fuer "${normalizedFeature.name}" aus.`,
-            `System persistiert Zustandsaenderungen transaktional und nachvollziehbar.`,
-            `System liefert ein eindeutiges Ergebnis und aktualisiert die Benutzeroberflaeche.`,
-          ]
-        : [
-            `System validates request and context for "${normalizedFeature.name}".`,
-            `System executes core logic for "${normalizedFeature.name}".`,
-            `System persists state changes transactionally and traceably.`,
-            `System returns a deterministic result and updates the UI.`,
-          ];
-      while (mainFlow.length < 4) {
-        const stepNo = mainFlow.length + 1;
-        mainFlow.push(isGerman
-          ? `${stepNo}. ${fallbackMainFlow[Math.min(mainFlow.length, fallbackMainFlow.length - 1)]}`
-          : `${stepNo}. ${fallbackMainFlow[Math.min(mainFlow.length, fallbackMainFlow.length - 1)]}`);
+      if (mainFlow.length < 4) {
+        const fallbackStepsDE = [
+          [`Nutzer loest "${n}" aus und das System validiert die Eingabe.`,
+           `Kernlogik von "${n}" wird ausgefuehrt und Ergebnis berechnet.`,
+           `Zustandsaenderungen werden persistent und nachvollziehbar gespeichert.`,
+           `Oberflaeche wird mit dem Ergebnis von "${n}" aktualisiert.`],
+          [`System empfaengt die Anfrage fuer "${n}" und prueft Vorbedingungen.`,
+           `Geschaeftsregeln fuer "${n}" werden angewendet.`,
+           `Resultierende Daten werden transaktional in die Persistenzschicht geschrieben.`,
+           `Nutzer erhaelt visuelles Feedback ueber den Abschluss von "${n}".`],
+          [`Eingabedaten fuer "${n}" werden entgegengenommen und validiert.`,
+           `"${n}"-spezifische Verarbeitungslogik wird durchlaufen.`,
+           `Aenderungen werden atomar gespeichert und protokolliert.`,
+           `UI spiegelt den neuen Zustand nach "${n}" wider.`],
+        ];
+        const fallbackStepsEN = [
+          [`User triggers "${n}" and the system validates the input.`,
+           `Core logic of "${n}" executes and computes the result.`,
+           `State changes are persisted durably and traceably.`,
+           `Interface is updated with the outcome of "${n}".`],
+          [`System receives the "${n}" request and checks preconditions.`,
+           `Business rules for "${n}" are applied.`,
+           `Resulting data is written transactionally to the persistence layer.`,
+           `User receives visual feedback on "${n}" completion.`],
+          [`Input data for "${n}" is received and validated.`,
+           `"${n}"-specific processing logic is executed.`,
+           `Changes are stored atomically and logged.`,
+           `UI reflects the new state after "${n}".`],
+        ];
+        const steps = pick(isGerman ? fallbackStepsDE : fallbackStepsEN, fi);
+        while (mainFlow.length < 4) {
+          const stepNo = mainFlow.length + 1;
+          mainFlow.push(`${stepNo}. ${steps[Math.min(mainFlow.length, steps.length - 1)]}`);
+        }
       }
       normalizedFeature.mainFlow = mainFlow;
 
+      // --- alternateFlows ---
       const altFlows = Array.isArray(normalizedFeature.alternateFlows) ? normalizedFeature.alternateFlows.filter(Boolean) : [];
       if (altFlows.length === 0) {
-        altFlows.push(isGerman
-          ? `Fehlerfall fuer "${normalizedFeature.name}": Bei ungueltiger Eingabe zeigt das System eine klare Validierungsmeldung und behaelt den Eingabekontext.`
-          : `Error path for "${normalizedFeature.name}": on invalid input, the system shows clear validation feedback and preserves user input context.`);
+        altFlows.push(pick(isGerman ? [
+          `Fehlerfall fuer "${n}": Bei ungueltiger Eingabe zeigt das System eine Validierungsmeldung und behaelt den Eingabekontext.`,
+          `Alternativpfad fuer "${n}": Bei fehlenden Daten wird der Nutzer zur Korrektur aufgefordert, ohne bisherige Eingaben zu verlieren.`,
+          `Abbruchpfad fuer "${n}": Nutzer kann den Vorgang jederzeit abbrechen; bereits erfasste Daten bleiben im Entwurfszustand erhalten.`,
+        ] : [
+          `Error path for "${n}": on invalid input, the system shows validation feedback and preserves user input.`,
+          `Alternate path for "${n}": on missing data, the user is prompted to correct input without losing prior entries.`,
+          `Cancellation path for "${n}": user can abort at any time; already captured data is kept in draft state.`,
+        ], fi));
       }
       normalizedFeature.alternateFlows = altFlows;
 
-      normalizedFeature.postconditions = normalizedFeature.postconditions?.trim() || (isGerman
-        ? 'Nach Abschluss ist der Feature-Zustand konsistent gespeichert und für Folgeprozesse verfügbar.'
-        : 'After completion, feature state is stored consistently and available for follow-up processes.');
-      normalizedFeature.dataImpact = normalizedFeature.dataImpact?.trim() || (isGerman
-        ? 'Relevante Entitäten werden gelesen/geschrieben; Änderungen sind nachvollziehbar und konsistent.'
-        : 'Relevant entities are read/written; changes are traceable and consistent.');
-      normalizedFeature.uiImpact = normalizedFeature.uiImpact?.trim() || (isGerman
-        ? 'UI stellt den Status transparent dar und bietet klare Rückmeldungen für Erfolg und Fehler.'
-        : 'UI exposes status transparently and provides clear success/failure feedback.');
+      // --- postconditions ---
+      normalizedFeature.postconditions = normalizedFeature.postconditions?.trim() || pick(isGerman ? [
+        `Nach Abschluss von "${n}" ist der Zustand konsistent gespeichert und fuer Folgeprozesse verfuegbar.`,
+        `"${n}" hinterlaesst einen nachvollziehbaren Datenzustand, der von nachgelagerten Features genutzt werden kann.`,
+        `Alle durch "${n}" ausgeloesten Aenderungen sind persistiert und das System ist fuer die naechste Aktion bereit.`,
+      ] : [
+        `After "${n}" completes, state is stored consistently and available for downstream processes.`,
+        `"${n}" leaves a traceable data state that downstream features can consume.`,
+        `All changes triggered by "${n}" are persisted and the system is ready for the next action.`,
+      ], fi);
 
+      // --- dataImpact ---
+      normalizedFeature.dataImpact = normalizedFeature.dataImpact?.trim() || pick(isGerman ? [
+        `"${n}" liest und schreibt die zugehoerigen Entitaeten; Aenderungen sind atomar und nachvollziehbar.`,
+        `Datenbankoperationen von "${n}" betreffen die Kern-Entitaeten des Features und werden transaktional ausgefuehrt.`,
+        `"${n}" erzeugt oder aktualisiert Datensaetze, die fuer die Integritaet des Gesamtsystems relevant sind.`,
+      ] : [
+        `"${n}" reads and writes its associated entities; changes are atomic and traceable.`,
+        `Database operations of "${n}" affect the feature's core entities and execute transactionally.`,
+        `"${n}" creates or updates records relevant to overall system integrity.`,
+      ], fi);
+
+      // --- uiImpact ---
+      normalizedFeature.uiImpact = normalizedFeature.uiImpact?.trim() || pick(isGerman ? [
+        `Die Oberflaeche zeigt den Zustand von "${n}" transparent an und gibt klare Erfolgs- oder Fehlerrueckmeldung.`,
+        `"${n}" aktualisiert die betroffenen UI-Komponenten in Echtzeit und zeigt Ladezustaende bei laengeren Operationen.`,
+        `Nach Ausfuehrung von "${n}" wird das relevante UI-Element visuell aktualisiert, ohne vollstaendigen Seitenneuladen.`,
+      ] : [
+        `The interface displays "${n}" state transparently and provides clear success or error feedback.`,
+        `"${n}" updates affected UI components in real time and shows loading states for longer operations.`,
+        `After "${n}" executes, the relevant UI element is visually refreshed without a full page reload.`,
+      ], fi);
+
+      // --- acceptanceCriteria ---
       const acceptance = Array.isArray(normalizedFeature.acceptanceCriteria) ? normalizedFeature.acceptanceCriteria.filter(Boolean) : [];
-      while (acceptance.length < 3) {
-        const idx = acceptance.length + 1;
-        acceptance.push(isGerman
-          ? `${idx}. "${normalizedFeature.name}" ist fuer Endnutzer reproduzierbar testbar und liefert ein deterministisches Ergebnis.`
-          : `${idx}. "${normalizedFeature.name}" is reproducibly testable by end users and produces deterministic outcomes.`);
+      if (acceptance.length < 3) {
+        const criteriaPoolDE = [
+          [`"${n}" kann vom Endnutzer erfolgreich durchgefuehrt werden und das erwartete Ergebnis ist sichtbar.`,
+           `Fehlerfaelle in "${n}" fuehren zu verstaendlichen Meldungen ohne Datenverlust.`,
+           `"${n}" ist innerhalb der definierten Performanz-Grenzen ausfuehrbar.`],
+          [`Ein Testnutzer kann "${n}" ohne externe Hilfe abschliessen.`,
+           `Alle Zustandsaenderungen durch "${n}" sind nach Ausfuehrung in der Datenschicht verifizierbar.`,
+           `"${n}" verhaelt sich bei wiederholter Ausfuehrung identisch (idempotent, soweit zutreffend).`],
+          [`"${n}" erzeugt bei korrekter Eingabe stets das gleiche definierte Ergebnis.`,
+           `Randfaelle und Fehlereingaben in "${n}" sind abgefangen und dokumentiert.`,
+           `"${n}" ist ueber die Oberflaeche und optional per API ausloesbar.`],
+        ];
+        const criteriaPoolEN = [
+          [`"${n}" can be completed successfully by the end user and the expected outcome is visible.`,
+           `Error cases in "${n}" produce understandable messages without data loss.`,
+           `"${n}" executes within defined performance boundaries.`],
+          [`A test user can complete "${n}" without external assistance.`,
+           `All state changes from "${n}" are verifiable in the data layer after execution.`,
+           `"${n}" behaves identically on repeated execution (idempotent where applicable).`],
+          [`"${n}" produces the same defined outcome given correct input.`,
+           `Edge cases and invalid inputs in "${n}" are handled and documented.`,
+           `"${n}" is invocable through the UI and optionally via API.`],
+        ];
+        const pool = pick(isGerman ? criteriaPoolDE : criteriaPoolEN, fi);
+        while (acceptance.length < 3) {
+          const idx = acceptance.length;
+          acceptance.push(`${idx + 1}. ${pool[Math.min(idx, pool.length - 1)]}`);
+        }
       }
       normalizedFeature.acceptanceCriteria = acceptance;
       this.applyFeatureLengthGuardrails(normalizedFeature);
 
       normalizedFeature.rawContent = this.renderCanonicalFeatureRaw(normalizedFeature);
       canonicalFeatures.push(normalizedFeature);
+      featureIndex++;
     }
 
     return {
