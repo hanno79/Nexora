@@ -1,11 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useRoute } from "wouter";
-import { 
-  ArrowLeft, 
-  Save, 
-  Download, 
-  Clock, 
+import {
+  ArrowLeft,
+  Save,
+  Download,
+  Clock,
   Sparkles,
   FileDown,
   Send,
@@ -16,7 +16,8 @@ import {
   FileText,
   ScrollText,
   BarChart3,
-  RefreshCw
+  RefreshCw,
+  Keyboard
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +31,8 @@ import { VersionHistory } from "@/components/VersionHistory";
 import { SharePRDDialog } from "@/components/SharePRDDialog";
 import { DualAiDialog } from "@/components/DualAiDialog";
 import { DartExportDialog } from "@/components/DartExportDialog";
+import { KeyboardShortcutsHelp } from "@/components/KeyboardShortcutsHelp";
+import { useWebSocket } from "@/lib/useWebSocket";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import {
@@ -98,6 +101,7 @@ export default function Editor() {
   const [showMobileSheet, setShowMobileSheet] = useState(false);
   const [mobileSheetTab, setMobileSheetTab] = useState<"comments" | "versions">("comments");
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
 
   const { data: prd, isLoading } = useQuery<Prd>({
     queryKey: ["/api/prds", prdId],
@@ -165,6 +169,41 @@ export default function Editor() {
       });
     },
   });
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+
+      if (mod && e.key === 's') {
+        e.preventDefault();
+        saveMutation.mutate();
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === 'e') {
+        e.preventDefault();
+        exportMutation.mutate('pdf');
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        setShowDualAiDialog(true);
+      } else if (mod && e.key === '/') {
+        e.preventDefault();
+        setShowShortcutsHelp(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [saveMutation, exportMutation]);
+
+  // WebSocket for real-time updates
+  useWebSocket(prdId, useCallback((event) => {
+    if (event.type === 'prd:updated') {
+      queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId] });
+    } else if (event.type === 'comment:added') {
+      queryClient.invalidateQueries({ queryKey: [`/api/prds/${prdId}/comments`] });
+    } else if (event.type === 'approval:updated') {
+      queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId] });
+      queryClient.invalidateQueries({ queryKey: [`/api/prds/${prdId}/approval`] });
+    }
+  }, [prdId]));
 
   const deleteMutation = useMutation({
     mutationFn: async () => {
@@ -587,6 +626,7 @@ export default function Editor() {
                 disabled={saveMutation.isPending}
                 data-testid="button-save"
                 className="hidden sm:inline-flex"
+                title="Save (Ctrl+S)"
               >
                 <Save className="w-4 h-4 mr-2" />
                 {saveMutation.isPending ? "Saving..." : "Save"}
@@ -622,6 +662,17 @@ export default function Editor() {
                 <Trash2 className="w-4 h-4" />
               </Button>
               
+              {/* Keyboard Shortcuts Help */}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowShortcutsHelp(true)}
+                className="h-9 w-9 text-muted-foreground"
+                title="Keyboard Shortcuts (Ctrl+/)"
+              >
+                <Keyboard className="w-4 h-4" />
+              </Button>
+
               {/* Mobile Comments/Versions Button */}
               {prdId && (
                 <Button
@@ -1005,6 +1056,8 @@ export default function Editor() {
           </AlertDialog>
         </>
       )}
+
+      <KeyboardShortcutsHelp open={showShortcutsHelp} onOpenChange={setShowShortcutsHelp} />
     </div>
   );
 }

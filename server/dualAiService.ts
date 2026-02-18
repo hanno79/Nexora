@@ -2475,26 +2475,26 @@ Your task:
   }): { errors: string[]; sanitizerApplied: boolean } {
     const { finalPRD, iterations, freezeBaselineFeatureCount, featuresFrozen } = params;
     const errors: string[] = [];
-    const requiredHeadings = [
-      '## System Vision',
-      '## System Boundaries',
-      '## Domain Model',
-      '## Global Business Rules',
-      '## Functional Feature Catalogue',
-      '## Non-Functional Requirements',
-      '## Error Handling & Recovery',
-      '## Deployment & Infrastructure',
-      '## Definition of Done',
+    const requiredHeadings: { label: string; pattern: RegExp }[] = [
+      { label: 'System Vision', pattern: /^## (?:System Vision|Executive Summary|Vision)\s*$/m },
+      { label: 'System Boundaries', pattern: /^## (?:System Boundaries|Boundaries|Scope|System Scope)\s*$/m },
+      { label: 'Domain Model', pattern: /^## (?:Domain Model|Data Model|Domain)\s*$/m },
+      { label: 'Global Business Rules', pattern: /^## (?:Global Business Rules|Business Rules)\s*$/m },
+      { label: 'Functional Feature Catalogue', pattern: /^## (?:Functional Feature Catalogue|Feature Catalogue|Features|Functional Requirements|Feature Specifications|Core Features|Required Features)\s*$/m },
+      { label: 'Non-Functional Requirements', pattern: /^## (?:Non-?Functional Requirements|NFR|Quality Attributes)\s*$/m },
+      { label: 'Error Handling & Recovery', pattern: /^## (?:Error Handling(?: (?:&|and) Recovery)?)\s*$/m },
+      { label: 'Deployment & Infrastructure', pattern: /^## (?:Deployment(?: (?:&|and) Infrastructure)?|Infrastructure)\s*$/m },
+      { label: 'Definition of Done', pattern: /^## (?:Definition of Done|Done Criteria)\s*$/m },
     ];
 
-    for (const heading of requiredHeadings) {
-      const count = (finalPRD.match(new RegExp(this.escapeRegex(heading), 'g')) || []).length;
-      if (count !== 1) {
-        errors.push(`${heading} expected exactly once, found ${count}`);
+    for (const { label, pattern } of requiredHeadings) {
+      const matches = finalPRD.match(new RegExp(pattern.source, 'gm')) || [];
+      if (matches.length !== 1) {
+        errors.push(`## ${label} expected exactly once, found ${matches.length}`);
       }
     }
 
-    if (/[^\n]\s##\s(?:System Vision|System Boundaries|Domain Model|Global Business Rules|Functional Feature Catalogue|Non-Functional Requirements|Error Handling & Recovery|Deployment & Infrastructure|Definition of Done)\b/.test(finalPRD)) {
+    if (/[^\n]\s##\s(?:System Vision|Executive Summary|Vision|System Boundaries|Boundaries|Scope|System Scope|Domain Model|Data Model|Domain|Global Business Rules|Business Rules|Functional Feature Catalogue|Feature Catalogue|Features|Non-?Functional Requirements|NFR|Quality Attributes|Error Handling|Deployment|Infrastructure|Definition of Done|Done Criteria)\b/.test(finalPRD)) {
       errors.push('Inline section heading token detected');
     }
 

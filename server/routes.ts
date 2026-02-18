@@ -14,6 +14,7 @@ import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { parsePRDToStructure } from "./prdParser";
 import { computeCompleteness } from "./prdCompleteness";
+import { setupWebSocket, broadcastPrdUpdate } from "./wsServer";
 import type { PRDStructure } from "./prdStructure";
 import {
   updateUserSchema,
@@ -403,6 +404,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const updated = await storage.updatePrd(id, updateData);
       res.json(updated);
+      broadcastPrdUpdate(id, 'prd:updated');
     } catch (error: any) {
       if (error.name === 'ZodError') {
         return res.status(400).json({ message: "Invalid PRD data", errors: error.errors });
@@ -666,6 +668,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           profileImageUrl: user.profileImageUrl,
         } : null,
       });
+      broadcastPrdUpdate(id, 'comment:added');
     } catch (error) {
       console.error("Error creating comment:", error);
       res.status(500).json({ message: "Failed to create comment" });
@@ -803,6 +806,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           email: completer.email,
         } : null,
       });
+      broadcastPrdUpdate(id, 'approval:updated');
     } catch (error: any) {
       if (error.name === 'ZodError') {
         return res.status(400).json({ message: "Invalid approval response", errors: error.errors });
@@ -1611,5 +1615,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const httpServer = createServer(app);
+  setupWebSocket(httpServer);
   return httpServer;
 }

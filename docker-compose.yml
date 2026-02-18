@@ -22,7 +22,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: builder
     container_name: nexora-app
+    command: ["npm", "run", "dev"]
     ports:
       - "5000:5000"
     env_file:
