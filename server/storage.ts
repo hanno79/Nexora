@@ -137,7 +137,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updatePrd(id: string, data: Partial<InsertPrd>): Promise<Prd> {
-    return await db.transaction(async (tx) => {
+    return await db.transaction(async (tx: any) => {
       // Get current PRD before update to create version snapshot
       const [currentPrd] = await tx.select().from(prds).where(eq(prds.id, id));
 
@@ -174,7 +174,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deletePrd(id: string): Promise<void> {
-    await db.transaction(async (tx) => {
+    await db.transaction(async (tx: any) => {
       // Delete all related data first, then PRD — atomic
       await tx.delete(prdVersions).where(eq(prdVersions.prdId, id));
       await tx.delete(comments).where(eq(comments.prdId, id));

@@ -609,8 +609,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const commentsData = await storage.getComments(id);
 
       // Batch-fetch all unique users (avoids N+1 queries)
-      const userIds = [...new Set(commentsData.map(c => c.userId))];
-      const usersData = userIds.length > 0
+      const userIds = Array.from(new Set(commentsData.map((c: any) => c.userId)));
+      const usersData: Array<{ id: string; firstName: string | null; lastName: string | null; email: string | null; profileImageUrl: string | null }> = userIds.length > 0
         ? await db.select().from(users).where(inArray(users.id, userIds))
         : [];
       const userMap = new Map(usersData.map(u => [u.id, u]));
@@ -690,7 +690,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Batch-fetch requester + completer in one query (avoids N+1)
       const relatedUserIds = [approval.requestedBy, approval.completedBy].filter(Boolean) as string[];
-      const relatedUsers = relatedUserIds.length > 0
+      type UserRow = { id: string; firstName: string | null; lastName: string | null; email: string | null };
+      const relatedUsers: UserRow[] = relatedUserIds.length > 0
         ? await db.select().from(users).where(inArray(users.id, relatedUserIds))
         : [];
       const userMap = new Map(relatedUsers.map(u => [u.id, u]));

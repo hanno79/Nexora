@@ -254,7 +254,7 @@ export async function generatePDF(prd: ExportPRD): Promise<Buffer> {
 function parseInlineFormattingToTextRuns(text: string, baseOptions: Partial<IRunOptions> = {}): TextRun[] {
   const segments = parseInlineFormatting(text);
   return segments.map(seg => {
-    const options: Partial<IRunOptions> & { text: string } = {
+    const options: Record<string, any> = {
       ...baseOptions,
       text: seg.text,
     };
@@ -265,7 +265,7 @@ function parseInlineFormattingToTextRuns(text: string, baseOptions: Partial<IRun
       options.size = 20; // 10pt in half-points
       options.shading = { type: 'clear' as any, color: 'auto', fill: 'F5F5F5' };
     }
-    return new TextRun(options);
+    return new TextRun(options as IRunOptions);
   });
 }
 
