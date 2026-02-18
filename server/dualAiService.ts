@@ -319,6 +319,8 @@ Create an improved version that incorporates the new requirements while keeping 
       freezeSeedSource: 'none',
       nfrGlobalCategoryAdds: 0,
       nfrFeatureCriteriaAdds: 0,
+      jsonRetryAttempts: 0,
+      jsonRepairSuccesses: 0,
     };
 
     // Feature Freeze Engine - State Variables
@@ -380,7 +382,7 @@ Create an improved version that incorporates the new requirements while keeping 
 
             let regenContent: string | null = null;
             let usedJsonMode = false;
-            const strictMode = process.env.STRICT_JSON_MODE === 'true';
+            const strictMode = process.env.STRICT_JSON_MODE !== 'false'; // Default: true
 
             try {
               const jsonResult = await regenerateSectionAsJson(
@@ -394,11 +396,15 @@ Create an improved version that incorporates the new requirements while keeping 
               regenContent = jsonResult.updatedContent;
               usedJsonMode = true;
               diagnostics.jsonSectionUpdates++;
-              console.log(`✅ Iteration ${i}: JSON structured section update succeeded for "${String(targetSection)}"`);
+              diagnostics.jsonRetryAttempts = (diagnostics.jsonRetryAttempts || 0) + (jsonResult.diagnostics?.retryAttempts || 1);
+              diagnostics.jsonRepairSuccesses = (diagnostics.jsonRepairSuccesses || 0) + (jsonResult.diagnostics?.repairSuccesses || 0);
+              console.log(`✅ Iteration ${i}: JSON structured section update succeeded for "${String(targetSection)}" (attempts: ${jsonResult.diagnostics?.retryAttempts || 1})`);
             } catch (jsonError: any) {
-              console.warn(`⚠️ Iteration ${i}: JSON Mode failed. Falling back to Markdown Section Regeneration. Error: ${jsonError.message}`);
+              const retryCount = (jsonError as any).retryCount || 1;
+              diagnostics.jsonRetryAttempts = (diagnostics.jsonRetryAttempts || 0) + retryCount;
+              console.warn(`⚠️ Iteration ${i}: JSON Mode failed after ${retryCount} attempts. Falling back to Markdown. Error: ${jsonError.message}`);
               if (strictMode) {
-                console.error(`🚨 STRICT MODE: JSON failed while section "${String(targetSection)}" was detected. Diagnostic flag raised.`);
+                console.error(`🚨 STRICT MODE: JSON failed for "${String(targetSection)}" after all retries. Diagnostic drift event raised.`);
                 diagnostics.driftEvents++;
               }
             }

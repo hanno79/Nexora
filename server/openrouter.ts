@@ -40,6 +40,7 @@ interface OpenRouterRequest {
   }>;
   max_tokens?: number;
   temperature?: number;
+  response_format?: { type: 'json_object' };
 }
 
 interface OpenRouterResponse {
@@ -99,7 +100,8 @@ class OpenRouterClient {
     systemPrompt: string,
     userPrompt: string,
     maxTokens: number = 6000,
-    temperature: number = 0.7
+    temperature: number = 0.7,
+    responseFormat?: { type: 'json_object' }
   ): Promise<{ content: string; usage: any; model: string }> {
     if (!this.apiKey) {
       throw new Error('OpenRouter API key not configured');
@@ -121,7 +123,8 @@ class OpenRouterClient {
         { role: 'user', content: userPrompt }
       ],
       max_tokens: maxTokens,
-      temperature
+      temperature,
+      ...(responseFormat ? { response_format: responseFormat } : {})
     };
 
     const timeoutMs = Number(process.env.OPENROUTER_TIMEOUT_MS || 90000);
@@ -217,7 +220,9 @@ class OpenRouterClient {
     modelType: 'generator' | 'reviewer',
     systemPrompt: string,
     userPrompt: string,
-    maxTokens: number = 4000
+    maxTokens: number = 4000,
+    responseFormat?: { type: 'json_object' },
+    temperature?: number
   ): Promise<{ content: string; usage: any; model: string; tier: string; usedFallback: boolean }> {
     const errors: string[] = [];
 
@@ -264,7 +269,7 @@ class OpenRouterClient {
         this.preferredModels[modelType] = attemptModel;
 
         try {
-          const result = await this.callModel(modelType, systemPrompt, userPrompt, maxTokens);
+          const result = await this.callModel(modelType, systemPrompt, userPrompt, maxTokens, temperature ?? 0.7, responseFormat);
           const usedFallback = !isPrimary;
           if (usedFallback) {
             console.log(`⚠️ Fallback used: ${attemptModel} instead of ${primary || 'none'}`);

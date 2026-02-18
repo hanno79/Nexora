@@ -558,6 +558,9 @@ interface CompilerDiagnostics {
   freezeSeedSource?: 'none' | 'existingContent' | 'compiledExpansion';
   nfrGlobalCategoryAdds?: number;
   nfrFeatureCriteriaAdds?: number;
+  // JSON Mode Robustness
+  jsonRetryAttempts?: number;
+  jsonRepairSuccesses?: number;
   finalValidationPassed?: boolean;
   finalValidationErrors?: number;
   finalSanitizerApplied?: boolean;

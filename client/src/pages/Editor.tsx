@@ -170,29 +170,6 @@ export default function Editor() {
     },
   });
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey;
-
-      if (mod && e.key === 's') {
-        e.preventDefault();
-        saveMutation.mutate();
-      } else if (mod && e.shiftKey && e.key.toLowerCase() === 'e') {
-        e.preventDefault();
-        exportMutation.mutate('pdf');
-      } else if (mod && e.shiftKey && e.key.toLowerCase() === 'a') {
-        e.preventDefault();
-        setShowDualAiDialog(true);
-      } else if (mod && e.key === '/') {
-        e.preventDefault();
-        setShowShortcutsHelp(prev => !prev);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [saveMutation, exportMutation]);
-
   // WebSocket for real-time updates
   useWebSocket(prdId, useCallback((event) => {
     if (event.type === 'prd:updated') {
@@ -409,6 +386,29 @@ export default function Editor() {
       });
     },
   });
+
+  // Keyboard shortcuts (must be after exportMutation declaration)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+
+      if (mod && e.key === 's') {
+        e.preventDefault();
+        saveMutation.mutate();
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === 'e') {
+        e.preventDefault();
+        exportMutation.mutate('pdf');
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        setShowDualAiDialog(true);
+      } else if (mod && e.key === '/') {
+        e.preventDefault();
+        setShowShortcutsHelp(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [saveMutation, exportMutation]);
 
   const linearExportMutation = useMutation({
     mutationFn: async () => {
@@ -827,6 +827,14 @@ export default function Editor() {
                       <div className="flex justify-between py-2 border-b border-input" data-testid="diag-json-updates">
                         <span className="text-muted-foreground">JSON Section Updates</span>
                         <span className="text-foreground font-medium">{compilerDiagnostics.jsonSectionUpdates}</span>
+                      </div>
+                      <div className="flex justify-between py-2 border-b border-input" data-testid="diag-json-retries">
+                        <span className="text-muted-foreground">JSON Retry Attempts</span>
+                        <span className="text-foreground font-medium">{compilerDiagnostics.jsonRetryAttempts ?? 0}</span>
+                      </div>
+                      <div className="flex justify-between py-2 border-b border-input" data-testid="diag-json-repairs">
+                        <span className="text-muted-foreground">JSON Repair Successes</span>
+                        <span className="text-foreground font-medium">{compilerDiagnostics.jsonRepairSuccesses ?? 0}</span>
                       </div>
                       <div className="flex justify-between py-2 border-b border-input" data-testid="diag-markdown-regens">
                         <span className="text-muted-foreground">Markdown Section Regenerations</span>
