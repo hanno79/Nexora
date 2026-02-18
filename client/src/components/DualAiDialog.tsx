@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -60,6 +60,7 @@ export function DualAiDialog({
   const hasRealContent = !isScaffoldOnly(currentContent);
   const [userInput, setUserInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [currentStep, setCurrentStep] = useState<'idle' | 'generating' | 'reviewing' | 'improving' | 'iterating' | 'done'>('idle');
   const [generatorModel, setGeneratorModel] = useState('');
   const [reviewerModel, setReviewerModel] = useState('');
@@ -106,6 +107,7 @@ export function DualAiDialog({
 
   const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs: number): Promise<Response> => {
     const controller = new AbortController();
+    abortControllerRef.current = controller;
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       return await fetch(url, {
@@ -114,6 +116,7 @@ export function DualAiDialog({
       });
     } finally {
       clearTimeout(timeout);
+      abortControllerRef.current = null;
     }
   };
 
@@ -440,13 +443,16 @@ export function DualAiDialog({
         </div>
 
         <DialogFooter>
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             onClick={() => {
+              if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+                abortControllerRef.current = null;
+              }
               onOpenChange(false);
               resetState();
             }}
-            disabled={isGenerating}
             data-testid="button-dual-ai-cancel"
           >
             Cancel

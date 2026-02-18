@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -46,6 +46,7 @@ export function GuidedAiDialog({
 }: GuidedAiDialogProps) {
   const [projectIdea, setProjectIdea] = useState(initialProjectIdea);
   const [step, setStep] = useState<Step>('input');
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [hasAutoStarted, setHasAutoStarted] = useState(false);
   
   // Sync project idea and auto-start when dialog opens with initial value
@@ -71,7 +72,17 @@ export function GuidedAiDialog({
   const [refinedPlan, setRefinedPlan] = useState('');
   const [modelsUsed, setModelsUsed] = useState<string[]>([]);
 
+  const createAbortSignal = (): AbortSignal => {
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    return controller.signal;
+  };
+
   const resetState = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     setProjectIdea('');
     setStep('input');
     setSessionId(null);
@@ -95,10 +106,12 @@ export function GuidedAiDialog({
     setError('');
 
     try {
+      const signal = createAbortSignal();
       const response = await fetch('/api/ai/guided-start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectIdea: idea.trim() })
+        body: JSON.stringify({ projectIdea: idea.trim() }),
+        signal,
       });
 
       if (!response.ok) {
@@ -110,13 +123,14 @@ export function GuidedAiDialog({
       setSessionId(data.sessionId);
       setFeatureOverview(data.featureOverview);
       setQuestions(data.questions || []);
-      
+
       if (data.questions && data.questions.length > 0) {
         setStep('questions');
       } else {
         await handleFinalize(data.sessionId);
       }
     } catch (err: any) {
+      if (err?.name === 'AbortError') return;
       console.error('Error starting guided workflow:', err);
       setError(err.message || 'Failed to analyze project idea');
       setStep('input');
@@ -133,10 +147,12 @@ export function GuidedAiDialog({
     setError('');
 
     try {
+      const signal = createAbortSignal();
       const response = await fetch('/api/ai/guided-start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectIdea: projectIdea.trim() })
+        body: JSON.stringify({ projectIdea: projectIdea.trim() }),
+        signal,
       });
 
       if (!response.ok) {
@@ -148,13 +164,14 @@ export function GuidedAiDialog({
       setSessionId(data.sessionId);
       setFeatureOverview(data.featureOverview);
       setQuestions(data.questions || []);
-      
+
       if (data.questions && data.questions.length > 0) {
         setStep('questions');
       } else {
         await handleFinalize(data.sessionId);
       }
     } catch (err: any) {
+      if (err?.name === 'AbortError') return;
       console.error('Error starting guided workflow:', err);
       setError(err.message || 'Failed to analyze project idea');
       setStep('input');
@@ -200,10 +217,12 @@ export function GuidedAiDialog({
     setError('');
 
     try {
+      const signal = createAbortSignal();
       const response = await fetch('/api/ai/guided-answer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, answers: answersArray, questions })
+        body: JSON.stringify({ sessionId, answers: answersArray, questions }),
+        signal,
       });
 
       if (!response.ok) {
@@ -223,6 +242,7 @@ export function GuidedAiDialog({
         setStep('questions');
       }
     } catch (err: any) {
+      if (err?.name === 'AbortError') return;
       console.error('Error processing answers:', err);
       setError(err.message || 'Failed to process answers');
       setStep('questions');
@@ -233,10 +253,12 @@ export function GuidedAiDialog({
     setStep('finalizing');
 
     try {
+      const signal = createAbortSignal();
       const response = await fetch('/api/ai/guided-finalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: sid })
+        body: JSON.stringify({ sessionId: sid }),
+        signal,
       });
 
       if (!response.ok) {
@@ -259,6 +281,7 @@ export function GuidedAiDialog({
         resetState();
       }, 1500);
     } catch (err: any) {
+      if (err?.name === 'AbortError') return;
       console.error('Error finalizing PRD:', err);
       setError(err.message || 'Failed to generate PRD');
       setStep('questions');
@@ -275,10 +298,12 @@ export function GuidedAiDialog({
     setError('');
 
     try {
+      const signal = createAbortSignal();
       const response = await fetch('/api/ai/guided-skip', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectIdea: projectIdea.trim() })
+        body: JSON.stringify({ projectIdea: projectIdea.trim() }),
+        signal,
       });
 
       if (!response.ok) {
@@ -302,6 +327,7 @@ export function GuidedAiDialog({
         resetState();
       }, 1500);
     } catch (err: any) {
+      if (err?.name === 'AbortError') return;
       console.error('Error in skip-to-finalize:', err);
       setError(err.message || 'Failed to generate PRD');
       setStep('input');
@@ -595,9 +621,15 @@ export function GuidedAiDialog({
           )}
 
           {(step === 'analyzing' || step === 'processing' || step === 'finalizing') && (
-            <Button variant="outline" disabled>
-              <Brain className="w-4 h-4 mr-2 animate-pulse" />
-              Processing...
+            <Button
+              variant="outline"
+              onClick={() => {
+                onOpenChange(false);
+                resetState();
+              }}
+              data-testid="button-cancel-processing"
+            >
+              Cancel
             </Button>
           )}
 

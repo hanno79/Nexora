@@ -465,7 +465,7 @@ export default function Editor() {
       
       {/* Editor Header */}
       <div className="sticky top-14 z-40 border-b bg-background/95 backdrop-blur">
-        <div className="container max-w-4xl mx-auto px-3 sm:px-4 md:px-6 py-2 sm:py-4">
+        <div className="container max-w-6xl mx-auto px-3 sm:px-4 md:px-6 py-2 sm:py-4">
           <div className="flex items-center justify-between gap-2 sm:gap-4">
             <div className="flex items-center gap-2 min-w-0 flex-shrink">
               <Button
@@ -481,7 +481,7 @@ export default function Editor() {
               <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                 <StatusBadge status={status as any} />
                 {prd?.updatedAt && (
-                  <span className="hidden sm:flex text-xs text-muted-foreground items-center gap-1">
+                  <span className="hidden sm:flex text-xs text-muted-foreground items-center gap-1 whitespace-nowrap">
                     <Clock className="w-3 h-3" />
                     {formatDistance(new Date(prd.updatedAt), new Date(), { addSuffix: true })}
                   </span>
@@ -489,7 +489,7 @@ export default function Editor() {
               </div>
             </div>
 
-            <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+            <div className="flex items-center gap-1 sm:gap-2">
               {/* Mobile: Icon only, Desktop: Icon + Text */}
               <Button
                 variant="outline"
