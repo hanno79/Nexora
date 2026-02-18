@@ -10,7 +10,7 @@ import { generatePDF, generateWord } from "./exportUtils";
 import { generateClaudeMD } from "./claudemdGenerator";
 import { initializeTemplates } from "./initTemplates";
 import { db } from "./db";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { parsePRDToStructure } from "./prdParser";
 import { computeCompleteness } from "./prdCompleteness";
@@ -252,14 +252,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/dashboard/stats', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const prds = await storage.getPrds(userId);
-      
+      const result = await storage.getPrds(userId, 10000, 0);
+      const allPrds = result.data;
+
       const stats = {
-        totalPrds: prds.length,
-        inProgress: prds.filter(p => p.status === 'in-progress').length,
-        completed: prds.filter(p => p.status === 'completed').length,
-        exportedToLinear: prds.filter(p => p.linearIssueId).length,
-        exportedToDart: prds.filter(p => p.dartDocId).length,
+        totalPrds: result.total,
+        inProgress: allPrds.filter(p => p.status === 'in-progress').length,
+        completed: allPrds.filter(p => p.status === 'completed').length,
+        exportedToLinear: allPrds.filter(p => p.linearIssueId).length,
+        exportedToDart: allPrds.filter(p => p.dartDocId).length,
       };
       
       res.json(stats);
@@ -273,8 +274,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/prds', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const prds = await storage.getPrds(userId);
-      res.json(prds);
+      const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), 200);
+      const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
+      const result = await storage.getPrds(userId, limit, offset);
+      res.json(result);
     } catch (error) {
       console.error("Error fetching PRDs:", error);
       res.status(500).json({ message: "Failed to fetch PRDs" });
@@ -553,24 +556,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!prd) return;
 
       const commentsData = await storage.getComments(id);
-      
-      // Enrich comments with user information
-      const commentsWithUsers = await Promise.all(
-        commentsData.map(async (comment) => {
-          const user = await storage.getUser(comment.userId);
-          return {
-            ...comment,
-            user: user ? {
-              id: user.id,
-              firstName: user.firstName,
-              lastName: user.lastName,
-              email: user.email,
-              profileImageUrl: user.profileImageUrl,
-            } : null,
-          };
-        })
-      );
-      
+
+      // Batch-fetch all unique users (avoids N+1 queries)
+      const userIds = [...new Set(commentsData.map(c => c.userId))];
+      const usersData = userIds.length > 0
+        ? await db.select().from(users).where(inArray(users.id, userIds))
+        : [];
+      const userMap = new Map(usersData.map(u => [u.id, u]));
+
+      const commentsWithUsers = commentsData.map(comment => {
+        const user = userMap.get(comment.userId);
+        return {
+          ...comment,
+          user: user ? {
+            id: user.id,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+            profileImageUrl: user.profileImageUrl,
+          } : null,
+        };
+      });
+
       res.json(commentsWithUsers);
     } catch (error) {
       console.error("Error fetching comments:", error);
@@ -629,10 +636,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json(null);
       }
       
-      // Enrich with requester info
-      const requester = await storage.getUser(approval.requestedBy);
-      const completer = approval.completedBy ? await storage.getUser(approval.completedBy) : null;
-      
+      // Batch-fetch requester + completer in one query (avoids N+1)
+      const relatedUserIds = [approval.requestedBy, approval.completedBy].filter(Boolean) as string[];
+      const relatedUsers = relatedUserIds.length > 0
+        ? await db.select().from(users).where(inArray(users.id, relatedUserIds))
+        : [];
+      const userMap = new Map(relatedUsers.map(u => [u.id, u]));
+
+      const requester = userMap.get(approval.requestedBy);
+      const completer = approval.completedBy ? userMap.get(approval.completedBy) : null;
+
       res.json({
         ...approval,
         requester: requester ? {
@@ -1419,27 +1432,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Error logging endpoint
-  app.post('/api/errors', async (req: any, res) => {
+  // Error logging endpoint — rate-limited, sanitized input
+  const errorRateMap = new Map<string, { count: number; resetAt: number }>();
+  const ERROR_RATE_LIMIT = 10; // max 10 per minute per IP
+
+  app.post('/api/errors', (req: any, res, next) => {
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+    const now = Date.now();
+    const entry = errorRateMap.get(ip);
+    if (entry && now < entry.resetAt) {
+      if (entry.count >= ERROR_RATE_LIMIT) {
+        return res.status(429).json({ message: 'Too many error reports' });
+      }
+      entry.count++;
+    } else {
+      errorRateMap.set(ip, { count: 1, resetAt: now + 60000 });
+    }
+    // Cleanup stale entries every 100 requests
+    if (errorRateMap.size > 1000) {
+      for (const [key, val] of errorRateMap) {
+        if (now >= val.resetAt) errorRateMap.delete(key);
+      }
+    }
+    next();
+  }, async (req: any, res) => {
     try {
-      const { message, stack, componentStack, timestamp, userAgent } = req.body;
-      
-      // Log error to console (in production, this would go to monitoring service)
+      const message = String(req.body.message || '').slice(0, 2000);
+      const stack = String(req.body.stack || '').slice(0, 2000);
+      const componentStack = String(req.body.componentStack || '').slice(0, 2000);
+      const timestamp = String(req.body.timestamp || '').slice(0, 100);
+      const userAgent = String(req.body.userAgent || '').slice(0, 500);
+
       console.error('[Frontend Error]', {
         timestamp,
         message,
         stack,
         componentStack,
         userAgent,
-        userId: req.user?.id || 'anonymous',
+        userId: req.user?.claims?.sub || 'anonymous',
       });
-      
-      // In production, you would send this to error tracking service:
-      // - Sentry
-      // - LogRocket
-      // - Datadog
-      // - CloudWatch
-      
+
       res.status(200).json({ message: 'Error logged' });
     } catch (error) {
       console.error('Error logging error:', error);

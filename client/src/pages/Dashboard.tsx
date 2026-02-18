@@ -41,9 +41,10 @@ export default function Dashboard() {
     }
   }, []);
 
-  const { data: prds, isLoading, error } = useQuery<Prd[]>({
+  const { data: prdsResponse, isLoading, error } = useQuery<{ data: Prd[]; total: number }>({
     queryKey: ["/api/prds"],
   });
+  const prds = prdsResponse?.data;
 
   const { data: stats, isLoading: statsLoading } = useQuery<DashboardStats>({
     queryKey: ["/api/dashboard/stats"],

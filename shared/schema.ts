@@ -112,7 +112,9 @@ export const prds = pgTable("prds", {
   structuredAt: timestamp("structured_at"), // When structured content was last computed/updated
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_prds_userId").on(table.userId),
+]);
 
 export type Prd = typeof prds.$inferSelect;
 
@@ -142,7 +144,9 @@ export const prdVersions = pgTable("prd_versions", {
   status: varchar("status").notNull().default('draft'),
   createdBy: varchar("created_by").notNull().references(() => users.id),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_prdVersions_prdId").on(table.prdId),
+]);
 
 export type PrdVersion = typeof prdVersions.$inferSelect;
 export type InsertPrdVersion = typeof prdVersions.$inferInsert;
@@ -154,7 +158,10 @@ export const sharedPrds = pgTable("shared_prds", {
   sharedWith: varchar("shared_with").notNull().references(() => users.id, { onDelete: 'cascade' }),
   permission: varchar("permission").notNull().default('view'), // 'view', 'edit'
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_sharedPrds_prdId").on(table.prdId),
+  index("idx_sharedPrds_sharedWith").on(table.sharedWith),
+]);
 
 export type SharedPrd = typeof sharedPrds.$inferSelect;
 export type InsertSharedPrd = typeof sharedPrds.$inferInsert;
@@ -167,7 +174,9 @@ export const comments = pgTable("comments", {
   content: text("content").notNull(),
   sectionId: varchar("section_id"), // Optional: for inline comments on specific sections
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_comments_prdId").on(table.prdId),
+]);
 
 export type Comment = typeof comments.$inferSelect;
 
@@ -190,7 +199,9 @@ export const approvals = pgTable("approvals", {
   requestedAt: timestamp("requested_at").defaultNow(),
   completedAt: timestamp("completed_at"),
   completedBy: varchar("completed_by").references(() => users.id),
-});
+}, (table) => [
+  index("idx_approvals_prdId").on(table.prdId),
+]);
 
 export type Approval = typeof approvals.$inferSelect;
 
@@ -218,7 +229,10 @@ export const aiUsage = pgTable("ai_usage", {
   outputTokens: varchar("output_tokens").notNull(),
   totalCost: varchar("total_cost").notNull(), // Stored as string for precision (e.g., '0.00234')
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_aiUsage_userId").on(table.userId),
+  index("idx_aiUsage_prdId").on(table.prdId),
+]);
 
 export type AiUsage = typeof aiUsage.$inferSelect;
 

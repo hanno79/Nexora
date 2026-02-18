@@ -36,7 +36,7 @@ export interface IStorage {
   updateUser(id: string, data: Partial<UpsertUser>): Promise<User>;
   
   // PRD operations
-  getPrds(userId: string): Promise<Prd[]>;
+  getPrds(userId: string, limit?: number, offset?: number): Promise<{ data: Prd[]; total: number }>;
   getPrd(id: string): Promise<Prd | undefined>;
   createPrd(prd: InsertPrd): Promise<Prd>;
   updatePrd(id: string, data: Partial<InsertPrd>): Promise<Prd>;
@@ -59,7 +59,7 @@ export interface IStorage {
   createSharedPrd(share: InsertSharedPrd): Promise<SharedPrd>;
   
   // Comment operations
-  getComments(prdId: string): Promise<Comment[]>;
+  getComments(prdId: string, limit?: number, offset?: number): Promise<Comment[]>;
   createComment(comment: InsertComment): Promise<Comment>;
   
   // Approval operations
@@ -109,12 +109,21 @@ export class DatabaseStorage implements IStorage {
   }
 
   // PRD operations
-  async getPrds(userId: string): Promise<Prd[]> {
-    return await db
+  async getPrds(userId: string, limit = 50, offset = 0): Promise<{ data: Prd[]; total: number }> {
+    const [{ count }] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(prds)
+      .where(eq(prds.userId, userId));
+
+    const data = await db
       .select()
       .from(prds)
       .where(eq(prds.userId, userId))
-      .orderBy(desc(prds.updatedAt));
+      .orderBy(desc(prds.updatedAt))
+      .limit(limit)
+      .offset(offset);
+
+    return { data, total: Number(count) };
   }
 
   async getPrd(id: string): Promise<Prd | undefined> {
@@ -128,49 +137,51 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updatePrd(id: string, data: Partial<InsertPrd>): Promise<Prd> {
-    // Get current PRD before update to create version
-    const currentPrd = await this.getPrd(id);
-    
-    // Update the PRD
-    const [prd] = await db
-      .update(prds)
-      .set({ ...data, updatedAt: new Date() })
-      .where(eq(prds.id, id))
-      .returning();
-    
-    // Auto-create version snapshot on every update
-    if (currentPrd) {
-      const versionCount = await db
-        .select({ count: sql<number>`count(*)` })
-        .from(prdVersions)
-        .where(eq(prdVersions.prdId, id));
-      
-      const versionNumber = `v${(Number(versionCount[0]?.count) || 0) + 1}`;
-      
-      // Capture complete state: title, description, content, structured content, status
-      await this.createPrdVersion({
-        prdId: id,
-        versionNumber,
-        title: currentPrd.title,
-        description: currentPrd.description,
-        content: currentPrd.content,
-        structuredContent: (currentPrd as any).structuredContent || null,
-        status: currentPrd.status,
-        createdBy: currentPrd.userId,
-      });
-    }
-    
-    return prd;
+    return await db.transaction(async (tx) => {
+      // Get current PRD before update to create version snapshot
+      const [currentPrd] = await tx.select().from(prds).where(eq(prds.id, id));
+
+      // Update the PRD
+      const [prd] = await tx
+        .update(prds)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(prds.id, id))
+        .returning();
+
+      // Auto-create version snapshot (atomic with the update)
+      if (currentPrd) {
+        const [{ count }] = await tx
+          .select({ count: sql<number>`count(*)` })
+          .from(prdVersions)
+          .where(eq(prdVersions.prdId, id));
+
+        const versionNumber = `v${(Number(count) || 0) + 1}`;
+
+        await tx.insert(prdVersions).values({
+          prdId: id,
+          versionNumber,
+          title: currentPrd.title,
+          description: currentPrd.description,
+          content: currentPrd.content,
+          structuredContent: (currentPrd as any).structuredContent || null,
+          status: currentPrd.status,
+          createdBy: currentPrd.userId,
+        });
+      }
+
+      return prd;
+    });
   }
 
   async deletePrd(id: string): Promise<void> {
-    // Delete all related data first (versions, comments, approvals, shares)
-    await db.delete(prdVersions).where(eq(prdVersions.prdId, id));
-    await db.delete(comments).where(eq(comments.prdId, id));
-    await db.delete(approvals).where(eq(approvals.prdId, id));
-    await db.delete(sharedPrds).where(eq(sharedPrds.prdId, id));
-    // Finally delete the PRD itself
-    await db.delete(prds).where(eq(prds.id, id));
+    await db.transaction(async (tx) => {
+      // Delete all related data first, then PRD — atomic
+      await tx.delete(prdVersions).where(eq(prdVersions.prdId, id));
+      await tx.delete(comments).where(eq(comments.prdId, id));
+      await tx.delete(approvals).where(eq(approvals.prdId, id));
+      await tx.delete(sharedPrds).where(eq(sharedPrds.prdId, id));
+      await tx.delete(prds).where(eq(prds.id, id));
+    });
   }
 
   // Template operations
@@ -242,12 +253,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Comment operations
-  async getComments(prdId: string): Promise<Comment[]> {
+  async getComments(prdId: string, limit = 200, offset = 0): Promise<Comment[]> {
     return await db
       .select()
       .from(comments)
       .where(eq(comments.prdId, prdId))
-      .orderBy(comments.createdAt);
+      .orderBy(comments.createdAt)
+      .limit(limit)
+      .offset(offset);
   }
 
   async createComment(commentData: InsertComment): Promise<Comment> {
