@@ -113,7 +113,6 @@
     "vitest": "^4.0.18"
   },
   "optionalDependencies": {
-    "@rollup/rollup-win32-x64-msvc": "^4.57.1",
-    "bufferutil": "^4.0.8"
+    "@rollup/rollup-win32-x64-msvc": "^4.57.1"
   }
 }
