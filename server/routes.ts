@@ -92,6 +92,37 @@ async function requirePrdAccess(
   return prd;
 }
 
+// Validation schemas for endpoints that previously lacked Zod validation
+const updateUserSchema = z.object({
+  firstName: z.string().max(100).nullish(),
+  lastName: z.string().max(100).nullish(),
+  company: z.string().max(200).nullish(),
+  role: z.string().max(100).nullish(),
+});
+
+const createTemplateSchema = z.object({
+  name: z.string().min(1, "Name is required").max(200),
+  description: z.string().max(2000).nullish(),
+  category: z.string().max(50).default('custom'),
+  content: z.string().min(1, "Content is required"),
+});
+
+const updatePrdSchema = z.object({
+  title: z.string().min(1).max(500).optional(),
+  description: z.string().max(5000).nullish(),
+  content: z.string().optional(),
+  status: z.enum(['draft', 'in-progress', 'review', 'pending-approval', 'approved', 'completed']).optional(),
+  language: z.string().max(10).optional(),
+}).passthrough(); // Allow structuredContent, structuredAt, iterationLog, etc.
+
+const requestApprovalSchema = z.object({
+  reviewers: z.array(z.string()).min(1, "At least one reviewer is required").max(20),
+});
+
+const respondApprovalSchema = z.object({
+  approved: z.boolean(),
+});
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Initialize templates
   await initializeTemplates();
@@ -114,15 +145,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch('/api/auth/user', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const { firstName, lastName, company, role } = req.body;
-      const user = await storage.updateUser(userId, {
-        firstName,
-        lastName,
-        company,
-        role,
-      });
+      const validated = updateUserSchema.parse(req.body);
+      const user = await storage.updateUser(userId, validated);
       res.json(user);
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid user data", errors: error.errors });
+      }
       console.error("Error updating user:", error);
       res.status(500).json({ message: "Failed to update user" });
     }
@@ -322,8 +351,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const prd = await requirePrdAccess(req, res, id, 'edit');
       if (!prd) return;
 
+      // Validate known fields; passthrough allows structuredContent etc.
+      const validated = updatePrdSchema.parse(req.body);
+
       // If content is being updated, synchronize header metadata
-      let updateData = { ...req.body };
+      let updateData = { ...validated };
       if (updateData.content) {
         // Save raw incoming content BEFORE header sync for comparison
         const rawIncomingContent = updateData.content;
@@ -356,7 +388,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const updated = await storage.updatePrd(id, updateData);
       res.json(updated);
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid PRD data", errors: error.errors });
+      }
       console.error("Error updating PRD:", error);
       res.status(500).json({ message: "Failed to update PRD" });
     }
@@ -409,23 +444,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/templates', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const { name, description, category, content } = req.body;
-      
-      if (!name || !content) {
-        return res.status(400).json({ message: "Name and content are required" });
-      }
-      
+      const validated = createTemplateSchema.parse(req.body);
+
       const template = await storage.createTemplate({
-        name,
-        description,
-        category: category || 'custom',
-        content,
+        name: validated.name,
+        description: validated.description,
+        category: validated.category,
+        content: validated.content,
         userId,
         isDefault: 'false',
       });
-      
+
       res.json(template);
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid template data", errors: error.errors });
+      }
       console.error("Error creating template:", error);
       res.status(500).json({ message: "Failed to create template" });
     }
@@ -674,11 +708,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!prd) return;
 
       const userId = req.user.claims.sub;
-      const { reviewers } = req.body;
-      
-      if (!reviewers || !Array.isArray(reviewers) || reviewers.length === 0) {
-        return res.status(400).json({ message: "At least one reviewer is required" });
-      }
+      const { reviewers } = requestApprovalSchema.parse(req.body);
       
       // Check if there's already a pending approval
       const existingApproval = await storage.getApproval(id);
@@ -707,7 +737,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           email: requester.email,
         } : null,
       });
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid approval request", errors: error.errors });
+      }
       console.error("Error requesting approval:", error);
       res.status(500).json({ message: "Failed to request approval" });
     }
@@ -717,7 +750,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const userId = req.user.claims.sub;
-      const { approved } = req.body;
+      const { approved } = respondApprovalSchema.parse(req.body);
       
       const approval = await storage.getApproval(id);
       if (!approval) {
@@ -755,7 +788,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           email: completer.email,
         } : null,
       });
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ message: "Invalid approval response", errors: error.errors });
+      }
       console.error("Error responding to approval:", error);
       res.status(500).json({ message: "Failed to respond to approval" });
     }

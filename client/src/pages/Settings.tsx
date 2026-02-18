@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { QueryError } from "@/components/QueryError";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { useAuth } from "@/hooks/useAuth";
@@ -67,7 +68,7 @@ export default function Settings() {
     queryKey: ["/api/dart/status"],
   });
 
-  const { data: openRouterData, isLoading: modelsLoading } = useQuery<{
+  const { data: openRouterData, isLoading: modelsLoading, error: modelsError, refetch: refetchModels } = useQuery<{
     models: Array<{
       id: string;
       name: string;
@@ -510,6 +511,9 @@ export default function Settings() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              {modelsError ? (
+                <QueryError message="Failed to load AI models." onRetry={() => refetchModels()} />
+              ) : (<>
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label>Model Filter</Label>
@@ -779,6 +783,7 @@ export default function Settings() {
                 <Save className="w-4 h-4 mr-2" />
                 {updateAiSettingsMutation.isPending ? "Saving..." : "Save AI Preferences"}
               </Button>
+              </>)}
             </CardContent>
           </Card>
 

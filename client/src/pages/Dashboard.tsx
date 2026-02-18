@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { TopBar } from "@/components/TopBar";
 import { EmptyState } from "@/components/EmptyState";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
+import { QueryError } from "@/components/QueryError";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { OnboardingDialog } from "@/components/OnboardingDialog";
@@ -41,7 +42,7 @@ export default function Dashboard() {
     }
   }, []);
 
-  const { data: prdsResponse, isLoading, error } = useQuery<{ data: Prd[]; total: number }>({
+  const { data: prdsResponse, isLoading, error, refetch } = useQuery<{ data: Prd[]; total: number }>({
     queryKey: ["/api/prds"],
   });
   const prds = prdsResponse?.data;
@@ -71,10 +72,19 @@ export default function Dashboard() {
     return matchesStatus && matchesSearch;
   });
 
+  if (error && !isUnauthorizedError(error as Error)) {
+    return (
+      <div className="min-h-screen bg-background">
+        <TopBar onSearchChange={setSearchQuery} searchValue={searchQuery} />
+        <QueryError message="Failed to load PRDs." onRetry={() => refetch()} />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <TopBar onSearchChange={setSearchQuery} searchValue={searchQuery} />
-      
+
       <div className="container max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-6 sm:mb-8 gap-3">

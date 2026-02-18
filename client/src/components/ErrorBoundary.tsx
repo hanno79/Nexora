@@ -22,9 +22,31 @@ export class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error };
   }
 
+  componentDidMount() {
+    window.addEventListener('unhandledrejection', this.handleUnhandledRejection);
+  }
+
+  componentWillUnmount() {
+    window.removeEventListener('unhandledrejection', this.handleUnhandledRejection);
+  }
+
   componentDidCatch(error: Error, errorInfo: any) {
     console.error("Error caught by boundary:", error, errorInfo);
   }
+
+  private handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+    console.error('Unhandled promise rejection:', event.reason);
+    // Skip network errors (handled by React Query)
+    if (event.reason?.message?.includes('Failed to fetch')) return;
+    // Skip auth errors (handled by auth redirect)
+    if (event.reason?.message?.match(/^401:/)) return;
+    this.setState({
+      hasError: true,
+      error: event.reason instanceof Error
+        ? event.reason
+        : new Error(String(event.reason)),
+    });
+  };
 
   render() {
     if (this.state.hasError) {

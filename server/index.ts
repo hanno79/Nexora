@@ -1,8 +1,31 @@
 import express, { type Request, Response, NextFunction } from "express";
+import helmet from "helmet";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
+
+// Security headers
+app.use(helmet({
+  contentSecurityPolicy: false,       // Vite HMR + inline scripts need this off
+  crossOriginEmbedderPolicy: false,   // Allow external resources (fonts, images)
+}));
+
+// CSRF: Origin/Referer validation for state-changing requests
+app.use((req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  const origin = req.get('origin');
+  const referer = req.get('referer');
+  const host = req.get('host') || '';
+  // Allow requests with no origin header (same-origin, server-to-server)
+  if (!origin && !referer) return next();
+  const source = origin || referer || '';
+  try {
+    if (new URL(source).host === host) return next();
+  } catch { /* invalid URL — reject */ }
+  res.status(403).json({ message: 'CSRF validation failed' });
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 

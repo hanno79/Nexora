@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { TopBar } from "@/components/TopBar";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
+import { QueryError } from "@/components/QueryError";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
   Dialog,
@@ -52,7 +53,7 @@ export default function Templates() {
   const [prdDescription, setPrdDescription] = useState("");
   const [prdLanguage, setPrdLanguage] = useState<string>("auto");
 
-  const { data: templates, isLoading } = useQuery<Template[]>({
+  const { data: templates, isLoading, error, refetch } = useQuery<Template[]>({
     queryKey: ["/api/templates"],
   });
 
@@ -134,9 +135,9 @@ export default function Templates() {
     <div className="min-h-screen bg-background">
       <TopBar />
       
-      <div className="container max-w-6xl mx-auto px-4 md:px-6 py-8">
+      <div className="container max-w-6xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-8">
         {/* Header */}
-        <div className="mb-8">
+        <div className="mb-6 sm:mb-8">
           <Button
             variant="ghost"
             className="mb-4 -ml-2"
@@ -146,28 +147,39 @@ export default function Templates() {
             <ArrowLeft className="w-4 h-4 mr-2" />
             {t.templates.backToDashboard}
           </Button>
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-semibold mb-2">{t.templates.chooseTemplate}</h1>
-              <p className="text-muted-foreground">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <h1 className="text-2xl sm:text-3xl font-semibold mb-1 sm:mb-2">{t.templates.chooseTemplate}</h1>
+              <p className="text-sm sm:text-base text-muted-foreground">
                 {t.templates.startWith}
               </p>
             </div>
             <Button
               onClick={() => navigate("/templates/create")}
+              className="flex-shrink-0 hidden sm:inline-flex"
               data-testid="button-create-template"
             >
               <Plus className="w-4 h-4 mr-2" />
               {t.templates.createTemplate}
             </Button>
+            <Button
+              onClick={() => navigate("/templates/create")}
+              size="icon"
+              className="sm:hidden flex-shrink-0 h-10 w-10"
+              data-testid="button-create-template-mobile"
+            >
+              <Plus className="w-5 h-5" />
+            </Button>
           </div>
         </div>
 
         {/* Templates Grid */}
-        {isLoading ? (
+        {error ? (
+          <QueryError message="Failed to load templates." onRetry={() => refetch()} />
+        ) : isLoading ? (
           <LoadingSpinner className="py-20" />
         ) : (
-          <div className="grid gap-6 md:grid-cols-2">
+          <div className="grid gap-4 sm:gap-6 sm:grid-cols-2">
             {templates?.map((template) => {
               const Icon = templateIcons[template.category] || FileText;
               const isCustom = template.category === 'custom' || template.userId;
