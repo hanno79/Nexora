@@ -1,5 +1,5 @@
 // Dual-AI Service - Orchestrates Generator & Reviewer based on HRP-17
-import { getOpenRouterClient } from './openrouter';
+import { getOpenRouterClient, MODEL_TIERS } from './openrouter';
 import type { OpenRouterClient } from './openrouter';
 import {
   GENERATOR_SYSTEM_PROMPT,
@@ -57,6 +57,7 @@ export class DualAiService {
     // Create fresh client per request to prevent cross-user contamination
     const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
     const langInstruction = getLanguageInstruction(contentLanguage);
+    console.log(`🎯 Simple run models: generator=${client.getPreferredModel('generator') || '(tier default)'}, reviewer=${client.getPreferredModel('reviewer') || '(tier default)'}, fallback=${client.getPreferredModel('fallback') || '(none)'}`);
     
     const { userInput, existingContent, mode } = request;
 
@@ -284,6 +285,7 @@ Create an improved version that incorporates the new requirements while keeping 
     const isImprovement = mode === 'improve';
     const trimmedContent = existingContent?.trim() || '';
     
+    console.log(`🎯 Iterative run models: generator=${client.getPreferredModel('generator') || '(tier default)'}, reviewer=${client.getPreferredModel('reviewer') || '(tier default)'}, fallback=${client.getPreferredModel('fallback') || '(none)'}`);
     console.log(`🔄 Starting iterative workflow: ${iterationCount} iterations, final review: ${useFinalReview}`);
     console.log(`📝 Mode: ${isImprovement ? 'IMPROVEMENT (building upon existing content)' : 'NEW GENERATION'}`);
     console.log(`📄 Existing content length: ${trimmedContent.length} characters`);
@@ -2916,9 +2918,21 @@ Return JSON only.`;
           const prefs = userPrefs[0].aiPreferences as any;
           const tier = prefs.tier || 'production';
           const activeTierModels = prefs.tierModels?.[tier] || {};
-          const resolvedGeneratorModel = activeTierModels.generatorModel || prefs.generatorModel;
-          const resolvedReviewerModel = activeTierModels.reviewerModel || prefs.reviewerModel;
+          const tierDefaults = MODEL_TIERS[tier as keyof typeof MODEL_TIERS] || MODEL_TIERS.production;
+          const resolvedGeneratorModel = activeTierModels.generatorModel || prefs.generatorModel || tierDefaults.generator;
+          const resolvedReviewerModel = activeTierModels.reviewerModel || prefs.reviewerModel || tierDefaults.reviewer;
           const resolvedFallbackModel = activeTierModels.fallbackModel || prefs.fallbackModel;
+
+          console.log(`🤖 User AI preferences loaded:`, {
+            tier,
+            tierGenerator: activeTierModels.generatorModel || '(not set)',
+            tierReviewer: activeTierModels.reviewerModel || '(not set)',
+            globalGenerator: prefs.generatorModel || '(not set)',
+            globalReviewer: prefs.reviewerModel || '(not set)',
+            resolvedGenerator: resolvedGeneratorModel,
+            resolvedReviewer: resolvedReviewerModel,
+            resolvedFallback: resolvedFallbackModel || '(none)',
+          });
 
           if (resolvedGeneratorModel) {
             client.setPreferredModel('generator', resolvedGeneratorModel);
