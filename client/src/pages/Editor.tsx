@@ -14,7 +14,9 @@ import {
   MessageSquare,
   Trash2,
   FileText,
-  ScrollText
+  ScrollText,
+  BarChart3,
+  RefreshCw
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,6 +55,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
@@ -72,12 +76,18 @@ export default function Editor() {
   const [content, setContent] = useState("");
   const [iterationLog, setIterationLog] = useState("");
   const [compilerDiagnostics, setCompilerDiagnostics] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<"prd" | "log" | "diagnostics">("prd");
+  const [activeTab, setActiveTab] = useState<"prd" | "log" | "diagnostics" | "structure">("prd");
 
   useEffect(() => {
     if (activeTab === "log" && !iterationLog) setActiveTab("prd");
     if (activeTab === "diagnostics" && !compilerDiagnostics) setActiveTab("prd");
   }, [activeTab, iterationLog, compilerDiagnostics]);
+
+  const { data: structureData, isLoading: structureLoading, refetch: refetchStructure } = useQuery<any>({
+    queryKey: ["/api/prds", prdId, "structure"],
+    queryFn: () => apiRequest("GET", `/api/prds/${prdId}/structure`).then(r => r.json()),
+    enabled: !!prdId && activeTab === "structure",
+  });
 
   const [status, setStatus] = useState<string>("draft");
   const [showComments, setShowComments] = useState(true);
@@ -679,9 +689,9 @@ export default function Editor() {
                 </Select>
               </div>
 
-              {/* Content Tabs: PRD + Iteration Log + Diagnostics */}
+              {/* Content Tabs: PRD + Iteration Log + Diagnostics + Structure */}
               <div className="border-t pt-4 sm:pt-6 space-y-3">
-                {(iterationLog || compilerDiagnostics) && (
+                {(iterationLog || compilerDiagnostics || prdId) && (
                   <div className="flex gap-1 p-1 rounded-md bg-muted w-fit flex-wrap">
                     <Button
                       variant={activeTab === "prd" ? "default" : "ghost"}
@@ -718,6 +728,15 @@ export default function Editor() {
                         Diagnostics
                       </Button>
                     )}
+                    <Button
+                      variant={activeTab === "structure" ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setActiveTab("structure")}
+                      data-testid="tab-structure"
+                    >
+                      <BarChart3 className="w-4 h-4 mr-1.5" />
+                      Structure
+                    </Button>
                   </div>
                 )}
 
@@ -791,6 +810,85 @@ export default function Editor() {
                         <span className="text-foreground font-medium">{compilerDiagnostics.driftEvents}</span>
                       </div>
                     </div>
+                  </div>
+                )}
+                {activeTab === "structure" && (
+                  <div
+                    className="min-h-[400px] sm:min-h-[500px] rounded-md border border-input bg-muted/30 px-4 py-4 space-y-4"
+                    data-testid="structure-analysis-panel"
+                  >
+                    {structureLoading ? (
+                      <div className="flex items-center justify-center h-40">
+                        <LoadingSpinner />
+                      </div>
+                    ) : structureData?.structure ? (
+                      <>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-sm font-semibold">Structure Analysis</h3>
+                            <Badge variant={structureData.completeness?.completeFeatures === structureData.completeness?.featureCount ? "default" : "secondary"}>
+                              {structureData.completeness?.completeFeatures ?? 0}/{structureData.completeness?.featureCount ?? 0}
+                            </Badge>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              apiRequest("POST", `/api/prds/${prdId}/reparse`).then(() => {
+                                refetchStructure();
+                                toast({ title: "Structure refreshed", description: "PRD was re-parsed from markdown." });
+                              }).catch(() => {
+                                toast({ title: "Refresh failed", variant: "destructive" });
+                              });
+                            }}
+                            data-testid="btn-refresh-structure"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5 mr-1" />
+                            Refresh
+                          </Button>
+                        </div>
+                        <Progress value={(structureData.completeness?.averageCompleteness ?? 0) * 100} className="h-2" />
+                        <div className="space-y-1 font-mono text-sm">
+                          {structureData.structure.features?.map((feature: any) => {
+                            const detail = structureData.completeness?.featureDetails?.find((d: any) => d.featureId === feature.id);
+                            const filled = detail?.filledFields ?? 0;
+                            const isComplete = filled === 10;
+                            return (
+                              <div key={feature.id} className="py-1.5 border-b border-input last:border-0">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-foreground truncate mr-2">
+                                    <span className="text-muted-foreground">{feature.id}:</span> {feature.name}
+                                  </span>
+                                  <span className="flex items-center gap-1.5 shrink-0">
+                                    <span className={`font-medium ${isComplete ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'}`}>
+                                      {filled}/10
+                                    </span>
+                                    <span className={`inline-block w-2 h-2 rounded-full ${isComplete ? 'bg-green-500' : 'bg-yellow-500'}`} />
+                                  </span>
+                                </div>
+                                {!isComplete && detail?.missingFields?.length > 0 && (
+                                  <div className="text-xs text-muted-foreground mt-0.5 ml-4">
+                                    Missing: {detail.missingFields.join(', ')}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="flex items-center gap-3 text-xs text-muted-foreground pt-2 border-t border-input">
+                          <span>Source: {structureData.source}</span>
+                          {structureData.structuredAt && (
+                            <span>Parsed: {formatDistance(new Date(structureData.structuredAt), new Date(), { addSuffix: true })}</span>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center h-40 text-muted-foreground text-sm gap-2">
+                        <BarChart3 className="w-8 h-8 opacity-40" />
+                        <p>No structured content available yet.</p>
+                        <p className="text-xs">Generate a PRD with the AI compiler to see structure analysis.</p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

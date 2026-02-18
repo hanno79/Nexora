@@ -67,6 +67,31 @@ function syncPrdHeaderMetadata(
 }
 
 
+/**
+ * Verify the requesting user owns the PRD or has the required share permission.
+ * Returns the PRD if authorized, or sends 403/404 and returns null.
+ */
+async function requirePrdAccess(
+  req: any, res: any, prdId: string,
+  requiredPermission: 'view' | 'edit' = 'view'
+) {
+  const prd = await storage.getPrd(prdId);
+  if (!prd) {
+    res.status(404).json({ message: "PRD not found" });
+    return null;
+  }
+  const userId = req.user.claims.sub;
+  if (prd.userId === userId) return prd;
+
+  const shares = await storage.getPrdShares(prdId);
+  const userShare = shares.find((s: any) => s.sharedWith === userId);
+  if (!userShare || (requiredPermission === 'edit' && userShare.permission !== 'edit')) {
+    res.status(403).json({ message: "You don't have permission to access this PRD" });
+    return null;
+  }
+  return prd;
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Initialize templates
   await initializeTemplates();
@@ -259,12 +284,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/prds/:id', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const prd = await storage.getPrd(id);
-      
-      if (!prd) {
-        return res.status(404).json({ message: "PRD not found" });
-      }
-      
+      const prd = await requirePrdAccess(req, res, id, 'view');
+      if (!prd) return;
+
       res.json(prd);
     } catch (error) {
       console.error("Error fetching PRD:", error);
@@ -294,12 +316,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch('/api/prds/:id', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const prd = await storage.getPrd(id);
-      
-      if (!prd) {
-        return res.status(404).json({ message: "PRD not found" });
-      }
-      
+      const prd = await requirePrdAccess(req, res, id, 'edit');
+      if (!prd) return;
+
       // If content is being updated, synchronize header metadata
       let updateData = { ...req.body };
       if (updateData.content) {
@@ -343,6 +362,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete('/api/prds/:id', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const prd = await storage.getPrd(id);
+      if (!prd) return res.status(404).json({ message: "PRD not found" });
+      if (prd.userId !== req.user.claims.sub) {
+        return res.status(403).json({ message: "Only the owner can delete this PRD" });
+      }
       await storage.deletePrd(id);
       res.json({ success: true });
     } catch (error) {
@@ -420,11 +444,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const userId = req.user.claims.sub;
-      const prd = await storage.getPrd(id);
-      
-      if (!prd) {
-        return res.status(404).json({ message: "PRD not found" });
-      }
+      const prd = await requirePrdAccess(req, res, id, 'edit');
+      if (!prd) return;
 
       const versions = await storage.getPrdVersions(id);
       const versionNumber = `v${versions.length + 1}`;
@@ -447,22 +468,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete('/api/prds/:id/versions/:versionId', isAuthenticated, async (req: any, res) => {
     try {
       const { id, versionId } = req.params;
-      const userId = req.user.claims.sub;
-      
-      const prd = await storage.getPrd(id);
-      if (!prd) {
-        return res.status(404).json({ message: "PRD not found" });
-      }
-      
-      // Check if user owns the PRD or has edit permission
-      if (prd.userId !== userId) {
-        const shares = await storage.getPrdShares(id);
-        const userShare = shares.find(s => s.sharedWith === userId && s.permission === 'edit');
-        if (!userShare) {
-          return res.status(403).json({ message: "You don't have permission to delete versions for this PRD" });
-        }
-      }
-      
+
+      const prd = await requirePrdAccess(req, res, id, 'edit');
+      if (!prd) return;
+
       const version = await storage.getPrdVersion(versionId);
       if (!version) {
         return res.status(404).json({ message: "Version not found" });
@@ -490,7 +499,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const { email, permission } = req.body;
-      
+
+      // Only the owner can share a PRD
+      const userId = req.user.claims.sub;
+      const prd = await storage.getPrd(id);
+      if (!prd) return res.status(404).json({ message: "PRD not found" });
+      if (prd.userId !== userId) {
+        return res.status(403).json({ message: "Only the owner can share this PRD" });
+      }
+      if (permission && !['view', 'edit'].includes(permission)) {
+        return res.status(400).json({ message: "Permission must be 'view' or 'edit'" });
+      }
+
       // Find user by email
       const sharedUser = await storage.getUserByEmail(email);
       if (!sharedUser) {
@@ -514,6 +534,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/prds/:id/shares', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const prd = await requirePrdAccess(req, res, id, 'view');
+      if (!prd) return;
+
       const shares = await storage.getPrdShares(id);
       res.json(shares);
     } catch (error) {
@@ -526,6 +549,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/prds/:id/comments', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const prd = await requirePrdAccess(req, res, id, 'view');
+      if (!prd) return;
+
       const commentsData = await storage.getComments(id);
       
       // Enrich comments with user information
@@ -555,6 +581,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/prds/:id/comments', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const prd = await requirePrdAccess(req, res, id, 'view');
+      if (!prd) return;
+
       const userId = req.user.claims.sub;
       const { content, sectionId } = req.body;
       
@@ -591,6 +620,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/prds/:id/approval', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const prd = await requirePrdAccess(req, res, id, 'view');
+      if (!prd) return;
+
       const approval = await storage.getApproval(id);
       
       if (!approval) {
@@ -625,6 +657,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/prds/:id/approval/request', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const prd = await requirePrdAccess(req, res, id, 'edit');
+      if (!prd) return;
+
       const userId = req.user.claims.sub;
       const { reviewers } = req.body;
       
@@ -1188,11 +1223,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const { format } = req.body;
     try {
       const { id } = req.params;
-      const prd = await storage.getPrd(id);
-      
-      if (!prd) {
-        return res.status(404).json({ message: "PRD not found" });
-      }
+      const prd = await requirePrdAccess(req, res, id, 'view');
+      if (!prd) return;
 
       if (format === 'markdown') {
         const markdown = `# ${prd.title}\n\n${prd.description || ''}\n\n---\n\n${prd.content}`;
@@ -1327,6 +1359,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/prds/:id/structure', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const accessPrd = await requirePrdAccess(req, res, id, 'view');
+      if (!accessPrd) return;
+
       const { prd, structure } = await storage.getPrdWithStructure(id);
 
       if (!structure) {
@@ -1349,10 +1384,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/prds/:id/reparse', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const prd = await storage.getPrd(id);
-      if (!prd) {
-        return res.status(404).json({ message: "PRD not found" });
-      }
+      const prd = await requirePrdAccess(req, res, id, 'edit');
+      if (!prd) return;
 
       const structure = parsePRDToStructure(prd.content);
       await storage.updatePrdStructure(id, structure);
@@ -1370,6 +1403,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/prds/:id/completeness', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const prd = await requirePrdAccess(req, res, id, 'view');
+      if (!prd) return;
+
       const { structure } = await storage.getPrdWithStructure(id);
 
       if (!structure) {
