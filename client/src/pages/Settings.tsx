@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Save, Check, Link2, Sun, Moon, Monitor, Brain, RefreshCw, Languages, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import { isUnauthorizedError } from "@/lib/authUtils";
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/components/ThemeProvider";
 import { useTranslation } from "@/lib/i18n";
+import { useDebounce } from "@/hooks/useDebounce";
 
 export default function Settings() {
   const { user } = useAuth();
@@ -106,6 +107,9 @@ export default function Settings() {
     queryKey: ["/api/settings/ai"],
   });
 
+  const lastSavedModelKeyRef = useRef<string>('');
+  const aiPrefsLoadedRef = useRef(false);
+
   useEffect(() => {
     if (aiPreferences) {
       const tm = aiPreferences.tierModels || {};
@@ -120,8 +124,28 @@ export default function Settings() {
       setIterativeTimeoutMinutes(aiPreferences.iterativeTimeoutMinutes || 30);
       setUseFinalReview(aiPreferences.useFinalReview || false);
       setGuidedQuestionRounds(aiPreferences.guidedQuestionRounds || 3);
+
+      // Snapshot the loaded state so auto-save doesn't fire on initial load
+      lastSavedModelKeyRef.current = JSON.stringify({
+        generatorModel: aiPreferences.generatorModel || "google/gemini-2.5-flash",
+        reviewerModel: aiPreferences.reviewerModel || "anthropic/claude-sonnet-4",
+        fallbackModel: aiPreferences.fallbackModel || "deepseek/deepseek-r1-0528:free",
+        aiTier: aiPreferences.tier || "production",
+      });
+      aiPrefsLoadedRef.current = true;
     }
   }, [aiPreferences]);
+
+  // Auto-save AI model settings with debounce
+  const aiModelSettingsKey = JSON.stringify({ generatorModel, reviewerModel, fallbackModel, aiTier });
+  const debouncedModelSettings = useDebounce(aiModelSettingsKey, 1500);
+
+  useEffect(() => {
+    if (!aiPrefsLoadedRef.current) return;
+    if (debouncedModelSettings === lastSavedModelKeyRef.current) return;
+    lastSavedModelKeyRef.current = debouncedModelSettings;
+    updateAiSettingsMutation.mutate();
+  }, [debouncedModelSettings]);
 
   const filteredModels = (openRouterData?.models || []).filter(m => {
     const matchesFilter = modelFilter === 'all' || 
