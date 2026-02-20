@@ -27,7 +27,7 @@ export default function CreateTemplate() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [sections, setSections] = useState<Section[]>([
-    { id: "1", title: "Overview", content: "Brief description of the feature" },
+    { id: "1", title: t.templates.defaultSectionTitle, content: t.templates.defaultSectionContent },
   ]);
 
   const addSection = () => {
@@ -89,8 +89,8 @@ export default function CreateTemplate() {
     onError: (error: Error) => {
       if (isUnauthorizedError(error)) {
         toast({
-          title: "Unauthorized",
-          description: "You are logged out. Logging in again...",
+          title: t.auth.unauthorized,
+          description: t.auth.loggedOut,
           variant: "destructive",
         });
         setTimeout(() => {

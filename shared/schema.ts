@@ -1,7 +1,9 @@
 import { sql, relations } from 'drizzle-orm';
 import {
   index,
+  integer,
   jsonb,
+  numeric,
   pgTable,
   text,
   timestamp,
@@ -87,7 +89,9 @@ export const templates = pgTable("templates", {
   userId: varchar("user_id").references(() => users.id, { onDelete: 'cascade' }), // null for default templates
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  index("idx_templates_userId").on(table.userId),
+]);
 
 export type Template = typeof templates.$inferSelect;
 export type InsertTemplate = typeof templates.$inferInsert;
@@ -176,6 +180,7 @@ export const comments = pgTable("comments", {
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_comments_prdId").on(table.prdId),
+  index("idx_comments_userId").on(table.userId),
 ]);
 
 export type Comment = typeof comments.$inferSelect;
@@ -201,6 +206,8 @@ export const approvals = pgTable("approvals", {
   completedBy: varchar("completed_by").references(() => users.id),
 }, (table) => [
   index("idx_approvals_prdId").on(table.prdId),
+  index("idx_approvals_requestedBy").on(table.requestedBy),
+  index("idx_approvals_completedBy").on(table.completedBy),
 ]);
 
 export type Approval = typeof approvals.$inferSelect;
@@ -225,13 +232,14 @@ export const aiUsage = pgTable("ai_usage", {
   modelType: varchar("model_type").notNull(), // 'generator' | 'reviewer'
   model: varchar("model").notNull(), // Full model name (e.g., 'openai/gpt-4o')
   tier: varchar("tier").notNull(), // 'development' | 'production' | 'premium'
-  inputTokens: varchar("input_tokens").notNull(), // Stored as string to handle large numbers
-  outputTokens: varchar("output_tokens").notNull(),
-  totalCost: varchar("total_cost").notNull(), // Stored as string for precision (e.g., '0.00234')
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  totalCost: numeric("total_cost", { precision: 12, scale: 6 }).notNull().default('0'),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_aiUsage_userId").on(table.userId),
   index("idx_aiUsage_prdId").on(table.prdId),
+  index("idx_aiUsage_createdAt").on(table.createdAt),
 ]);
 
 export type AiUsage = typeof aiUsage.$inferSelect;
@@ -239,8 +247,8 @@ export type AiUsage = typeof aiUsage.$inferSelect;
 export const insertAiUsageSchema = createInsertSchema(aiUsage, {
   modelType: z.enum(['generator', 'reviewer']),
   tier: z.enum(['development', 'production', 'premium']),
-  inputTokens: z.string(),
-  outputTokens: z.string(),
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
   totalCost: z.string(),
 }).omit({
   id: true,

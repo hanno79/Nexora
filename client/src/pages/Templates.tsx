@@ -96,8 +96,8 @@ export default function Templates() {
     onError: (error: Error) => {
       if (isUnauthorizedError(error)) {
         toast({
-          title: "Unauthorized",
-          description: "You are logged out. Logging in again...",
+          title: t.auth.unauthorized,
+          description: t.auth.loggedOut,
           variant: "destructive",
         });
         setTimeout(() => {
@@ -106,8 +106,8 @@ export default function Templates() {
         return;
       }
       toast({
-        title: "Error",
-        description: "Failed to create PRD from template",
+        title: t.common.error,
+        description: t.errors.saveFailed,
         variant: "destructive",
       });
     },
@@ -118,6 +118,22 @@ export default function Templates() {
     // Pre-fill language with user's default
     setPrdLanguage(user?.defaultContentLanguage || "auto");
     setDialogOpen(true);
+  };
+
+  const getTemplateName = (template: Template) => {
+    const key = template.category as keyof typeof t.templates.defaults;
+    if (template.isDefault === 'true' && t.templates.defaults[key]) {
+      return t.templates.defaults[key].name;
+    }
+    return template.name;
+  };
+
+  const getTemplateDescription = (template: Template) => {
+    const key = template.category as keyof typeof t.templates.defaults;
+    if (template.isDefault === 'true' && t.templates.defaults[key]) {
+      return t.templates.defaults[key].description;
+    }
+    return template.description;
   };
 
   const handleDialogClose = (open: boolean) => {
@@ -197,7 +213,7 @@ export default function Templates() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-2">
-                          <CardTitle className="text-xl">{template.name}</CardTitle>
+                          <CardTitle className="text-xl">{getTemplateName(template)}</CardTitle>
                           {isCustom && (
                             <Badge variant="secondary" className="text-xs" data-testid={`badge-custom-${template.id}`}>
                               {t.templates.custom}
@@ -205,7 +221,7 @@ export default function Templates() {
                           )}
                         </div>
                         <CardDescription className="line-clamp-3">
-                          {template.description}
+                          {getTemplateDescription(template)}
                         </CardDescription>
                       </div>
                     </div>

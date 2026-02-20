@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { useTranslation } from "@/lib/i18n";
 
 interface GuidedQuestion {
   id: string;
@@ -44,6 +45,7 @@ export function GuidedAiDialog({
   onContentGenerated,
   initialProjectIdea = ''
 }: GuidedAiDialogProps) {
+  const { t } = useTranslation();
   const [projectIdea, setProjectIdea] = useState(initialProjectIdea);
   const [step, setStep] = useState<Step>('input');
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -98,7 +100,7 @@ export function GuidedAiDialog({
 
   const handleStartWithIdea = async (idea: string) => {
     if (idea.trim().length < 10) {
-      setError('Please provide a more detailed project description (at least 10 characters)');
+      setError(t.guidedAi.minLengthError);
       return;
     }
 
@@ -139,7 +141,7 @@ export function GuidedAiDialog({
 
   const handleStart = async () => {
     if (projectIdea.trim().length < 10) {
-      setError('Please provide a more detailed project description (at least 10 characters)');
+      setError(t.guidedAi.minLengthError);
       return;
     }
 
@@ -201,14 +203,14 @@ export function GuidedAiDialog({
     }));
 
     if (answersArray.length === 0) {
-      setError('Please answer at least one question');
+      setError(t.guidedAi.answerOneQuestion);
       return;
     }
 
     // Validate that custom text is provided when "Other" is selected
     for (const answer of answersArray) {
       if (answer.selectedOptionId === 'custom' && (!answer.customText || answer.customText.trim().length === 0)) {
-        setError('Please provide details for your custom answer');
+        setError(t.guidedAi.customAnswerRequired);
         return;
       }
     }
@@ -290,7 +292,7 @@ export function GuidedAiDialog({
 
   const handleSkipAll = async () => {
     if (projectIdea.trim().length < 10) {
-      setError('Please provide a more detailed project description');
+      setError(t.guidedAi.minLengthError);
       return;
     }
 
@@ -355,13 +357,13 @@ export function GuidedAiDialog({
 
   const getStepTitle = () => {
     switch (step) {
-      case 'input': return 'Describe Your Project';
-      case 'analyzing': return 'Analyzing Your Idea...';
-      case 'questions': return `Clarifying Questions (Round ${roundNumber})`;
-      case 'processing': return 'Processing Your Answers...';
-      case 'finalizing': return 'Generating Your PRD...';
-      case 'done': return 'PRD Generated Successfully!';
-      default: return 'Guided PRD Generator';
+      case 'input': return t.guidedAi.describeProject;
+      case 'analyzing': return t.guidedAi.analyzing;
+      case 'questions': return `${t.guidedAi.clarifyingQuestions} (${t.guidedAi.round} ${roundNumber})`;
+      case 'processing': return t.guidedAi.processingAnswers;
+      case 'finalizing': return t.guidedAi.generatingPrd;
+      case 'done': return t.guidedAi.prdGenerated;
+      default: return t.guidedAi.guidedGenerator;
     }
   };
 
@@ -374,12 +376,12 @@ export function GuidedAiDialog({
             <span>{getStepTitle()}</span>
           </DialogTitle>
           <DialogDescription className="text-xs sm:text-sm">
-            {step === 'input' && 'Describe your project idea and we\'ll help you create a detailed PRD'}
-            {step === 'analyzing' && 'AI is analyzing your project idea...'}
-            {step === 'questions' && 'Answer these questions to refine your requirements'}
-            {step === 'processing' && 'Integrating your feedback...'}
-            {step === 'finalizing' && 'Creating your comprehensive PRD...'}
-            {step === 'done' && 'Your PRD is ready!'}
+            {step === 'input' && t.guidedAi.describeHint}
+            {step === 'analyzing' && t.guidedAi.analyzingHint}
+            {step === 'questions' && t.guidedAi.questionsHint}
+            {step === 'processing' && t.guidedAi.processingHint}
+            {step === 'finalizing' && t.guidedAi.finalizingHint}
+            {step === 'done' && t.guidedAi.doneHint}
           </DialogDescription>
         </DialogHeader>
 
@@ -391,17 +393,17 @@ export function GuidedAiDialog({
             {step === 'input' && (
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="project-idea">Project Idea</Label>
+                  <Label htmlFor="project-idea">{t.guidedAi.projectIdea}</Label>
                   <Textarea
                     id="project-idea"
-                    placeholder="Describe your product idea in detail. What problem does it solve? Who is it for? What are the main features you envision?"
+                    placeholder={t.guidedAi.placeholder}
                     value={projectIdea}
                     onChange={(e) => setProjectIdea(e.target.value)}
                     rows={8}
                     data-testid="textarea-project-idea"
                   />
                   <p className="text-xs text-muted-foreground">
-                    The more details you provide, the better the AI can understand and help refine your requirements.
+                    {t.guidedAi.detailHint}
                   </p>
                 </div>
               </div>
@@ -411,7 +413,7 @@ export function GuidedAiDialog({
             {step === 'analyzing' && (
               <div className="flex flex-col items-center justify-center py-12 space-y-4">
                 <Brain className="w-12 h-12 text-primary animate-pulse" />
-                <p className="text-muted-foreground">Analyzing your project idea...</p>
+                <p className="text-muted-foreground">{t.guidedAi.analyzingProject}</p>
                 <div className="flex gap-2">
                   <div className="h-2 w-2 rounded-full bg-primary animate-bounce" />
                   <div className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '0.2s' }} />
@@ -429,7 +431,7 @@ export function GuidedAiDialog({
                     <CardHeader className="p-3 sm:pb-2 sm:p-4">
                       <CardTitle className="text-xs sm:text-sm flex items-center gap-2">
                         <Sparkles className="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0" />
-                        Initial Analysis
+                        {t.guidedAi.initialAnalysis}
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="p-3 pt-0 sm:p-4 sm:pt-0">
@@ -484,7 +486,7 @@ export function GuidedAiDialog({
                       {answers[question.id]?.selectedOptionId === 'custom' && (
                         <div className="mt-2 sm:mt-3 pl-5 sm:pl-7">
                           <Input
-                            placeholder="Please explain your preference..."
+                            placeholder={t.guidedAi.explainPreference}
                             value={answers[question.id]?.customText || ''}
                             onChange={(e) => updateAnswer(question.id, 'custom', e.target.value)}
                             data-testid={`input-custom-${question.id}`}
@@ -502,7 +504,7 @@ export function GuidedAiDialog({
             {step === 'processing' && (
               <div className="flex flex-col items-center justify-center py-12 space-y-4">
                 <Zap className="w-12 h-12 text-amber-500 animate-pulse" />
-                <p className="text-muted-foreground">Refining your requirements...</p>
+                <p className="text-muted-foreground">{t.guidedAi.refiningRequirements}</p>
                 <div className="flex gap-2">
                   <div className="h-2 w-2 rounded-full bg-primary animate-bounce" />
                   <div className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '0.2s' }} />
@@ -515,8 +517,8 @@ export function GuidedAiDialog({
             {step === 'finalizing' && (
               <div className="flex flex-col items-center justify-center py-12 space-y-4">
                 <Sparkles className="w-12 h-12 text-primary animate-pulse" />
-                <p className="text-muted-foreground">Generating your comprehensive PRD...</p>
-                <p className="text-xs text-muted-foreground">This may take a minute...</p>
+                <p className="text-muted-foreground">{t.guidedAi.generatingComprehensive}</p>
+                <p className="text-xs text-muted-foreground">{t.guidedAi.mayTakeMinute}</p>
                 <div className="flex gap-2">
                   <div className="h-2 w-2 rounded-full bg-primary animate-bounce" />
                   <div className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '0.2s' }} />
@@ -529,8 +531,8 @@ export function GuidedAiDialog({
             {step === 'done' && (
               <div className="flex flex-col items-center justify-center py-12 space-y-4">
                 <CheckCircle2 className="w-12 h-12 text-green-500" />
-                <p className="font-medium">PRD Generated Successfully!</p>
-                <p className="text-sm text-muted-foreground">Your content has been added to the editor</p>
+                <p className="font-medium">{t.guidedAi.prdGenerated}</p>
+                <p className="text-sm text-muted-foreground">{t.guidedAi.contentAdded}</p>
                 {modelsUsed.length > 0 && (
                   <div className="flex flex-wrap items-center justify-center gap-1 mt-2" data-testid="text-models-used">
                     {modelsUsed.map((m, i) => (
@@ -564,7 +566,7 @@ export function GuidedAiDialog({
                 }}
                 data-testid="button-cancel"
               >
-                Cancel
+                {t.common.cancel}
               </Button>
               <Button
                 variant="outline"
@@ -573,8 +575,8 @@ export function GuidedAiDialog({
                 data-testid="button-skip-all"
               >
                 <SkipForward className="w-4 h-4 mr-1 sm:mr-2" />
-                <span className="hidden sm:inline">Skip Questions</span>
-                <span className="sm:hidden">Skip</span>
+                <span className="hidden sm:inline">{t.guidedAi.skipQuestions}</span>
+                <span className="sm:hidden">{t.guidedAi.skip}</span>
               </Button>
               <Button
                 onClick={handleStart}
@@ -582,8 +584,8 @@ export function GuidedAiDialog({
                 data-testid="button-start-guided"
               >
                 <ArrowRight className="w-4 h-4 mr-1 sm:mr-2" />
-                <span className="hidden sm:inline">Start Guided Generation</span>
-                <span className="sm:hidden">Start</span>
+                <span className="hidden sm:inline">{t.guidedAi.startGuidedGeneration}</span>
+                <span className="sm:hidden">{t.guidedAi.start}</span>
               </Button>
             </>
           )}
@@ -598,7 +600,7 @@ export function GuidedAiDialog({
                 }}
                 data-testid="button-cancel-questions"
               >
-                Cancel
+                {t.common.cancel}
               </Button>
               <Button
                 variant="outline"
@@ -606,8 +608,8 @@ export function GuidedAiDialog({
                 data-testid="button-skip-questions"
               >
                 <SkipForward className="w-4 h-4 mr-1 sm:mr-2" />
-                <span className="hidden sm:inline">Skip & Generate</span>
-                <span className="sm:hidden">Skip</span>
+                <span className="hidden sm:inline">{t.guidedAi.skipGenerate}</span>
+                <span className="sm:hidden">{t.guidedAi.skip}</span>
               </Button>
               <Button
                 onClick={handleSubmitAnswers}
@@ -615,7 +617,7 @@ export function GuidedAiDialog({
                 data-testid="button-submit-answers"
               >
                 <ArrowRight className="w-4 h-4 mr-1 sm:mr-2" />
-                Continue
+                {t.guidedAi.continue}
               </Button>
             </>
           )}
@@ -629,14 +631,14 @@ export function GuidedAiDialog({
               }}
               data-testid="button-cancel-processing"
             >
-              Cancel
+              {t.common.cancel}
             </Button>
           )}
 
           {step === 'done' && (
             <Button variant="outline" disabled>
               <CheckCircle2 className="w-4 h-4 mr-2" />
-              Done
+              {t.guidedAi.done}
             </Button>
           )}
         </DialogFooter>

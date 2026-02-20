@@ -86,6 +86,13 @@ export default function Dashboard() {
       <TopBar onSearchChange={setSearchQuery} searchValue={searchQuery} />
 
       <div className="container max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-8">
+        {/* Onboarding Banner (non-blocking) */}
+        {showOnboarding && (
+          <div className="mb-6">
+            <OnboardingDialog open={showOnboarding} onOpenChange={setShowOnboarding} />
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex items-center justify-between mb-6 sm:mb-8 gap-3">
           <div className="min-w-0 flex-1">
@@ -299,7 +306,6 @@ export default function Dashboard() {
         )}
       </div>
 
-      <OnboardingDialog open={showOnboarding} onOpenChange={setShowOnboarding} />
     </div>
   );
 }

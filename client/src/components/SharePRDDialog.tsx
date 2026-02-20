@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useTranslation } from "@/lib/i18n";
 
 interface SharePRDDialogProps {
   prdId: string;
@@ -29,6 +30,7 @@ interface SharePRDDialogProps {
 
 export function SharePRDDialog({ prdId, open, onOpenChange }: SharePRDDialogProps) {
   const { toast } = useToast();
+  const { t } = useTranslation();
   const [email, setEmail] = useState("");
   const [permission, setPermission] = useState<"view" | "edit">("view");
   const [copied, setCopied] = useState(false);
@@ -45,15 +47,15 @@ export function SharePRDDialog({ prdId, open, onOpenChange }: SharePRDDialogProp
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId, "shares"] });
       toast({
-        title: "Success",
-        description: "PRD shared successfully",
+        title: t.common.success,
+        description: t.share.successShared,
       });
       setEmail("");
     },
     onError: () => {
       toast({
-        title: "Error",
-        description: "Failed to share PRD. User may not exist.",
+        title: t.common.error,
+        description: t.share.failedShare,
         variant: "destructive",
       });
     },
@@ -63,8 +65,8 @@ export function SharePRDDialog({ prdId, open, onOpenChange }: SharePRDDialogProp
     navigator.clipboard.writeText(shareLink);
     setCopied(true);
     toast({
-      title: "Link copied",
-      description: "Share link copied to clipboard",
+      title: t.share.linkCopied,
+      description: t.share.linkCopiedDesc,
     });
     setTimeout(() => setCopied(false), 2000);
   };
@@ -73,9 +75,9 @@ export function SharePRDDialog({ prdId, open, onOpenChange }: SharePRDDialogProp
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md" data-testid="dialog-share-prd">
         <DialogHeader>
-          <DialogTitle>Share PRD</DialogTitle>
+          <DialogTitle>{t.share.title}</DialogTitle>
           <DialogDescription>
-            Share this PRD with your team members
+            {t.share.description}
           </DialogDescription>
         </DialogHeader>
 
@@ -83,9 +85,9 @@ export function SharePRDDialog({ prdId, open, onOpenChange }: SharePRDDialogProp
           {/* Share via email */}
           <div className="space-y-4">
             <div>
-              <Label>Share via Email</Label>
+              <Label>{t.share.viaEmail}</Label>
               <p className="text-xs text-muted-foreground mt-1">
-                Enter the email address of a NEXORA user
+                {t.share.emailHint}
               </p>
             </div>
 
@@ -103,8 +105,8 @@ export function SharePRDDialog({ prdId, open, onOpenChange }: SharePRDDialogProp
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="view">Can View</SelectItem>
-                  <SelectItem value="edit">Can Edit</SelectItem>
+                  <SelectItem value="view">{t.share.canView}</SelectItem>
+                  <SelectItem value="edit">{t.share.canEdit}</SelectItem>
                 </SelectContent>
               </Select>
 
@@ -115,7 +117,7 @@ export function SharePRDDialog({ prdId, open, onOpenChange }: SharePRDDialogProp
                 data-testid="button-send-invite"
               >
                 <Mail className="w-4 h-4 mr-2" />
-                {shareMutation.isPending ? "Sharing..." : "Send Invite"}
+                {shareMutation.isPending ? t.share.sharing : t.share.sendInvite}
               </Button>
             </div>
           </div>
@@ -123,9 +125,9 @@ export function SharePRDDialog({ prdId, open, onOpenChange }: SharePRDDialogProp
           {/* Share via link */}
           <div className="space-y-3 pt-4 border-t">
             <div>
-              <Label>Share via Link</Label>
+              <Label>{t.share.viaLink}</Label>
               <p className="text-xs text-muted-foreground mt-1">
-                Anyone with this link can view this PRD
+                {t.share.linkHint}
               </p>
             </div>
 

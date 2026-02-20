@@ -1,7 +1,10 @@
 import { Button } from "@/components/ui/button";
 import { Sparkles, Zap, Target, Workflow, ArrowRight } from "lucide-react";
+import { useTranslation } from "@/lib/i18n";
 
 export default function Landing() {
+  const { t } = useTranslation();
+
   return (
     <div className="min-h-screen bg-background">
       {/* Hero Section */}
@@ -11,35 +14,34 @@ export default function Landing() {
           <div className="text-center max-w-4xl mx-auto">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary mb-8">
               <Sparkles className="w-4 h-4" />
-              <span className="text-sm font-medium">AI-Powered Product Requirements</span>
+              <span className="text-sm font-medium">{t.landing.badge}</span>
             </div>
-            
+
             <h1 className="text-4xl md:text-6xl font-bold mb-6 bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent">
-              Create PRDs 10x Faster
+              {t.landing.headline}
             </h1>
-            
+
             <p className="text-xl text-muted-foreground mb-12 max-w-2xl mx-auto">
-              Transform your product planning with NEXORA's intelligent PRD platform. 
-              AI-powered content generation, seamless Linear integration, and collaborative workflows.
+              {t.landing.subheadline}
             </p>
-            
+
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Button 
+              <Button
                 size="lg"
                 className="group"
                 onClick={() => window.location.href = '/api/login'}
                 data-testid="button-get-started"
               >
-                Get Started
+                {t.landing.getStarted}
                 <ArrowRight className="ml-2 w-4 h-4 group-hover:translate-x-1 transition-transform" />
               </Button>
-              <Button 
-                size="lg" 
+              <Button
+                size="lg"
                 variant="outline"
                 onClick={() => window.location.href = '/api/login'}
                 data-testid="button-login"
               >
-                Log In
+                {t.landing.logIn}
               </Button>
             </div>
           </div>
@@ -53,9 +55,9 @@ export default function Landing() {
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 mb-6">
               <Zap className="w-8 h-8 text-primary" />
             </div>
-            <h3 className="text-xl font-semibold mb-3">Lightning Fast</h3>
+            <h3 className="text-xl font-semibold mb-3">{t.landing.fastTitle}</h3>
             <p className="text-muted-foreground">
-              Create comprehensive PRDs in 30-60 minutes instead of hours with AI assistance.
+              {t.landing.fastDesc}
             </p>
           </div>
 
@@ -63,9 +65,9 @@ export default function Landing() {
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-accent/10 mb-6">
               <Target className="w-8 h-8 text-accent" />
             </div>
-            <h3 className="text-xl font-semibold mb-3">Precision & Quality</h3>
+            <h3 className="text-xl font-semibold mb-3">{t.landing.qualityTitle}</h3>
             <p className="text-muted-foreground">
-              Template-based structure ensures consistent, professional documentation every time.
+              {t.landing.qualityDesc}
             </p>
           </div>
 
@@ -73,9 +75,9 @@ export default function Landing() {
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-green-500/10 mb-6">
               <Workflow className="w-8 h-8 text-green-600 dark:text-green-500" />
             </div>
-            <h3 className="text-xl font-semibold mb-3">Seamless Integration</h3>
+            <h3 className="text-xl font-semibold mb-3">{t.landing.integrationTitle}</h3>
             <p className="text-muted-foreground">
-              Export directly to Linear, Markdown, or PDF. Your workflow, simplified.
+              {t.landing.integrationDesc}
             </p>
           </div>
         </div>
@@ -86,7 +88,7 @@ export default function Landing() {
         <div className="container mx-auto px-4 py-8">
           <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
             <Sparkles className="w-4 h-4 text-primary" />
-            <span>NEXORA - The Next Oracle in Product Planning</span>
+            <span>{t.landing.footer}</span>
           </div>
         </div>
       </footer>

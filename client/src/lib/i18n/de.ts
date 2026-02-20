@@ -15,7 +15,7 @@ export const de: Translations = {
     error: "Fehler",
     success: "Erfolg",
   },
-  
+
   nav: {
     dashboard: "Dashboard",
     templates: "Vorlagen",
@@ -23,7 +23,7 @@ export const de: Translations = {
     signOut: "Abmelden",
     profile: "Profil",
   },
-  
+
   dashboard: {
     title: "PRD Dashboard",
     subtitle: "Übersicht über Ihre Product Requirement Documents",
@@ -49,7 +49,7 @@ export const de: Translations = {
       completed: "Abgeschlossen",
     },
   },
-  
+
   editor: {
     title: "PRD Editor",
     generate: "Mit KI generieren",
@@ -74,7 +74,7 @@ export const de: Translations = {
     deleteSuccessDescription: "Das PRD und alle zugehörigen Daten wurden gelöscht.",
     deleteFailed: "Fehler beim Löschen des PRD",
   },
-  
+
   settings: {
     title: "Einstellungen",
     profile: "Profil",
@@ -89,7 +89,7 @@ export const de: Translations = {
     changesSaved: "Einstellungen erfolgreich gespeichert",
     changesFailed: "Fehler beim Speichern der Einstellungen",
   },
-  
+
   templates: {
     title: "PRD-Vorlagen",
     chooseTemplate: "Vorlage auswählen",
@@ -102,6 +102,26 @@ export const de: Translations = {
     backToDashboard: "Zurück zum Dashboard",
     startWith: "Starten Sie mit einer vorgefertigten Vorlage oder erstellen Sie Ihre eigene",
     custom: "Benutzerdefiniert",
+    defaults: {
+      feature: {
+        name: "Feature PRD",
+        description: "Standardvorlage für Feature-Entwicklung mit User Stories, Anforderungen und Erfolgskennzahlen",
+      },
+      epic: {
+        name: "Epic PRD",
+        description: "Vorlage für große Initiativen über mehrere Features und Teams hinweg",
+      },
+      technical: {
+        name: "Technisches PRD",
+        description: "Technische Spezifikation für Infrastruktur, Architektur oder Plattformarbeit",
+      },
+      'product-launch': {
+        name: "Produktstart PRD",
+        description: "Umfassende Vorlage für Produkteinführungen mit Go-to-Market-Strategie",
+      },
+    },
+    defaultSectionTitle: "Übersicht",
+    defaultSectionContent: "Kurze Beschreibung des Features",
     dialog: {
       title: "Neues PRD erstellen",
       description: "Geben Sie Details für Ihr neues Product Requirement Document ein",
@@ -137,7 +157,7 @@ export const de: Translations = {
       nameRequired: "Vorlagenname ist erforderlich",
     },
   },
-  
+
   prd: {
     status: {
       draft: "Entwurf",
@@ -148,7 +168,7 @@ export const de: Translations = {
       completed: "Abgeschlossen",
     },
   },
-  
+
   languages: {
     en: "Englisch",
     de: "Deutsch",
@@ -157,7 +177,7 @@ export const de: Translations = {
     it: "Italienisch",
     auto: "Automatisch erkennen",
   },
-  
+
   errors: {
     loadFailed: "Laden fehlgeschlagen",
     saveFailed: "Speichern fehlgeschlagen",
@@ -204,5 +224,190 @@ export const de: Translations = {
         updateSuccess: "Dart AI Dokument erfolgreich aktualisiert",
       },
     },
+  },
+
+  auth: {
+    unauthorized: "Nicht autorisiert",
+    loggedOut: "Sie wurden abgemeldet. Erneute Anmeldung...",
+  },
+
+  dualAi: {
+    title: "Dual-KI Assistent",
+    description: "Generieren oder verbessern Sie Ihr PRD mit fortschrittlichen KI-Workflows",
+    workflowMode: "Workflow-Modus",
+    simple: "Einfach",
+    iterative: "Iterativ",
+    guided: "Geführt",
+    simpleDesc: "Generator erstellt PRD → Reviewer analysiert → Automatische Verbesserung",
+    iterativeDesc: "{count}x Frage-Antwort-Verfeinerungszyklen für tiefere Analyse",
+    guidedDesc: "Beantworten Sie einfache Fragen, damit die KI Ihre Anforderungen besser versteht",
+    iterationCount: "Anzahl Iterationen",
+    iterationHint: "Mehr Iterationen = tiefere Verfeinerung (aber langsamer und teurer)",
+    finalReview: "Abschlussprüfung",
+    finalReviewHint: "Abschließende Qualitätsprüfung nach allen Iterationen hinzufügen",
+    generating: "KI-Generator erstellt PRD...",
+    reviewing: "KI-Reviewer analysiert Inhalt...",
+    improving: "Verbesserung basierend auf Feedback...",
+    iterating: "Iterative Verfeinerung",
+    done: "Inhalt erfolgreich generiert!",
+    ready: "Bereit zur Generierung",
+    inputError: "Bitte geben Sie eine Eingabe an oder stellen Sie sicher, dass vorhandener Inhalt existiert",
+    timeoutError: "Generierung in der Benutzeroberfläche abgelaufen. Falls die Backend-Ausführung abgeschlossen wurde, laden Sie das PRD neu, um die automatisch gespeicherten Ergebnisse zu sehen.",
+    improvementLabel: "Verbesserungsanweisungen",
+    descriptionLabel: "PRD-Beschreibung",
+    improvePlaceholder: "Beschreiben Sie, was Sie verbessern oder hinzufügen möchten...",
+    generatePlaceholder: "Beschreiben Sie Ihre Produktidee, Features und Anforderungen...",
+    generatingBtn: "Generiere...",
+    generateIterative: "Generieren ({count}x Iterationen)",
+    improveBtn: "Mit Dual-KI verbessern",
+    generateBtn: "Mit Dual-KI generieren",
+    startGuided: "Geführte Sitzung starten",
+    generator: "Generator",
+    reviewer: "Reviewer",
+    elapsed: "vergangen",
+    tokens: "Token",
+    startingIterative: "Starte iterativen Workflow...",
+    iterationGenerating: "Iteration {current}/{total} — Generator erstellt PRD...",
+    iterationReviewing: "Iteration {current} — Generator fertig, Reviewer analysiert...",
+    featuresExpanded: "{count} Features erweitert",
+    iterationReviewerDone: "Iteration {current} — Reviewer fertig",
+    iterationComplete: "Iteration {current}/{total} abgeschlossen",
+    finalReviewInProgress: "Abschlussprüfung läuft...",
+    finalReviewComplete: "Abschlussprüfung abgeschlossen",
+  },
+
+  guidedAi: {
+    describeProject: "Beschreiben Sie Ihr Projekt",
+    analyzing: "Ihre Idee wird analysiert...",
+    clarifyingQuestions: "Klärungsfragen",
+    processingAnswers: "Ihre Antworten werden verarbeitet...",
+    generatingPrd: "Ihr PRD wird generiert...",
+    prdGenerated: "PRD erfolgreich generiert!",
+    guidedGenerator: "Geführter PRD-Generator",
+    describeHint: "Beschreiben Sie Ihre Projektidee und wir helfen Ihnen, ein detailliertes PRD zu erstellen",
+    analyzingHint: "KI analysiert Ihre Projektidee...",
+    questionsHint: "Beantworten Sie diese Fragen, um Ihre Anforderungen zu verfeinern",
+    processingHint: "Ihr Feedback wird integriert...",
+    finalizingHint: "Ihr umfassendes PRD wird erstellt...",
+    doneHint: "Ihr PRD ist fertig!",
+    projectIdea: "Projektidee",
+    placeholder: "Beschreiben Sie Ihre Produktidee im Detail. Welches Problem löst sie? Für wen ist sie gedacht? Welche Hauptfunktionen stellen Sie sich vor?",
+    detailHint: "Je mehr Details Sie angeben, desto besser kann die KI Ihre Anforderungen verstehen und verfeinern.",
+    analyzingProject: "Ihre Projektidee wird analysiert...",
+    refiningRequirements: "Ihre Anforderungen werden verfeinert...",
+    generatingComprehensive: "Ihr umfassendes PRD wird generiert...",
+    mayTakeMinute: "Dies kann eine Minute dauern...",
+    contentAdded: "Ihr Inhalt wurde zum Editor hinzugefügt",
+    initialAnalysis: "Erste Analyse",
+    minLengthError: "Bitte geben Sie eine detailliertere Projektbeschreibung ein (mindestens 10 Zeichen)",
+    answerOneQuestion: "Bitte beantworten Sie mindestens eine Frage",
+    customAnswerRequired: "Bitte geben Sie Details für Ihre benutzerdefinierte Antwort an",
+    explainPreference: "Bitte erläutern Sie Ihre Präferenz...",
+    skipQuestions: "Fragen überspringen",
+    skip: "Überspringen",
+    start: "Start",
+    startGuidedGeneration: "Geführte Generierung starten",
+    skipGenerate: "Überspringen & Generieren",
+    continue: "Weiter",
+    done: "Fertig",
+    round: "Runde",
+  },
+
+  onboarding: {
+    welcome: "Willkommen bei NEXORA",
+    welcomeDesc: "Erstellen Sie professionelle Product Requirement Documents 10x schneller mit KI-Unterstützung",
+    welcomeContent: "NEXORA kombiniert intelligente KI-Inhaltsgenerierung mit leistungsstarken Kollaborationstools, um Ihren PRD-Erstellungsprozess zu optimieren.",
+    templatesTitle: "Starten Sie mit Vorlagen",
+    templatesDesc: "Wählen Sie aus vorgefertigten Vorlagen oder erstellen Sie Ihre eigene",
+    templatesContent: "Wir bieten Vorlagen für Features, Epics, technische Spezifikationen und Produkteinführungen. Jede Vorlage ist für ihren spezifischen Anwendungsfall optimiert.",
+    aiTitle: "KI-gestützte Unterstützung",
+    aiDesc: "Lassen Sie Claude AI Ihnen helfen, bessere PRDs zu schreiben",
+    aiContent: "Nutzen Sie die KI-Unterstützung, um professionelle Inhalte zu generieren, die Klarheit zu verbessern und die Vollständigkeit sicherzustellen. Die KI versteht Best Practices im Produktmanagement.",
+    collaborateTitle: "Zusammenarbeiten & Exportieren",
+    collaborateDesc: "Teilen Sie mit Ihrem Team und exportieren Sie in Ihre bevorzugten Tools",
+    collaborateContent: "Teilen Sie PRDs mit Teammitgliedern, exportieren Sie nach Linear, Markdown oder PDF. Halten Sie Ihr gesamtes Team mit Versionskontrolle auf dem Laufenden.",
+    skip: "Überspringen",
+    next: "Weiter",
+    getStarted: "Jetzt starten",
+  },
+
+  approval: {
+    title: "PRD-Freigabe",
+    loadingInfo: "Freigabeinformationen werden geladen...",
+    viewOrRespond: "Freigabeanfrage ansehen oder beantworten",
+    requestFrom: "Freigabe von Teammitgliedern anfordern",
+    status: "Status",
+    requested: "Angefordert",
+    requestedApproval: "Freigabe angefordert",
+    approve: "Freigeben",
+    reject: "Ablehnen",
+    approved: "Freigegeben",
+    rejected: "Abgelehnt",
+    pending: "Ausstehend",
+    noUsers: "Keine Benutzer verfügbar",
+    selectReviewers: "Prüfer auswählen",
+    requestApproval: "Freigabe anfordern",
+    sending: "Wird gesendet...",
+    successSent: "Freigabeanfrage erfolgreich gesendet",
+    successResponse: "Antwort erfolgreich aufgezeichnet",
+    failedRequest: "Freigabeanfrage fehlgeschlagen",
+    failedResponse: "Antwort fehlgeschlagen",
+  },
+
+  share: {
+    title: "PRD teilen",
+    description: "Teilen Sie dieses PRD mit Ihren Teammitgliedern",
+    viaEmail: "Per E-Mail teilen",
+    emailHint: "Geben Sie die E-Mail-Adresse eines NEXORA-Benutzers ein",
+    canView: "Kann ansehen",
+    canEdit: "Kann bearbeiten",
+    sendInvite: "Einladung senden",
+    sharing: "Wird geteilt...",
+    viaLink: "Per Link teilen",
+    linkHint: "Jeder mit diesem Link kann dieses PRD ansehen",
+    successShared: "PRD erfolgreich geteilt",
+    failedShare: "PRD konnte nicht geteilt werden. Benutzer existiert möglicherweise nicht.",
+    linkCopied: "Link kopiert",
+    linkCopiedDesc: "Freigabelink in die Zwischenablage kopiert",
+  },
+
+  versions: {
+    title: "Versionshistorie",
+    description: "Frühere Versionen dieses PRD ansehen und wiederherstellen",
+    saveCurrent: "Aktuelle Version speichern",
+    saving: "Speichere...",
+    loadingVersions: "Versionen werden geladen...",
+    noVersions: "Noch keine Versionen gespeichert",
+    restore: "Wiederherstellen",
+    saveSuccess: "Version erfolgreich gespeichert",
+    saveFailed: "Version konnte nicht gespeichert werden",
+    restored: "Version wiederhergestellt",
+    restoredTo: "Wiederhergestellt auf",
+  },
+
+  shortcuts: {
+    title: "Tastenkombinationen",
+    editor: "Editor",
+    navigation: "Navigation",
+    savePrd: "PRD speichern",
+    exportPdf: "Als PDF exportieren",
+    openDualAi: "Dual-KI Assistent öffnen",
+    toggleSidebar: "Seitenleiste umschalten",
+    showShortcuts: "Tastenkombinationen anzeigen",
+  },
+
+  landing: {
+    badge: "KI-gestützte Produktanforderungen",
+    headline: "PRDs 10x schneller erstellen",
+    subheadline: "Transformieren Sie Ihre Produktplanung mit NEXORAs intelligenter PRD-Plattform. KI-gestützte Inhaltsgenerierung, nahtlose Linear-Integration und kollaborative Workflows.",
+    getStarted: "Jetzt starten",
+    logIn: "Anmelden",
+    fastTitle: "Blitzschnell",
+    fastDesc: "Erstellen Sie umfassende PRDs in 30-60 Minuten statt Stunden mit KI-Unterstützung.",
+    qualityTitle: "Präzision & Qualität",
+    qualityDesc: "Vorlagenbasierte Struktur gewährleistet konsistente, professionelle Dokumentation jedes Mal.",
+    integrationTitle: "Nahtlose Integration",
+    integrationDesc: "Direkter Export nach Linear, Markdown oder PDF. Ihr Workflow, vereinfacht.",
+    footer: "NEXORA - Das nächste Orakel in der Produktplanung",
   },
 };

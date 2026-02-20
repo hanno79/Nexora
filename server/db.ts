@@ -2,10 +2,11 @@
 // USE_NEON_SERVERLESS=true enables Neon websocket mode.
 import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import { drizzle as drizzleNeon } from "drizzle-orm/neon-serverless";
-import { Pool as PgPool } from "pg";
+import pg from "pg";
 import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
 import ws from "ws";
 import * as schema from "@shared/schema";
+const { Pool: PgPool } = pg;
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -29,6 +30,7 @@ if (useNeon) {
     max: 20,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
+    statement_timeout: 30000,
   });
   db = drizzlePg({ client: pool, schema });
   console.log("🗄️ Database driver: Local Postgres (pg)");

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useTranslation } from "@/lib/i18n";
 import { formatDistance } from "date-fns";
 import type { PrdVersion } from "@shared/schema";
 
@@ -24,6 +25,7 @@ interface VersionHistoryDialogProps {
 
 export function VersionHistoryDialog({ prdId, open, onOpenChange, onRestore }: VersionHistoryDialogProps) {
   const { toast } = useToast();
+  const { t } = useTranslation();
 
   const { data: versions, isLoading } = useQuery<PrdVersion[]>({
     queryKey: ["/api/prds", prdId, "versions"],
@@ -37,14 +39,14 @@ export function VersionHistoryDialog({ prdId, open, onOpenChange, onRestore }: V
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId, "versions"] });
       toast({
-        title: "Success",
-        description: "Version saved successfully",
+        title: t.common.success,
+        description: t.versions.saveSuccess,
       });
     },
     onError: () => {
       toast({
-        title: "Error",
-        description: "Failed to save version",
+        title: t.common.error,
+        description: t.versions.saveFailed,
         variant: "destructive",
       });
     },
@@ -54,8 +56,8 @@ export function VersionHistoryDialog({ prdId, open, onOpenChange, onRestore }: V
     onRestore(version.content, version.title);
     onOpenChange(false);
     toast({
-      title: "Version restored",
-      description: `Restored to ${version.versionNumber}`,
+      title: t.versions.restored,
+      description: `${t.versions.restoredTo} ${version.versionNumber}`,
     });
   };
 
@@ -63,9 +65,9 @@ export function VersionHistoryDialog({ prdId, open, onOpenChange, onRestore }: V
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl" data-testid="dialog-version-history">
         <DialogHeader>
-          <DialogTitle>Version History</DialogTitle>
+          <DialogTitle>{t.versions.title}</DialogTitle>
           <DialogDescription>
-            View and restore previous versions of this PRD
+            {t.versions.description}
           </DialogDescription>
         </DialogHeader>
 
@@ -78,15 +80,15 @@ export function VersionHistoryDialog({ prdId, open, onOpenChange, onRestore }: V
             data-testid="button-save-version"
           >
             <Clock className="w-4 h-4 mr-2" />
-            {createVersionMutation.isPending ? "Saving..." : "Save Current Version"}
+            {createVersionMutation.isPending ? t.versions.saving : t.versions.saveCurrent}
           </Button>
 
           <ScrollArea className="h-[400px] rounded-md border">
             {isLoading ? (
-              <div className="p-8 text-center text-muted-foreground">Loading versions...</div>
+              <div className="p-8 text-center text-muted-foreground">{t.versions.loadingVersions}</div>
             ) : !versions || versions.length === 0 ? (
               <div className="p-8 text-center text-muted-foreground">
-                No versions saved yet
+                {t.versions.noVersions}
               </div>
             ) : (
               <div className="p-4 space-y-2">
@@ -112,7 +114,7 @@ export function VersionHistoryDialog({ prdId, open, onOpenChange, onRestore }: V
                       data-testid={`button-restore-${version.id}`}
                     >
                       <RotateCcw className="w-4 h-4 mr-2" />
-                      Restore
+                      {t.versions.restore}
                     </Button>
                   </div>
                 ))}

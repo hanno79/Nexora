@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useRoute } from "wouter";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   ArrowLeft,
   Save,
@@ -17,7 +19,9 @@ import {
   ScrollText,
   BarChart3,
   RefreshCw,
-  Keyboard
+  Keyboard,
+  Eye,
+  Pencil
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -80,6 +84,7 @@ export default function Editor() {
   const [iterationLog, setIterationLog] = useState("");
   const [compilerDiagnostics, setCompilerDiagnostics] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<"prd" | "log" | "diagnostics" | "structure">("prd");
+  const [isEditing, setIsEditing] = useState(false);
 
   useEffect(() => {
     if (activeTab === "log" && !iterationLog) setActiveTab("prd");
@@ -310,6 +315,10 @@ export default function Editor() {
           credentials: 'include',
           body: JSON.stringify({ format }),
         });
+
+        if (response.status === 401 || response.status === 403) {
+          throw new Error("401: Unauthorized");
+        }
         
         if (!response.ok) {
           throw new Error(`Export failed: ${response.statusText}`);
@@ -792,13 +801,53 @@ export default function Editor() {
                 )}
 
                 {activeTab === "prd" && (
-                  <Textarea
-                    placeholder="Start writing your PRD content here..."
-                    value={content}
-                    onChange={(e) => setContent(e.target.value)}
-                    className="min-h-[400px] sm:min-h-[500px] font-mono text-xs sm:text-sm resize-none"
-                    data-testid="textarea-content"
-                  />
+                  <div>
+                    <div className="flex items-center justify-end gap-1 mb-2">
+                      <Button
+                        variant={!isEditing ? "default" : "ghost"}
+                        size="sm"
+                        onClick={() => setIsEditing(false)}
+                        className="gap-1.5 h-7 text-xs"
+                        data-testid="button-preview-mode"
+                      >
+                        <Eye className="w-3 h-3" />
+                        Preview
+                      </Button>
+                      <Button
+                        variant={isEditing ? "default" : "ghost"}
+                        size="sm"
+                        onClick={() => setIsEditing(true)}
+                        className="gap-1.5 h-7 text-xs"
+                        data-testid="button-edit-mode"
+                      >
+                        <Pencil className="w-3 h-3" />
+                        Edit
+                      </Button>
+                    </div>
+                    {isEditing ? (
+                      <Textarea
+                        placeholder="Start writing your PRD content here..."
+                        value={content}
+                        onChange={(e) => setContent(e.target.value)}
+                        className="min-h-[400px] sm:min-h-[500px] font-mono text-xs sm:text-sm resize-none"
+                        data-testid="textarea-content"
+                      />
+                    ) : (
+                      <div
+                        className="min-h-[400px] sm:min-h-[500px] rounded-md border border-input bg-background px-4 py-4 prose prose-sm dark:prose-invert max-w-none overflow-auto"
+                        data-testid="div-content-preview"
+                        onClick={() => setIsEditing(true)}
+                      >
+                        {content ? (
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {content}
+                          </ReactMarkdown>
+                        ) : (
+                          <p className="text-muted-foreground italic">Start writing your PRD content here...</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )}
                 {activeTab === "log" && iterationLog && (
                   <div

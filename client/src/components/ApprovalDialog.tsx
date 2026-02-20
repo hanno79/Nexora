@@ -14,6 +14,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useTranslation } from "@/lib/i18n";
 import { formatDistance } from "date-fns";
 
 interface ApprovalDialogProps {
@@ -43,6 +44,7 @@ interface Approval {
 export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProps) {
   const [selectedReviewers, setSelectedReviewers] = useState<string[]>([]);
   const { toast } = useToast();
+  const { t } = useTranslation();
 
   const { data: approval, isLoading: approvalLoading } = useQuery<Approval | null>({
     queryKey: [`/api/prds/${prdId}/approval`],
@@ -66,15 +68,15 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
       queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId] });
       queryClient.invalidateQueries({ queryKey: ["/api/prds"] });
       toast({
-        title: "Success",
-        description: "Approval request sent successfully",
+        title: t.common.success,
+        description: t.approval.successSent,
       });
       onOpenChange(false);
     },
     onError: (error: any) => {
       toast({
-        title: "Error",
-        description: error.message || "Failed to request approval",
+        title: t.common.error,
+        description: error.message || t.approval.failedRequest,
         variant: "destructive",
       });
     },
@@ -92,15 +94,15 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
       queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId] });
       queryClient.invalidateQueries({ queryKey: ["/api/prds"] });
       toast({
-        title: "Success",
-        description: "Response recorded successfully",
+        title: t.common.success,
+        description: t.approval.successResponse,
       });
       onOpenChange(false);
     },
     onError: (error: any) => {
       toast({
-        title: "Error",
-        description: error.message || "Failed to respond",
+        title: t.common.error,
+        description: error.message || t.approval.failedResponse,
         variant: "destructive",
       });
     },
@@ -137,7 +139,7 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
     };
     return (
       <Badge variant={variants[status] || "secondary"} className="capitalize">
-        {status}
+        {status === 'approved' ? t.approval.approved : status === 'rejected' ? t.approval.rejected : t.approval.pending}
       </Badge>
     );
   };
@@ -147,10 +149,10 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>PRD Approval</DialogTitle>
-            <DialogDescription>Loading approval information...</DialogDescription>
+            <DialogTitle>{t.approval.title}</DialogTitle>
+            <DialogDescription>{t.approval.loadingInfo}</DialogDescription>
           </DialogHeader>
-          <div className="text-center py-8">Loading...</div>
+          <div className="text-center py-8">{t.common.loading}</div>
         </DialogContent>
       </Dialog>
     );
@@ -160,11 +162,11 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>PRD Approval</DialogTitle>
+          <DialogTitle>{t.approval.title}</DialogTitle>
           <DialogDescription>
             {approval
-              ? "View or respond to the approval request"
-              : "Request approval from team members"}
+              ? t.approval.viewOrRespond
+              : t.approval.requestFrom}
           </DialogDescription>
         </DialogHeader>
 
@@ -175,13 +177,13 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
               {getStatusIcon(approval.status)}
               <div className="flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="font-medium">Status:</span>
+                  <span className="font-medium">{t.approval.status}:</span>
                   <span data-testid={`badge-approval-${approval.status}`}>
                     {getStatusBadge(approval.status)}
                   </span>
                 </div>
                 <p className="text-sm text-muted-foreground" data-testid="text-approval-requested-time">
-                  Requested{" "}
+                  {t.approval.requested}{" "}
                   {formatDistance(new Date(approval.requestedAt), new Date(), {
                     addSuffix: true,
                   })}
@@ -202,7 +204,7 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
                   <p className="text-sm font-medium" data-testid="text-requester-name">
                     {approval.requester.firstName} {approval.requester.lastName}
                   </p>
-                  <p className="text-xs text-muted-foreground">Requested approval</p>
+                  <p className="text-xs text-muted-foreground">{t.approval.requestedApproval}</p>
                 </div>
               </div>
             )}
@@ -221,7 +223,7 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
                     {approval.completer.firstName} {approval.completer.lastName}
                   </p>
                   <p className="text-xs text-muted-foreground" data-testid="text-completion-time">
-                    {approval.status === "approved" ? "Approved" : "Rejected"}{" "}
+                    {approval.status === "approved" ? t.approval.approved : t.approval.rejected}{" "}
                     {approval.completedAt &&
                       formatDistance(new Date(approval.completedAt), new Date(), {
                         addSuffix: true,
@@ -241,7 +243,7 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
                   data-testid="button-approve"
                 >
                   <CheckCircle2 className="w-4 h-4 mr-2" />
-                  Approve
+                  {t.approval.approve}
                 </Button>
                 <Button
                   onClick={() => respondMutation.mutate(false)}
@@ -251,7 +253,7 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
                   data-testid="button-reject"
                 >
                   <XCircle className="w-4 h-4 mr-2" />
-                  Reject
+                  {t.approval.reject}
                 </Button>
               </div>
             )}
@@ -259,10 +261,10 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
         ) : (
           <div className="space-y-4">
             <div>
-              <h4 className="text-sm font-medium mb-2">Select Reviewers</h4>
+              <h4 className="text-sm font-medium mb-2">{t.approval.selectReviewers}</h4>
               <div className="space-y-2 max-h-60 overflow-y-auto">
                 {users.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No users available</p>
+                  <p className="text-sm text-muted-foreground">{t.approval.noUsers}</p>
                 ) : (
                   users.map((user) => (
                     <div
@@ -302,8 +304,8 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
             >
               <User className="w-4 h-4 mr-2" />
               {requestApprovalMutation.isPending
-                ? "Sending..."
-                : `Request Approval (${selectedReviewers.length})`}
+                ? t.approval.sending
+                : `${t.approval.requestApproval} (${selectedReviewers.length})`}
             </Button>
           </div>
         )}

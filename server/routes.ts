@@ -232,13 +232,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const existingTierModels = existingPrefs.tierModels || {};
 
       const activeTier = preferences.tier || existingPrefs.tier || 'production';
+      // Only override the active tier's models when fields are explicitly provided.
+      // Without this guard, a PATCH with just {"tier":"development"} would overwrite
+      // the development tier models with undefined → {}, losing the configuration.
+      const tierUpdate: Record<string, string> = {};
+      if (preferences.generatorModel) tierUpdate.generatorModel = preferences.generatorModel;
+      if (preferences.reviewerModel) tierUpdate.reviewerModel = preferences.reviewerModel;
+      if (preferences.fallbackModel) tierUpdate.fallbackModel = preferences.fallbackModel;
+
       const updatedTierModels = {
         ...existingTierModels,
         ...preferences.tierModels,
         [activeTier]: {
-          generatorModel: preferences.generatorModel,
-          reviewerModel: preferences.reviewerModel,
-          fallbackModel: preferences.fallbackModel,
+          ...(existingTierModels[activeTier] || {}),
+          ...tierUpdate,
         },
       };
 
@@ -486,6 +493,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/prds/:id/versions', isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const prd = await requirePrdAccess(req, res, id, 'view');
+      if (!prd) return;
+
       const versions = await storage.getPrdVersions(id);
       res.json(versions);
     } catch (error) {
@@ -852,8 +862,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Dual-AI generation routes (HRP-17)
   const { getDualAiService } = await import('./dualAiService');
-  const { logAiUsage } = await import('./aiUsageLogger');
-  
+  const { logAiUsage, getUserAiUsageStats } = await import('./aiUsageLogger');
+
+  // AI Usage statistics endpoint
+  app.get('/api/ai/usage', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const since = req.query.since as string | undefined;
+      const stats = await getUserAiUsageStats(userId, since);
+      if (!stats) {
+        return res.status(500).json({ message: 'Failed to retrieve usage statistics' });
+      }
+      res.json(stats);
+    } catch (error: any) {
+      console.error('Error fetching AI usage stats:', error);
+      res.status(500).json({ message: error.message || 'Failed to fetch usage statistics' });
+    }
+  });
+
   app.post('/api/ai/generate-dual', isAuthenticated, aiRateLimiter, async (req: any, res) => {
     try {
       // Check if OpenRouter is configured
@@ -1024,13 +1050,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const service = getDualAiService();
+      const useSSE = req.headers.accept?.includes('text/event-stream');
+
+      // SSE progress callback — sends events to the client during long-running iterative runs
+      const sendSSE = useSSE
+        ? (event: { type: string; [key: string]: any }) => {
+            try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch {}
+          }
+        : undefined;
+
+      if (useSSE) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.flushHeaders();
+      }
+
       const result = await service.generateIterative(
         finalExistingContent,
         finalAdditionalReqs,
         finalMode,
         iterations,
         useFinalReview || false,
-        userId
+        userId,
+        sendSSE
       );
       console.log(`[iterative] service complete: prdId=${prdId || 'none'}, finalContentLen=${(result.finalContent || '').length}, iterations=${result.iterations?.length || 0}`);
 
@@ -1065,7 +1109,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`[iterative] autosave decision: prdId=${prdId || 'none'}, requested=${saveRequested}`);
 
       // Respond first to avoid blocking UI on DB writes for large runs.
-      res.json(slimResult);
+      if (useSSE) {
+        // Send final result as named SSE event, then close the stream
+        res.write(`event: result\ndata: ${JSON.stringify(slimResult)}\n\n`);
+        res.end();
+      } else {
+        res.json(slimResult);
+      }
       console.log(`[iterative] response sent: prdId=${prdId || 'none'}`);
 
       // Persist iterative results server-side in background so long-running
@@ -1141,10 +1191,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     } catch (error: any) {
       console.error("Error in iterative AI generation:", error);
-      
+
       // Pass through the detailed error message from AI services
       const errorMessage = error.message || "Failed to generate PRD with iterative AI workflow. Please try again or check your API settings.";
-      res.status(500).json({ message: errorMessage });
+      if (req.headers.accept?.includes('text/event-stream') && res.headersSent) {
+        // SSE mode: send error as event and close stream
+        res.write(`event: error\ndata: ${JSON.stringify({ message: errorMessage })}\n\n`);
+        res.end();
+      } else {
+        res.status(500).json({ message: errorMessage });
+      }
     }
   });
 
@@ -1351,28 +1407,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Version history endpoints
-  app.get('/api/prds/:id/versions', isAuthenticated, async (req: any, res) => {
-    try {
-      const prdId = req.params.id;
-      
-      // Verify user has access to this PRD
-      const prd = await storage.getPrd(prdId);
-      if (!prd) {
-        return res.status(404).json({ message: "PRD not found" });
-      }
-      
-      if (prd.userId !== req.user.claims.sub) {
-        return res.status(403).json({ message: "Access denied" });
-      }
-      
-      const versions = await storage.getPrdVersions(prdId);
-      res.json(versions);
-    } catch (error) {
-      console.error('Error fetching versions:', error);
-      res.status(500).json({ message: "Failed to fetch versions" });
-    }
-  });
-  
   // Restore PRD to specific version
   app.post('/api/prds/:id/restore/:versionId', isAuthenticated, async (req: any, res) => {
     try {

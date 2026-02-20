@@ -275,7 +275,8 @@ Create an improved version that incorporates the new requirements while keeping 
     mode: 'improve' | 'generate',
     iterationCount: number = 3,
     useFinalReview: boolean = false,
-    userId?: string
+    userId?: string,
+    onProgress?: (event: { type: string; [key: string]: any }) => void
   ): Promise<IterativeResponse> {
     // Create fresh client per request to prevent cross-user contamination
     const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
@@ -354,6 +355,7 @@ Create an improved version that incorporates the new requirements while keeping 
     // Iterative Q&A Loop
     for (let i = 1; i <= iterationCount; i++) {
       console.log(`\n📝 Iteration ${i}/${iterationCount}`);
+      onProgress?.({ type: 'iteration_start', iteration: i, total: iterationCount });
       const previousIteration = iterations[iterations.length - 1];
       
       // Step 1: AI #1 (Generator) - Creates PRD draft + asks questions
@@ -452,6 +454,18 @@ Create an improved version that incorporates the new requirements while keeping 
             if (prevIteration) {
               genResult = {
                 content: prevIteration.mergedPRD,
+                usage: { total_tokens: 0, prompt_tokens: 0, completion_tokens: 0 },
+                model: 'frozen-prev-iteration',
+                tier: 'fallback',
+                usedFallback: true
+              };
+            } else {
+              const frozenFallbackContent = iterations[0]?.mergedPRD || currentPRD || '';
+              if (!frozenFallbackContent) {
+                console.warn(`⚠️ Iteration ${i}: freeze fallback content is empty (no previous mergedPRD/currentPRD available)`);
+              }
+              genResult = {
+                content: frozenFallbackContent,
                 usage: { total_tokens: 0, prompt_tokens: 0, completion_tokens: 0 },
                 model: 'frozen-prev-iteration',
                 tier: 'fallback',
@@ -563,6 +577,7 @@ Your task:
         
         modelsUsed.add(genResult.model);
         console.log(`✅ Generated ${genResult.usage.completion_tokens} tokens with ${genResult.model}`);
+        onProgress?.({ type: 'generator_done', iteration: i, tokensUsed: genResult.usage.total_tokens, model: genResult.model });
       }
 
       if (featuresFrozen && i >= 2) {
@@ -600,6 +615,7 @@ Your task:
             console.log('🏗️ Feature Expansion Engine (iterative): Starting modular expansion...');
             expansionResult = await expandAllFeatures(workflowInputText, vision, featureResult.featureList, client);
             console.log(`🏗️ Feature Expansion complete: ${expansionResult.expandedFeatures.length} features, ${expansionResult.totalTokens} tokens`);
+            onProgress?.({ type: 'features_expanded', count: expansionResult.expandedFeatures.length, tokensUsed: expansionResult.totalTokens });
 
             // FEATURE FREEZE: Activate freeze after first successful compilation
             if (expansionResult && expansionResult.expandedFeatures.length > 0) {
@@ -727,14 +743,39 @@ Your task:
         }
       }
       
+      onProgress?.({ type: 'answerer_done', iteration: i, tokensUsed: answerResult.usage.total_tokens, model: answerResult.model });
+
       // Step 3: Extract clean PRD (without Q&A sections) and build iteration log
       const cleanPRD = provisionalCleanPRD;
       const structuredDelta = structuredDeltaResult.delta;
 
+      const rollbackFrozenIteration = (reason: string): boolean => {
+        const prevIteration = iterations[iterations.length - 1];
+        if (!prevIteration) {
+          console.warn(`⚠️ Iteration ${i}: ${reason}, but no previous iteration to roll back to.`);
+          return false;
+        }
+
+        blockedRegenerationAttempts++;
+        currentPRD = prevIteration.mergedPRD;
+        console.warn(`🚫 Iteration ${i}: ${reason}`);
+        console.warn('   Rolled back to previous merged PRD and continuing with next iteration');
+        return true;
+      };
+
       // FEATURE FREEZE: Validate no feature loss when frozen
       if (featuresFrozen && freezeBaselineStructure) {
         const previousIds = freezeBaselineStructure.features.map(f => f.id);
-        let newStructureForCheck = parsePRDToStructure(cleanPRD);
+        let newStructureForCheck: PRDStructure;
+        try {
+          newStructureForCheck = parsePRDToStructure(cleanPRD);
+        } catch (freezeParseError: any) {
+          console.warn(`❌ Iteration ${i}: Freeze validation parse failed: ${freezeParseError.message}`);
+          if (rollbackFrozenIteration('freeze validation parse failure')) {
+            continue;
+          }
+          newStructureForCheck = freezeBaselineStructure;
+        }
         const freezeWriteProjectionActive = !!freezeBaselineStructure;
         if (freezeWriteProjectionActive) {
           newStructureForCheck = {
@@ -750,16 +791,18 @@ Your task:
           console.warn('❌ FEATURE LOSS DETECTED WHILE FROZEN');
           console.warn('   Baseline features: ' + previousIds.join(', '));
           console.warn('   New features: ' + newIds.join(', '));
-          console.warn('   Regeneration attempt marked; baseline restoration will be enforced');
-          blockedRegenerationAttempts++;
+          if (rollbackFrozenIteration('feature loss detected while frozen')) {
+            continue;
+          }
         }
 
         if (newStructureForCheck.features.length < freezeBaselineStructure.features.length) {
           console.warn('❌ FEATURE COUNT DECREASED WHILE FROZEN');
           console.warn('   Baseline: ' + freezeBaselineStructure.features.length + ' features');
           console.warn('   New: ' + newStructureForCheck.features.length + ' features');
-          console.warn('   Regeneration attempt marked; baseline restoration will be enforced');
-          blockedRegenerationAttempts++;
+          if (rollbackFrozenIteration('feature count decreased while frozen')) {
+            continue;
+          }
         }
       }
 
@@ -938,6 +981,7 @@ Your task:
 
       currentPRD = preservedPRD;
       
+      const iterTokens = genResult.usage.total_tokens + answerResult.usage.total_tokens;
       iterations.push({
         iterationNumber: i,
         generatorOutput: genResult.content,
@@ -945,8 +989,9 @@ Your task:
         answererOutputTruncated,
         questions,
         mergedPRD: preservedPRD,
-        tokensUsed: genResult.usage.total_tokens + answerResult.usage.total_tokens
+        tokensUsed: iterTokens
       });
+      onProgress?.({ type: 'iteration_complete', iteration: i, total: iterationCount, tokensUsed: iterTokens });
     }
     
     let finalReview: IterativeResponse['finalReview'] = undefined;
@@ -954,9 +999,10 @@ Your task:
     // Optional: Final Review with AI #3
     if (useFinalReview) {
       console.log('\n🎯 AI #3: Final review and polish...');
-      
+      onProgress?.({ type: 'final_review_start' });
+
       const finalReviewerPrompt = `Review the following PRD at the highest level:\n\n${currentPRD}`;
-      
+
       const reviewResult = await client.callWithFallback(
         'reviewer',
         FINAL_REVIEWER_PROMPT + langInstruction,
@@ -966,7 +1012,8 @@ Your task:
       
       modelsUsed.add(reviewResult.model);
       console.log(`✅ Final review complete with ${reviewResult.usage.completion_tokens} tokens`);
-      
+      onProgress?.({ type: 'final_review_done', tokensUsed: reviewResult.usage.total_tokens });
+
       finalReview = {
         content: reviewResult.content,
         model: reviewResult.model,
@@ -1092,6 +1139,7 @@ Your task:
     const fastFinalizeEnabled = process.env.ITERATIVE_FAST_FINALIZE !== 'false';
     if (fastFinalizeEnabled) {
       console.log('⚡ Iterative fast finalize enabled (skipping deep post-processing)');
+      onProgress?.({ type: 'complete', totalTokens });
       return {
         finalContent: currentPRD,
         mergedPRD: currentPRD,
@@ -1130,7 +1178,7 @@ Your task:
     const shouldWriteArtifacts = process.env.WRITE_ITERATIVE_ARTIFACTS === 'true';
     if (shouldWriteArtifacts) {
       try {
-        const artifactWriteResult = this.writeIterativeArtifacts({
+        const artifactWriteResult = await this.writeIterativeArtifacts({
           finalContent: canonicalMergedPRD,
           mergedPRD: canonicalMergedPRD,
           iterationLog,
@@ -1159,6 +1207,7 @@ Your task:
       console.log('🗂️ Service artifact write skipped (WRITE_ITERATIVE_ARTIFACTS != true)');
     }
 
+    onProgress?.({ type: 'complete', totalTokens });
     return {
       finalContent: canonicalMergedPRD,
       mergedPRD: canonicalMergedPRD,
@@ -1172,7 +1221,7 @@ Your task:
     };
   }
 
-  private writeIterativeArtifacts(payload: {
+  private async writeIterativeArtifacts(payload: {
     finalContent: string;
     mergedPRD: string;
     iterationLog: string;
@@ -1181,7 +1230,7 @@ Your task:
     totalTokens: number;
     modelsUsed: string[];
     diagnostics?: CompilerDiagnostics;
-  }): { ok: boolean; issues: string[]; files: string[] } {
+  }): Promise<{ ok: boolean; issues: string[]; files: string[] }> {
     const issues: string[] = [];
     const repoRoot = process.cwd();
     const targets = [
@@ -1190,21 +1239,21 @@ Your task:
     ];
 
     const preStats = new Map<string, fs.Stats | null>();
-    for (const target of targets) {
-      try {
-        preStats.set(target, fs.statSync(target));
-      } catch {
-        preStats.set(target, null);
-      }
-    }
+    await Promise.all(
+      targets.map(async (target) => {
+        try {
+          preStats.set(target, await fs.promises.stat(target));
+        } catch {
+          preStats.set(target, null);
+        }
+      }),
+    );
 
     const serialized = JSON.stringify(payload, null, 2) + '\n';
-    for (const target of targets) {
-      fs.writeFileSync(target, serialized, 'utf8');
-    }
+    await Promise.all(targets.map((target) => fs.promises.writeFile(target, serialized, 'utf8')));
 
     for (const target of targets) {
-      const after = fs.statSync(target);
+      const after = await fs.promises.stat(target);
       const before = preStats.get(target);
       if (after.size <= 0) {
         issues.push(`${path.basename(target)} has zero size`);

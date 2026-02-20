@@ -4,6 +4,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useTranslation } from "@/lib/i18n";
 
 interface KeyboardShortcutsHelpProps {
   open: boolean;
@@ -13,24 +14,26 @@ interface KeyboardShortcutsHelpProps {
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
 const modKey = isMac ? '\u2318' : 'Ctrl';
 
-const shortcuts = [
-  { category: 'Editor', items: [
-    { keys: `${modKey}+S`, description: 'Save PRD' },
-    { keys: `${modKey}+Shift+E`, description: 'Export as PDF' },
-    { keys: `${modKey}+Shift+A`, description: 'Open Dual-AI Assist' },
-  ]},
-  { category: 'Navigation', items: [
-    { keys: `${modKey}+B`, description: 'Toggle sidebar' },
-    { keys: `${modKey}+/`, description: 'Show keyboard shortcuts' },
-  ]},
-];
-
 export function KeyboardShortcutsHelp({ open, onOpenChange }: KeyboardShortcutsHelpProps) {
+  const { t } = useTranslation();
+
+  const shortcuts = [
+    { category: t.shortcuts.editor, items: [
+      { keys: `${modKey}+S`, description: t.shortcuts.savePrd },
+      { keys: `${modKey}+Shift+E`, description: t.shortcuts.exportPdf },
+      { keys: `${modKey}+Shift+A`, description: t.shortcuts.openDualAi },
+    ]},
+    { category: t.shortcuts.navigation, items: [
+      { keys: `${modKey}+B`, description: t.shortcuts.toggleSidebar },
+      { keys: `${modKey}+/`, description: t.shortcuts.showShortcuts },
+    ]},
+  ];
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Keyboard Shortcuts</DialogTitle>
+          <DialogTitle>{t.shortcuts.title}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           {shortcuts.map((group) => (

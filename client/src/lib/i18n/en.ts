@@ -13,7 +13,7 @@ export const en = {
     error: "Error",
     success: "Success",
   },
-  
+
   nav: {
     dashboard: "Dashboard",
     templates: "Templates",
@@ -21,7 +21,7 @@ export const en = {
     signOut: "Sign out",
     profile: "Profile",
   },
-  
+
   dashboard: {
     title: "PRD Dashboard",
     subtitle: "Overview of your product requirement documents",
@@ -47,7 +47,7 @@ export const en = {
       completed: "Completed",
     },
   },
-  
+
   editor: {
     title: "PRD Editor",
     generate: "Generate with AI",
@@ -72,7 +72,7 @@ export const en = {
     deleteSuccessDescription: "The PRD and all related data have been deleted.",
     deleteFailed: "Failed to delete PRD",
   },
-  
+
   settings: {
     title: "Settings",
     profile: "Profile",
@@ -87,7 +87,7 @@ export const en = {
     changesSaved: "Settings saved successfully",
     changesFailed: "Failed to save settings",
   },
-  
+
   templates: {
     title: "PRD Templates",
     chooseTemplate: "Choose a Template",
@@ -100,6 +100,26 @@ export const en = {
     backToDashboard: "Back to Dashboard",
     startWith: "Start with a pre-built template or create your own",
     custom: "Custom",
+    defaults: {
+      feature: {
+        name: "Feature PRD",
+        description: "Standard template for feature development with user stories, requirements, and success metrics",
+      },
+      epic: {
+        name: "Epic PRD",
+        description: "Large initiative template spanning multiple features and teams",
+      },
+      technical: {
+        name: "Technical PRD",
+        description: "Technical specification for infrastructure, architecture, or platform work",
+      },
+      'product-launch': {
+        name: "Product Launch PRD",
+        description: "Comprehensive template for product launches with go-to-market strategy",
+      },
+    },
+    defaultSectionTitle: "Overview",
+    defaultSectionContent: "Brief description of the feature",
     dialog: {
       title: "Create New PRD",
       description: "Enter details for your new Product Requirement Document",
@@ -135,7 +155,7 @@ export const en = {
       nameRequired: "Template name is required",
     },
   },
-  
+
   prd: {
     status: {
       draft: "Draft",
@@ -146,7 +166,7 @@ export const en = {
       completed: "Completed",
     },
   },
-  
+
   languages: {
     en: "English",
     de: "German",
@@ -155,7 +175,7 @@ export const en = {
     it: "Italian",
     auto: "Auto-detect",
   },
-  
+
   errors: {
     loadFailed: "Failed to load data",
     saveFailed: "Failed to save",
@@ -202,6 +222,191 @@ export const en = {
         updateSuccess: "Dart AI document updated successfully",
       },
     },
+  },
+
+  auth: {
+    unauthorized: "Unauthorized",
+    loggedOut: "You are logged out. Logging in again...",
+  },
+
+  dualAi: {
+    title: "Dual-AI Assistant",
+    description: "Generate or improve your PRD using advanced AI workflows",
+    workflowMode: "Workflow Mode",
+    simple: "Simple",
+    iterative: "Iterative",
+    guided: "Guided",
+    simpleDesc: "Generator creates PRD → Reviewer analyzes → Automatic improvement",
+    iterativeDesc: "{count}x question-answer refinement cycles for deeper analysis",
+    guidedDesc: "Answer simple questions to help AI understand your needs better",
+    iterationCount: "Iteration Count",
+    iterationHint: "More iterations = deeper refinement (but slower and more expensive)",
+    finalReview: "Final Review",
+    finalReviewHint: "Add a final quality check after all iterations",
+    generating: "AI Generator creating PRD...",
+    reviewing: "AI Reviewer analyzing content...",
+    improving: "Improving based on feedback...",
+    iterating: "Iterative refinement",
+    done: "Content generated successfully!",
+    ready: "Ready to generate",
+    inputError: "Please provide input or ensure there is existing content",
+    timeoutError: "Generation timed out in UI. If the backend run completed, reload the PRD to see auto-saved results.",
+    improvementLabel: "Improvement Instructions",
+    descriptionLabel: "PRD Description",
+    improvePlaceholder: "Describe what you want to improve or add...",
+    generatePlaceholder: "Describe your product idea, features, and requirements...",
+    generatingBtn: "Generating...",
+    generateIterative: "Generate ({count}x iterations)",
+    improveBtn: "Improve with Dual-AI",
+    generateBtn: "Generate with Dual-AI",
+    startGuided: "Start Guided Session",
+    generator: "Generator",
+    reviewer: "Reviewer",
+    elapsed: "elapsed",
+    tokens: "tokens",
+    startingIterative: "Starting iterative workflow...",
+    iterationGenerating: "Iteration {current}/{total} — Generator creating PRD...",
+    iterationReviewing: "Iteration {current} — Generator done, Reviewer analyzing...",
+    featuresExpanded: "{count} features expanded",
+    iterationReviewerDone: "Iteration {current} — Reviewer done",
+    iterationComplete: "Iteration {current}/{total} complete",
+    finalReviewInProgress: "Final review in progress...",
+    finalReviewComplete: "Final review complete",
+  },
+
+  guidedAi: {
+    describeProject: "Describe Your Project",
+    analyzing: "Analyzing Your Idea...",
+    clarifyingQuestions: "Clarifying Questions",
+    processingAnswers: "Processing Your Answers...",
+    generatingPrd: "Generating Your PRD...",
+    prdGenerated: "PRD Generated Successfully!",
+    guidedGenerator: "Guided PRD Generator",
+    describeHint: "Describe your project idea and we'll help you create a detailed PRD",
+    analyzingHint: "AI is analyzing your project idea...",
+    questionsHint: "Answer these questions to refine your requirements",
+    processingHint: "Integrating your feedback...",
+    finalizingHint: "Creating your comprehensive PRD...",
+    doneHint: "Your PRD is ready!",
+    projectIdea: "Project Idea",
+    placeholder: "Describe your product idea in detail. What problem does it solve? Who is it for? What are the main features you envision?",
+    detailHint: "The more details you provide, the better the AI can understand and help refine your requirements.",
+    analyzingProject: "Analyzing your project idea...",
+    refiningRequirements: "Refining your requirements...",
+    generatingComprehensive: "Generating your comprehensive PRD...",
+    mayTakeMinute: "This may take a minute...",
+    contentAdded: "Your content has been added to the editor",
+    initialAnalysis: "Initial Analysis",
+    minLengthError: "Please provide a more detailed project description (at least 10 characters)",
+    answerOneQuestion: "Please answer at least one question",
+    customAnswerRequired: "Please provide details for your custom answer",
+    explainPreference: "Please explain your preference...",
+    skipQuestions: "Skip Questions",
+    skip: "Skip",
+    start: "Start",
+    startGuidedGeneration: "Start Guided Generation",
+    skipGenerate: "Skip & Generate",
+    continue: "Continue",
+    done: "Done",
+    round: "Round",
+  },
+
+  onboarding: {
+    welcome: "Welcome to NEXORA",
+    welcomeDesc: "Create professional Product Requirement Documents 10x faster with AI assistance",
+    welcomeContent: "NEXORA combines intelligent AI content generation with powerful collaboration tools to streamline your PRD creation process.",
+    templatesTitle: "Start with Templates",
+    templatesDesc: "Choose from pre-built templates or create your own",
+    templatesContent: "We provide templates for Features, Epics, Technical Specs, and Product Launches. Each template is optimized for its specific use case.",
+    aiTitle: "AI-Powered Assistance",
+    aiDesc: "Let Claude AI help you write better PRDs",
+    aiContent: "Use AI Assist to generate professional content, improve clarity, and ensure completeness. The AI understands product management best practices.",
+    collaborateTitle: "Collaborate & Export",
+    collaborateDesc: "Share with your team and export to your favorite tools",
+    collaborateContent: "Share PRDs with team members, export to Linear, Markdown, or PDF. Keep your entire team aligned with version control.",
+    skip: "Skip",
+    next: "Next",
+    getStarted: "Get Started",
+  },
+
+  approval: {
+    title: "PRD Approval",
+    loadingInfo: "Loading approval information...",
+    viewOrRespond: "View or respond to the approval request",
+    requestFrom: "Request approval from team members",
+    status: "Status",
+    requested: "Requested",
+    requestedApproval: "Requested approval",
+    approve: "Approve",
+    reject: "Reject",
+    approved: "Approved",
+    rejected: "Rejected",
+    pending: "Pending",
+    noUsers: "No users available",
+    selectReviewers: "Select Reviewers",
+    requestApproval: "Request Approval",
+    sending: "Sending...",
+    successSent: "Approval request sent successfully",
+    successResponse: "Response recorded successfully",
+    failedRequest: "Failed to request approval",
+    failedResponse: "Failed to respond",
+  },
+
+  share: {
+    title: "Share PRD",
+    description: "Share this PRD with your team members",
+    viaEmail: "Share via Email",
+    emailHint: "Enter the email address of a NEXORA user",
+    canView: "Can View",
+    canEdit: "Can Edit",
+    sendInvite: "Send Invite",
+    sharing: "Sharing...",
+    viaLink: "Share via Link",
+    linkHint: "Anyone with this link can view this PRD",
+    successShared: "PRD shared successfully",
+    failedShare: "Failed to share PRD. User may not exist.",
+    linkCopied: "Link copied",
+    linkCopiedDesc: "Share link copied to clipboard",
+  },
+
+  versions: {
+    title: "Version History",
+    description: "View and restore previous versions of this PRD",
+    saveCurrent: "Save Current Version",
+    saving: "Saving...",
+    loadingVersions: "Loading versions...",
+    noVersions: "No versions saved yet",
+    restore: "Restore",
+    saveSuccess: "Version saved successfully",
+    saveFailed: "Failed to save version",
+    restored: "Version restored",
+    restoredTo: "Restored to",
+  },
+
+  shortcuts: {
+    title: "Keyboard Shortcuts",
+    editor: "Editor",
+    navigation: "Navigation",
+    savePrd: "Save PRD",
+    exportPdf: "Export as PDF",
+    openDualAi: "Open Dual-AI Assist",
+    toggleSidebar: "Toggle sidebar",
+    showShortcuts: "Show keyboard shortcuts",
+  },
+
+  landing: {
+    badge: "AI-Powered Product Requirements",
+    headline: "Create PRDs 10x Faster",
+    subheadline: "Transform your product planning with NEXORA's intelligent PRD platform. AI-powered content generation, seamless Linear integration, and collaborative workflows.",
+    getStarted: "Get Started",
+    logIn: "Log In",
+    fastTitle: "Lightning Fast",
+    fastDesc: "Create comprehensive PRDs in 30-60 minutes instead of hours with AI assistance.",
+    qualityTitle: "Precision & Quality",
+    qualityDesc: "Template-based structure ensures consistent, professional documentation every time.",
+    integrationTitle: "Seamless Integration",
+    integrationDesc: "Export directly to Linear, Markdown, or PDF. Your workflow, simplified.",
+    footer: "NEXORA - The Next Oracle in Product Planning",
   },
 };
 

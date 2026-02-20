@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Save, Check, Link2, Sun, Moon, Monitor, Brain, RefreshCw, Languages, Search } from "lucide-react";
+import { Save, Check, Link2, Sun, Moon, Monitor, Brain, RefreshCw, Languages, Search, BarChart3, Coins, Zap, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +11,8 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { QueryError } from "@/components/QueryError";
 import { useToast } from "@/hooks/use-toast";
@@ -140,13 +142,6 @@ export default function Settings() {
   const aiModelSettingsKey = JSON.stringify({ generatorModel, reviewerModel, fallbackModel, aiTier });
   const debouncedModelSettings = useDebounce(aiModelSettingsKey, 1500);
 
-  useEffect(() => {
-    if (!aiPrefsLoadedRef.current) return;
-    if (debouncedModelSettings === lastSavedModelKeyRef.current) return;
-    lastSavedModelKeyRef.current = debouncedModelSettings;
-    updateAiSettingsMutation.mutate();
-  }, [debouncedModelSettings]);
-
   const filteredModels = (openRouterData?.models || []).filter(m => {
     const matchesFilter = modelFilter === 'all' || 
       (modelFilter === 'free' && m.isFree) || 
@@ -164,14 +159,15 @@ export default function Settings() {
   };
 
   const handleTierChange = (value: "development" | "production" | "premium") => {
-    setSavedTierModels(prev => ({
-      ...prev,
+    const nextSaved = {
+      ...savedTierModels,
       [aiTier]: { generatorModel, reviewerModel, fallbackModel },
-    }));
+    };
+    setSavedTierModels(nextSaved);
 
     setAiTier(value);
 
-    const saved = savedTierModels[value];
+    const saved = nextSaved[value];
     if (saved?.generatorModel || saved?.reviewerModel || saved?.fallbackModel) {
       if (saved.generatorModel) setGeneratorModel(saved.generatorModel);
       if (saved.reviewerModel) setReviewerModel(saved.reviewerModel);
@@ -257,16 +253,32 @@ export default function Settings() {
   });
 
   const updateAiSettingsMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (modelSettingsKey?: string) => {
+      const modelSettings = modelSettingsKey
+        ? JSON.parse(modelSettingsKey) as {
+            generatorModel?: string;
+            reviewerModel?: string;
+            fallbackModel?: string;
+            aiTier?: "development" | "production" | "premium";
+          }
+        : {};
+      const generatorModelToSave = modelSettings.generatorModel || generatorModel;
+      const reviewerModelToSave = modelSettings.reviewerModel || reviewerModel;
+      const fallbackModelToSave = modelSettings.fallbackModel || fallbackModel;
+      const tierToSave = modelSettings.aiTier || aiTier;
       const currentTierModels = {
         ...savedTierModels,
-        [aiTier]: { generatorModel, reviewerModel, fallbackModel },
+        [tierToSave]: {
+          generatorModel: generatorModelToSave,
+          reviewerModel: reviewerModelToSave,
+          fallbackModel: fallbackModelToSave,
+        },
       };
       return await apiRequest("PATCH", "/api/settings/ai", {
-        generatorModel,
-        reviewerModel,
-        fallbackModel,
-        tier: aiTier,
+        generatorModel: generatorModelToSave,
+        reviewerModel: reviewerModelToSave,
+        fallbackModel: fallbackModelToSave,
+        tier: tierToSave,
         tierModels: currentTierModels,
         tierDefaults,
         iterativeMode,
@@ -306,6 +318,20 @@ export default function Settings() {
       });
     },
   });
+  const { mutateAsync } = updateAiSettingsMutation;
+
+  useEffect(() => {
+    if (!aiPrefsLoadedRef.current) return;
+    if (debouncedModelSettings === lastSavedModelKeyRef.current) return;
+    void mutateAsync(debouncedModelSettings, {
+      onSuccess: () => {
+        lastSavedModelKeyRef.current = debouncedModelSettings;
+      },
+      onError: () => {
+        // Keep ref unchanged so next debounce can retry.
+      },
+    });
+  }, [debouncedModelSettings, mutateAsync]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -800,7 +826,7 @@ export default function Settings() {
               </div>
 
               <Button
-                onClick={() => updateAiSettingsMutation.mutate()}
+                onClick={() => updateAiSettingsMutation.mutate(undefined)}
                 disabled={updateAiSettingsMutation.isPending}
                 data-testid="button-save-ai-settings"
               >
@@ -810,6 +836,9 @@ export default function Settings() {
               </>)}
             </CardContent>
           </Card>
+
+          {/* AI Usage & Costs */}
+          <AiUsageSection />
 
           {/* Linear Integration */}
           <Card>
@@ -889,5 +918,213 @@ export default function Settings() {
         </div>
       </div>
     </div>
+  );
+}
+
+interface UsageStats {
+  totalCost: string;
+  totalCalls: number;
+  totalTokens: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  byTier: Record<string, { calls: number; tokens: number; cost: number }>;
+  byModel: Record<string, { calls: number; tokens: number; cost: number }>;
+  recentCalls: Array<{
+    id: string;
+    model: string;
+    modelType: string;
+    tier: string;
+    inputTokens: number;
+    outputTokens: number;
+    totalCost: string;
+    prdId: string | null;
+    createdAt: string | null;
+  }>;
+}
+
+function AiUsageSection() {
+  const [usagePeriod, setUsagePeriod] = useState<string>('all');
+
+  const getSinceDate = (period: string): string | null => {
+    if (period === 'all') return null;
+    const now = new Date();
+    if (period === 'today') {
+      now.setHours(0, 0, 0, 0);
+      return now.toISOString();
+    }
+    if (period === '7d') {
+      now.setDate(now.getDate() - 7);
+      return now.toISOString();
+    }
+    if (period === '30d') {
+      now.setDate(now.getDate() - 30);
+      return now.toISOString();
+    }
+    return null;
+  };
+
+  const sinceDate = getSinceDate(usagePeriod);
+  const queryUrl = sinceDate ? `/api/ai/usage?since=${encodeURIComponent(sinceDate)}` : '/api/ai/usage';
+
+  const { data: stats, isLoading } = useQuery<UsageStats>({
+    queryKey: ['/api/ai/usage', usagePeriod],
+    queryFn: async () => {
+      const res = await apiRequest("GET", queryUrl);
+      return res.json();
+    },
+  });
+
+  const periodButtons = [
+    { value: 'all', label: 'All Time' },
+    { value: 'today', label: 'Today' },
+    { value: '7d', label: 'Last 7 Days' },
+    { value: '30d', label: 'Last 30 Days' },
+  ];
+
+  const formatTokens = (n: number) => {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    return String(n);
+  };
+
+  const formatDate = (d: string | null) => {
+    if (!d) return '-';
+    const date = new Date(d);
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  };
+
+  const tierColor = (tier: string) => {
+    switch (tier) {
+      case 'development': return 'bg-green-500/10 text-green-700 dark:text-green-400';
+      case 'production': return 'bg-blue-500/10 text-blue-700 dark:text-blue-400';
+      case 'premium': return 'bg-purple-500/10 text-purple-700 dark:text-purple-400';
+      default: return '';
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <BarChart3 className="w-5 h-5" />
+          AI Usage & Costs
+        </CardTitle>
+        <CardDescription>
+          Track your AI model usage, token consumption, and estimated costs
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {/* Time Period Filter */}
+        <div className="flex flex-wrap gap-1">
+          {periodButtons.map((btn) => (
+            <Button
+              key={btn.value}
+              variant={usagePeriod === btn.value ? "default" : "outline"}
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setUsagePeriod(btn.value)}
+              data-testid={`usage-filter-${btn.value}`}
+            >
+              {btn.label}
+            </Button>
+          ))}
+        </div>
+
+        {isLoading ? (
+          <div className="text-sm text-muted-foreground">Loading usage data...</div>
+        ) : !stats || stats.totalCalls === 0 ? (
+          <div className="text-sm text-muted-foreground">
+            {usagePeriod === 'all' ? 'No AI usage recorded yet.' : 'No usage data for this period.'}
+          </div>
+        ) : (
+          <>
+            {/* Summary Cards */}
+            <div className="grid grid-cols-3 gap-4">
+              <div className="p-4 rounded-lg border bg-card">
+                <div className="flex items-center gap-2 mb-1">
+                  <Zap className="w-4 h-4 text-amber-500" />
+                  <span className="text-xs text-muted-foreground">Total Calls</span>
+                </div>
+                <p className="text-2xl font-bold">{stats.totalCalls}</p>
+              </div>
+              <div className="p-4 rounded-lg border bg-card">
+                <div className="flex items-center gap-2 mb-1">
+                  <BarChart3 className="w-4 h-4 text-blue-500" />
+                  <span className="text-xs text-muted-foreground">Total Tokens</span>
+                </div>
+                <p className="text-2xl font-bold">{formatTokens(stats.totalTokens)}</p>
+              </div>
+              <div className="p-4 rounded-lg border bg-card">
+                <div className="flex items-center gap-2 mb-1">
+                  <Coins className="w-4 h-4 text-green-500" />
+                  <span className="text-xs text-muted-foreground">Est. Cost</span>
+                </div>
+                <p className="text-2xl font-bold">${parseFloat(stats.totalCost).toFixed(2)}</p>
+              </div>
+            </div>
+
+            {/* Tier Breakdown */}
+            <div>
+              <h4 className="text-sm font-medium mb-2">By Tier</h4>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(stats.byTier).map(([tier, data]) => (
+                  <div key={tier} className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium ${tierColor(tier)}`}>
+                    <span className="capitalize">{tier}</span>
+                    <span className="opacity-70">{data.calls} calls</span>
+                    <span className="opacity-70">{formatTokens(data.tokens)} tokens</span>
+                    {data.cost > 0 && <span className="opacity-70">${data.cost.toFixed(2)}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Recent Calls Table */}
+            <div>
+              <h4 className="text-sm font-medium mb-2">Recent Calls</h4>
+              <div className="rounded-md border overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-xs">Date</TableHead>
+                      <TableHead className="text-xs">Model</TableHead>
+                      <TableHead className="text-xs">Type</TableHead>
+                      <TableHead className="text-xs">Tier</TableHead>
+                      <TableHead className="text-xs text-right">Tokens</TableHead>
+                      <TableHead className="text-xs text-right">Cost</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {stats.recentCalls.map((call) => (
+                      <TableRow key={call.id}>
+                        <TableCell className="text-xs text-muted-foreground">{formatDate(call.createdAt)}</TableCell>
+                        <TableCell className="text-xs font-mono">
+                          {(call.model || 'unknown').split('/').pop()}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                            {call.modelType}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${tierColor(call.tier)}`}>
+                            {call.tier}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-mono">
+                          {formatTokens(call.inputTokens + call.outputTokens)}
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-mono">
+                          ${parseFloat(call.totalCost || '0').toFixed(4)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }

@@ -19,3 +19,52 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run build
+      - name: Upload Playwright report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          if-no-files-found: ignore
+
+  report-artifact-check:
+    runs-on: ubuntu-latest
+    needs: check
+    if: always()
+    steps:
+      - name: Download Playwright report artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report-artifact
+      - name: List downloaded report files
+        run: ls -la playwright-report-artifact || true
+      - name: Validate externalized report script
+        run: |
+          if [ ! -f "playwright-report-artifact/index.html" ]; then
+            echo "No report index found in artifact; skipping validation."
+            exit 0
+          fi
+
+          if grep -q '<script type="module">' "playwright-report-artifact/index.html"; then
+            echo "Inline module script still present in report index.html"
+            exit 1
+          fi
+
+          script_src=$(sed -n 's/.*<script type="module" src="\([^"]*\)".*/\1/p' "playwright-report-artifact/index.html" | head -n 1)
+          if [ -z "$script_src" ]; then
+            echo "External module script reference not found in report index.html"
+            exit 1
+          fi
+
+          script_path="playwright-report-artifact/${script_src#./}"
+          if [ ! -f "$script_path" ]; then
+            echo "Referenced report script is missing: $script_path"
+            exit 1
+          fi
+
+          if ! grep -q 'integrity="sha384-' "playwright-report-artifact/index.html"; then
+            echo "SRI hash missing from report module script tag"
+            exit 1
+          fi
