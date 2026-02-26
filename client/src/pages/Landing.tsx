@@ -1,9 +1,12 @@
 import { Button } from "@/components/ui/button";
 import { Sparkles, Zap, Target, Workflow, ArrowRight } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
+import { getLoginPath, getSignUpPath } from "@/lib/authRoutes";
 
 export default function Landing() {
   const { t } = useTranslation();
+  const loginPath = getLoginPath();
+  const signUpPath = getSignUpPath();
 
   return (
     <div className="min-h-screen bg-background">
@@ -29,7 +32,7 @@ export default function Landing() {
               <Button
                 size="lg"
                 className="group"
-                onClick={() => window.location.href = '/api/login'}
+                onClick={() => window.location.href = signUpPath}
                 data-testid="button-get-started"
               >
                 {t.landing.getStarted}
@@ -38,7 +41,7 @@ export default function Landing() {
               <Button
                 size="lg"
                 variant="outline"
-                onClick={() => window.location.href = '/api/login'}
+                onClick={() => window.location.href = loginPath}
                 data-testid="button-login"
               >
                 {t.landing.logIn}

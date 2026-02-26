@@ -343,3 +343,10 @@ export const aiUsageRelations = relations(aiUsage, ({ one }) => ({
     references: [users.id],
   }),
 }));
+
+/** Token usage information returned by the OpenRouter API. */
+export interface TokenUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}

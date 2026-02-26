@@ -16,8 +16,8 @@ import { Badge } from "@/components/ui/badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { QueryError } from "@/components/QueryError";
 import { useToast } from "@/hooks/use-toast";
-import { isUnauthorizedError } from "@/lib/authUtils";
 import { useAuth } from "@/hooks/useAuth";
+import { useMutationErrorHandler } from "@/hooks/useMutationErrorHandler";
 import { useTheme } from "@/components/ThemeProvider";
 import { useTranslation } from "@/lib/i18n";
 import { useDebounce } from "@/hooks/useDebounce";
@@ -27,6 +27,7 @@ export default function Settings() {
   const { toast } = useToast();
   const { theme, setTheme } = useTheme();
   const { t } = useTranslation();
+  const onMutationError = useMutationErrorHandler();
   
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -192,28 +193,11 @@ export default function Settings() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
       toast({
-        title: "Success",
-        description: "Profile updated successfully",
+        title: t.common.success,
+        description: t.settings.profileUpdated,
       });
     },
-    onError: (error: Error) => {
-      if (isUnauthorizedError(error)) {
-        toast({
-          title: "Unauthorized",
-          description: "You are logged out. Logging in again...",
-          variant: "destructive",
-        });
-        setTimeout(() => {
-          window.location.href = "/api/login";
-        }, 500);
-        return;
-      }
-      toast({
-        title: "Error",
-        description: error.message || "Failed to update profile",
-        variant: "destructive",
-      });
-    },
+    onError: onMutationError,
   });
 
   const updateLanguageSettingsMutation = useMutation({
@@ -232,24 +216,7 @@ export default function Settings() {
       // Reload to apply UI language change
       setTimeout(() => window.location.reload(), 500);
     },
-    onError: (error: Error) => {
-      if (isUnauthorizedError(error)) {
-        toast({
-          title: "Unauthorized",
-          description: "You are logged out. Logging in again...",
-          variant: "destructive",
-        });
-        setTimeout(() => {
-          window.location.href = "/api/login";
-        }, 500);
-        return;
-      }
-      toast({
-        title: t.common.error,
-        description: error.message || t.settings.changesFailed,
-        variant: "destructive",
-      });
-    },
+    onError: onMutationError,
   });
 
   const updateAiSettingsMutation = useMutation({
@@ -282,10 +249,10 @@ export default function Settings() {
         tierModels: currentTierModels,
         tierDefaults,
         iterativeMode,
-        iterationCount,
-        iterativeTimeoutMinutes,
+        iterationCount: Math.min(5, Math.max(2, iterationCount)),
+        iterativeTimeoutMinutes: Math.min(120, Math.max(5, iterativeTimeoutMinutes)),
         useFinalReview,
-        guidedQuestionRounds,
+        guidedQuestionRounds: Math.min(10, Math.max(1, guidedQuestionRounds)),
       });
     },
     onSuccess: () => {
@@ -295,28 +262,11 @@ export default function Settings() {
       }));
       queryClient.invalidateQueries({ queryKey: ["/api/settings/ai"] });
       toast({
-        title: "Success",
-        description: "AI preferences saved successfully",
+        title: t.common.success,
+        description: t.settings.aiPreferencesSaved,
       });
     },
-    onError: (error: Error) => {
-      if (isUnauthorizedError(error)) {
-        toast({
-          title: "Unauthorized",
-          description: "You are logged out. Logging in again...",
-          variant: "destructive",
-        });
-        setTimeout(() => {
-          window.location.href = "/api/login";
-        }, 500);
-        return;
-      }
-      toast({
-        title: "Error",
-        description: error.message || "Failed to update AI preferences",
-        variant: "destructive",
-      });
-    },
+    onError: onMutationError,
   });
   const { mutateAsync } = updateAiSettingsMutation;
 
@@ -338,41 +288,43 @@ export default function Settings() {
       <TopBar />
       
       <div className="container max-w-4xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-8">
-        <h1 className="text-2xl sm:text-3xl font-semibold mb-6 sm:mb-8">Settings</h1>
+        <h1 className="text-2xl sm:text-3xl font-semibold mb-6 sm:mb-8">{t.settings.title}</h1>
 
         <div className="space-y-4 sm:space-y-6">
-          {/* Profile Settings */}
+          {/* Profileinstellungen */}
           <Card>
             <CardHeader>
-              <CardTitle>Profile Information</CardTitle>
+              <CardTitle>{t.settings.profileInformation}</CardTitle>
               <CardDescription>
-                Update your personal information and preferences
+                {t.settings.profileDesc}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="firstName">First Name</Label>
+                  <Label htmlFor="firstName">{t.settings.firstName}</Label>
                   <Input
                     id="firstName"
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
+                    maxLength={100}
                     data-testid="input-first-name"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="lastName">Last Name</Label>
+                  <Label htmlFor="lastName">{t.settings.lastName}</Label>
                   <Input
                     id="lastName"
                     value={lastName}
                     onChange={(e) => setLastName(e.target.value)}
+                    maxLength={100}
                     data-testid="input-last-name"
                   />
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email">{t.settings.email}</Label>
                 <Input
                   id="email"
                   value={user?.email || ""}
@@ -381,28 +333,30 @@ export default function Settings() {
                   data-testid="input-email"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Email cannot be changed
+                  {t.settings.emailCannotChange}
                 </p>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="company">Company</Label>
+                  <Label htmlFor="company">{t.settings.company}</Label>
                   <Input
                     id="company"
                     value={company}
                     onChange={(e) => setCompany(e.target.value)}
-                    placeholder="Optional"
+                    maxLength={200}
+                    placeholder={t.settings.companyPlaceholder}
                     data-testid="input-company"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="role">Role</Label>
+                  <Label htmlFor="role">{t.settings.role}</Label>
                   <Input
                     id="role"
                     value={role}
                     onChange={(e) => setRole(e.target.value)}
-                    placeholder="e.g., Product Manager"
+                    maxLength={100}
+                    placeholder={t.settings.rolePlaceholder}
                     data-testid="input-role"
                   />
                 </div>
@@ -414,22 +368,22 @@ export default function Settings() {
                 data-testid="button-save-profile"
               >
                 <Save className="w-4 h-4 mr-2" />
-                {updateProfileMutation.isPending ? "Saving..." : "Save Changes"}
+                {updateProfileMutation.isPending ? t.settings.saving : t.settings.saveProfile}
               </Button>
             </CardContent>
           </Card>
 
-          {/* Appearance */}
+          {/* Erscheinungsbild */}
           <Card>
             <CardHeader>
-              <CardTitle>Appearance</CardTitle>
+              <CardTitle>{t.settings.appearance}</CardTitle>
               <CardDescription>
-                Customize how NEXORA looks on your device
+                {t.settings.appearanceDesc}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-3">
-                <Label>Theme</Label>
+                <Label>{t.settings.theme}</Label>
                 <RadioGroup 
                   value={theme} 
                   onValueChange={(value) => setTheme(value as "light" | "dark" | "system")}
@@ -448,7 +402,7 @@ export default function Settings() {
                       data-testid="label-theme-light"
                     >
                       <Sun className="mb-3 h-6 w-6" />
-                      <span className="text-sm font-medium">Light</span>
+                      <span className="text-sm font-medium">{t.settings.light}</span>
                     </Label>
                   </div>
                   <div>
@@ -464,7 +418,7 @@ export default function Settings() {
                       data-testid="label-theme-dark"
                     >
                       <Moon className="mb-3 h-6 w-6" />
-                      <span className="text-sm font-medium">Dark</span>
+                      <span className="text-sm font-medium">{t.settings.dark}</span>
                     </Label>
                   </div>
                   <div>
@@ -480,7 +434,7 @@ export default function Settings() {
                       data-testid="label-theme-system"
                     >
                       <Monitor className="mb-3 h-6 w-6" />
-                      <span className="text-sm font-medium">System</span>
+                      <span className="text-sm font-medium">{t.settings.system}</span>
                     </Label>
                   </div>
                 </RadioGroup>
@@ -488,7 +442,7 @@ export default function Settings() {
             </CardContent>
           </Card>
 
-          {/* Language Settings */}
+          {/* Spracheinstellungen */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -496,7 +450,7 @@ export default function Settings() {
                 {t.settings.language}
               </CardTitle>
               <CardDescription>
-                Configure interface and content languages separately
+                {t.settings.languageSettingsDesc}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -544,29 +498,29 @@ export default function Settings() {
                 data-testid="button-save-language-settings"
               >
                 <Save className="w-4 h-4 mr-2" />
-                {updateLanguageSettingsMutation.isPending ? "Saving..." : t.settings.saveChanges}
+                {updateLanguageSettingsMutation.isPending ? t.settings.saving : t.settings.saveChanges}
               </Button>
             </CardContent>
           </Card>
 
-          {/* AI Model Preferences */}
+          {/* KI-Modellpräferenzen */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Brain className="w-5 h-5" />
-                AI Model Preferences
+                {t.settings.aiModelPreferences}
               </CardTitle>
               <CardDescription>
-                Configure which AI models are used for PRD generation
+                {t.settings.aiModelPreferencesDesc}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               {modelsError ? (
-                <QueryError message="Failed to load AI models." onRetry={() => refetchModels()} />
+                <QueryError message={t.settings.aiModelsFailed} onRetry={() => refetchModels()} />
               ) : (<>
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <Label>Model Filter</Label>
+                  <Label>{t.settings.modelFilter}</Label>
                   <div className="flex items-center gap-2 flex-wrap">
                     <Button
                       variant={modelFilter === 'all' ? 'default' : 'outline'}
@@ -574,7 +528,7 @@ export default function Settings() {
                       onClick={() => setModelFilter('all')}
                       data-testid="button-filter-all"
                     >
-                      All Models
+                      {t.settings.allModels}
                     </Button>
                     <Button
                       variant={modelFilter === 'free' ? 'default' : 'outline'}
@@ -582,7 +536,7 @@ export default function Settings() {
                       onClick={() => setModelFilter('free')}
                       data-testid="button-filter-free"
                     >
-                      Free Only
+                      {t.settings.freeOnly}
                     </Button>
                     <Button
                       variant={modelFilter === 'paid' ? 'default' : 'outline'}
@@ -590,16 +544,16 @@ export default function Settings() {
                       onClick={() => setModelFilter('paid')}
                       data-testid="button-filter-paid"
                     >
-                      Paid Only
+                      {t.settings.paidOnly}
                     </Button>
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="model-search">Search Models</Label>
+                  <Label htmlFor="model-search">{t.settings.searchModels}</Label>
                   <Input
                     id="model-search"
-                    placeholder="Search by model name or ID..."
+                    placeholder={t.settings.searchModelsPlaceholder}
                     value={modelSearch}
                     onChange={(e) => setModelSearch(e.target.value)}
                     data-testid="input-model-search"
@@ -607,16 +561,16 @@ export default function Settings() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="generator-model">Generator Model</Label>
+                  <Label htmlFor="generator-model">{t.settings.generatorModel}</Label>
                   <Select value={generatorModel} onValueChange={setGeneratorModel}>
                     <SelectTrigger id="generator-model" data-testid="select-generator-model">
-                      <SelectValue placeholder={modelsLoading ? "Loading models..." : "Select a model"} />
+                      <SelectValue placeholder={modelsLoading ? t.settings.loadingModels : t.settings.selectModel} />
                     </SelectTrigger>
                     <SelectContent>
                       {modelsLoading ? (
-                        <SelectItem value="loading" disabled>Loading models...</SelectItem>
+                        <SelectItem value="loading" disabled>{t.settings.loadingModels}</SelectItem>
                       ) : filteredModels.length === 0 ? (
-                        <SelectItem value="none" disabled>No models found</SelectItem>
+                        <SelectItem value="none" disabled>{t.settings.noModelsFound}</SelectItem>
                       ) : (
                         filteredModels.map(m => (
                           <SelectItem key={m.id} value={m.id}>
@@ -627,21 +581,21 @@ export default function Settings() {
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    The model that generates initial PRD content
+                    {t.settings.generatorModelDesc}
                   </p>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="reviewer-model">Reviewer Model</Label>
+                  <Label htmlFor="reviewer-model">{t.settings.reviewerModel}</Label>
                   <Select value={reviewerModel} onValueChange={setReviewerModel}>
                     <SelectTrigger id="reviewer-model" data-testid="select-reviewer-model">
-                      <SelectValue placeholder={modelsLoading ? "Loading models..." : "Select a model"} />
+                      <SelectValue placeholder={modelsLoading ? t.settings.loadingModels : t.settings.selectModel} />
                     </SelectTrigger>
                     <SelectContent>
                       {modelsLoading ? (
-                        <SelectItem value="loading" disabled>Loading models...</SelectItem>
+                        <SelectItem value="loading" disabled>{t.settings.loadingModels}</SelectItem>
                       ) : filteredModels.length === 0 ? (
-                        <SelectItem value="none" disabled>No models found</SelectItem>
+                        <SelectItem value="none" disabled>{t.settings.noModelsFound}</SelectItem>
                       ) : (
                         filteredModels.map(m => (
                           <SelectItem key={m.id} value={m.id}>
@@ -652,21 +606,21 @@ export default function Settings() {
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    The model that critically reviews and improves content
+                    {t.settings.reviewerModelDesc}
                   </p>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="fallback-model">Fallback Model</Label>
+                  <Label htmlFor="fallback-model">{t.settings.fallbackModel}</Label>
                   <Select value={fallbackModel} onValueChange={setFallbackModel}>
                     <SelectTrigger id="fallback-model" data-testid="select-fallback-model">
-                      <SelectValue placeholder={modelsLoading ? "Loading models..." : "Select a model"} />
+                      <SelectValue placeholder={modelsLoading ? t.settings.loadingModels : t.settings.selectModel} />
                     </SelectTrigger>
                     <SelectContent>
                       {modelsLoading ? (
-                        <SelectItem value="loading" disabled>Loading models...</SelectItem>
+                        <SelectItem value="loading" disabled>{t.settings.loadingModels}</SelectItem>
                       ) : filteredModels.length === 0 ? (
-                        <SelectItem value="none" disabled>No models found</SelectItem>
+                        <SelectItem value="none" disabled>{t.settings.noModelsFound}</SelectItem>
                       ) : (
                         filteredModels.map(m => (
                           <SelectItem key={m.id} value={m.id}>
@@ -677,33 +631,33 @@ export default function Settings() {
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Last resort if both Generator and Reviewer models fail. A free model is recommended here.
+                    {t.settings.fallbackModelDescFull}
                   </p>
                 </div>
 
                 <div className="p-3 rounded-lg border bg-muted/30 space-y-2">
-                  <p className="text-sm font-medium">How fallback works</p>
+                  <p className="text-sm font-medium">{t.settings.howFallbackWorks}</p>
                   <p className="text-xs text-muted-foreground">
-                    If the primary model for the current role fails, the system tries the configured Fallback model, then the tier default for that same role. Cross-role fallback is disabled by default. If all options fail, you get a clear error message with the tried models.
+                    {t.settings.howFallbackWorksDesc}
                   </p>
                 </div>
 
                 <Separator className="my-4" />
 
                 <div className="space-y-2">
-                  <Label htmlFor="ai-tier">Quality Tier (Preset)</Label>
+                  <Label htmlFor="ai-tier">{t.settings.qualityTier}</Label>
                   <Select value={aiTier} onValueChange={handleTierChange}>
                     <SelectTrigger id="ai-tier" data-testid="select-ai-tier">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="development">Development (Free/Low-cost)</SelectItem>
-                      <SelectItem value="production">Production (Balanced)</SelectItem>
-                      <SelectItem value="premium">Premium (Highest Quality)</SelectItem>
+                      <SelectItem value="development">{t.settings.tierDevelopment}</SelectItem>
+                      <SelectItem value="production">{t.settings.tierProduction}</SelectItem>
+                      <SelectItem value="premium">{t.settings.tierPremium}</SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Selecting a tier fills all 3 model slots with recommended defaults for that quality level.
+                    {t.settings.qualityTierDesc}
                   </p>
                 </div>
               </div>
@@ -716,11 +670,11 @@ export default function Settings() {
                     <div className="flex items-center gap-2">
                       <RefreshCw className="w-4 h-4" />
                       <Label htmlFor="iterative-mode" className="text-base cursor-pointer">
-                        Iterative Workflow Mode
+                        {t.settings.iterativeWorkflow}
                       </Label>
                     </div>
                     <p className="text-sm text-muted-foreground">
-                      AI #1 asks questions, AI #2 answers with best practices
+                      {t.settings.iterativeWorkflowDesc}
                     </p>
                   </div>
                   <Switch
@@ -736,7 +690,7 @@ export default function Settings() {
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <Label htmlFor="iteration-count">
-                          Iteration Count: {iterationCount}
+                          {t.settings.iterationCountLabel}: {iterationCount}
                         </Label>
                       </div>
                       <Slider
@@ -750,14 +704,14 @@ export default function Settings() {
                         data-testid="slider-iteration-count"
                       />
                       <p className="text-xs text-muted-foreground">
-                        Number of Q&A cycles between AI #1 and AI #2 (2-5 iterations)
+                        {t.settings.iterationCountDesc}
                       </p>
                     </div>
 
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <Label htmlFor="iterative-timeout-minutes">
-                          Iterative Timeout: {iterativeTimeoutMinutes} min
+                          {t.settings.iterativeTimeoutLabel}: {iterativeTimeoutMinutes} min
                         </Label>
                       </div>
                       <Slider
@@ -771,17 +725,17 @@ export default function Settings() {
                         data-testid="slider-iterative-timeout"
                       />
                       <p className="text-xs text-muted-foreground">
-                        Maximum wait time in the UI for iterative generation (5-120 minutes)
+                        {t.settings.iterativeTimeoutDesc}
                       </p>
                     </div>
 
                     <div className="flex items-center justify-between">
                       <div className="space-y-0.5">
                         <Label htmlFor="final-review" className="cursor-pointer">
-                          Final Review (AI #3)
+                          {t.settings.finalReviewLabel}
                         </Label>
                         <p className="text-sm text-muted-foreground">
-                          Optional final quality check and polish
+                          {t.settings.finalReviewDesc}
                         </p>
                       </div>
                       <Switch
@@ -796,16 +750,16 @@ export default function Settings() {
 
                 <Separator className="my-4" />
 
-                {/* Guided Mode Settings */}
+                {/* Einstellungen für den geführten Modus */}
                 <div className="space-y-4">
                   <div className="flex items-center gap-2">
                     <Brain className="w-4 h-4" />
-                    <Label className="text-base">Guided Mode Settings</Label>
+                    <Label className="text-base">{t.settings.guidedModeSettings}</Label>
                   </div>
                   <div className="space-y-3 pl-6 border-l-2 border-primary/20">
                     <div className="flex items-center justify-between">
                       <Label htmlFor="guided-question-rounds">
-                        Question Rounds: {guidedQuestionRounds}
+                        {t.settings.questionRoundsLabel}: {guidedQuestionRounds}
                       </Label>
                     </div>
                     <Slider
@@ -819,7 +773,7 @@ export default function Settings() {
                       data-testid="slider-guided-question-rounds"
                     />
                     <p className="text-xs text-muted-foreground">
-                      Maximum number of question rounds in Guided Mode (1-10 rounds)
+                      {t.settings.questionRoundsDesc}
                     </p>
                   </div>
                 </div>
@@ -831,16 +785,16 @@ export default function Settings() {
                 data-testid="button-save-ai-settings"
               >
                 <Save className="w-4 h-4 mr-2" />
-                {updateAiSettingsMutation.isPending ? "Saving..." : "Save AI Preferences"}
+                {updateAiSettingsMutation.isPending ? t.settings.saving : t.settings.saveAiPreferences}
               </Button>
               </>)}
             </CardContent>
           </Card>
 
-          {/* AI Usage & Costs */}
+          {/* KI-Nutzung & Kosten */}
           <AiUsageSection />
 
-          {/* Linear Integration */}
+          {/* Linear-Integration */}
           <Card>
             <CardHeader>
               <CardTitle>{t.integrations.linear.title}</CardTitle>
@@ -878,7 +832,7 @@ export default function Settings() {
             </CardContent>
           </Card>
 
-          {/* Dart AI Integration */}
+          {/* Dart-AI-Integration */}
           <Card>
             <CardHeader>
               <CardTitle>{t.integrations.dart.title}</CardTitle>
@@ -943,6 +897,7 @@ interface UsageStats {
 }
 
 function AiUsageSection() {
+  const { t } = useTranslation();
   const [usagePeriod, setUsagePeriod] = useState<string>('all');
 
   const getSinceDate = (period: string): string | null => {
@@ -966,7 +921,7 @@ function AiUsageSection() {
   const sinceDate = getSinceDate(usagePeriod);
   const queryUrl = sinceDate ? `/api/ai/usage?since=${encodeURIComponent(sinceDate)}` : '/api/ai/usage';
 
-  const { data: stats, isLoading } = useQuery<UsageStats>({
+  const { data: stats, isLoading, error, refetch } = useQuery<UsageStats>({
     queryKey: ['/api/ai/usage', usagePeriod],
     queryFn: async () => {
       const res = await apiRequest("GET", queryUrl);
@@ -975,10 +930,10 @@ function AiUsageSection() {
   });
 
   const periodButtons = [
-    { value: 'all', label: 'All Time' },
-    { value: 'today', label: 'Today' },
-    { value: '7d', label: 'Last 7 Days' },
-    { value: '30d', label: 'Last 30 Days' },
+    { value: 'all', label: t.settings.allTime },
+    { value: 'today', label: t.settings.today },
+    { value: '7d', label: t.settings.last7Days },
+    { value: '30d', label: t.settings.last30Days },
   ];
 
   const formatTokens = (n: number) => {
@@ -1007,14 +962,14 @@ function AiUsageSection() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <BarChart3 className="w-5 h-5" />
-          AI Usage & Costs
+          {t.settings.aiUsage}
         </CardTitle>
         <CardDescription>
-          Track your AI model usage, token consumption, and estimated costs
+          {t.settings.aiUsageDesc}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* Time Period Filter */}
+        {/* Zeitraumfilter */}
         <div className="flex flex-wrap gap-1">
           {periodButtons.map((btn) => (
             <Button
@@ -1031,66 +986,78 @@ function AiUsageSection() {
         </div>
 
         {isLoading ? (
-          <div className="text-sm text-muted-foreground">Loading usage data...</div>
+          <div className="text-sm text-muted-foreground">{t.settings.loadingUsage}</div>
+        ) : error ? (
+          <div className="space-y-3">
+            <p className="text-sm text-destructive">{t.settings.failedLoadUsage}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refetch()}
+              data-testid="button-retry-usage"
+            >
+              {t.settings.retry}
+            </Button>
+          </div>
         ) : !stats || stats.totalCalls === 0 ? (
           <div className="text-sm text-muted-foreground">
-            {usagePeriod === 'all' ? 'No AI usage recorded yet.' : 'No usage data for this period.'}
+            {usagePeriod === 'all' ? t.settings.noUsageAll : t.settings.noUsagePeriod}
           </div>
         ) : (
           <>
-            {/* Summary Cards */}
+            {/* Zusammenfassungskarten */}
             <div className="grid grid-cols-3 gap-4">
               <div className="p-4 rounded-lg border bg-card">
                 <div className="flex items-center gap-2 mb-1">
                   <Zap className="w-4 h-4 text-amber-500" />
-                  <span className="text-xs text-muted-foreground">Total Calls</span>
+                  <span className="text-xs text-muted-foreground">{t.settings.totalCalls}</span>
                 </div>
                 <p className="text-2xl font-bold">{stats.totalCalls}</p>
               </div>
               <div className="p-4 rounded-lg border bg-card">
                 <div className="flex items-center gap-2 mb-1">
                   <BarChart3 className="w-4 h-4 text-blue-500" />
-                  <span className="text-xs text-muted-foreground">Total Tokens</span>
+                  <span className="text-xs text-muted-foreground">{t.settings.totalTokens}</span>
                 </div>
                 <p className="text-2xl font-bold">{formatTokens(stats.totalTokens)}</p>
               </div>
               <div className="p-4 rounded-lg border bg-card">
                 <div className="flex items-center gap-2 mb-1">
                   <Coins className="w-4 h-4 text-green-500" />
-                  <span className="text-xs text-muted-foreground">Est. Cost</span>
+                  <span className="text-xs text-muted-foreground">{t.settings.estimatedCost}</span>
                 </div>
                 <p className="text-2xl font-bold">${parseFloat(stats.totalCost).toFixed(2)}</p>
               </div>
             </div>
 
-            {/* Tier Breakdown */}
+            {/* Aufschlüsselung nach Tarifstufe */}
             <div>
-              <h4 className="text-sm font-medium mb-2">By Tier</h4>
+              <h4 className="text-sm font-medium mb-2">{t.settings.byTier}</h4>
               <div className="flex flex-wrap gap-2">
                 {Object.entries(stats.byTier).map(([tier, data]) => (
                   <div key={tier} className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium ${tierColor(tier)}`}>
                     <span className="capitalize">{tier}</span>
-                    <span className="opacity-70">{data.calls} calls</span>
-                    <span className="opacity-70">{formatTokens(data.tokens)} tokens</span>
+                    <span className="opacity-70">{data.calls} {t.settings.calls}</span>
+                    <span className="opacity-70">{formatTokens(data.tokens)} {t.settings.tokens}</span>
                     {data.cost > 0 && <span className="opacity-70">${data.cost.toFixed(2)}</span>}
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* Recent Calls Table */}
+            {/* Tabelle der letzten Aufrufe */}
             <div>
-              <h4 className="text-sm font-medium mb-2">Recent Calls</h4>
+              <h4 className="text-sm font-medium mb-2">{t.settings.recentCalls}</h4>
               <div className="rounded-md border overflow-hidden">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-xs">Date</TableHead>
-                      <TableHead className="text-xs">Model</TableHead>
-                      <TableHead className="text-xs">Type</TableHead>
-                      <TableHead className="text-xs">Tier</TableHead>
-                      <TableHead className="text-xs text-right">Tokens</TableHead>
-                      <TableHead className="text-xs text-right">Cost</TableHead>
+                      <TableHead className="text-xs">{t.settings.tableDate}</TableHead>
+                      <TableHead className="text-xs">{t.settings.tableModel}</TableHead>
+                      <TableHead className="text-xs">{t.settings.tableType}</TableHead>
+                      <TableHead className="text-xs">{t.settings.tableTier}</TableHead>
+                      <TableHead className="text-xs text-right">{t.settings.tableTokens}</TableHead>
+                      <TableHead className="text-xs text-right">{t.settings.tableCost}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>

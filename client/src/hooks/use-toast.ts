@@ -130,9 +130,30 @@ const listeners: Array<(state: State) => void> = []
 
 let memoryState: State = { toasts: [] }
 
+function removeToastListener(listener: (state: State) => void) {
+  const index = listeners.indexOf(listener)
+  if (index > -1) {
+    listeners.splice(index, 1)
+  }
+}
+
+export function subscribeToastState(listener: (state: State) => void) {
+  if (!listeners.includes(listener)) {
+    listeners.push(listener)
+  }
+
+  return () => {
+    removeToastListener(listener)
+  }
+}
+
+export function __getToastListenerCountForTests() {
+  return listeners.length
+}
+
 function dispatch(action: Action) {
   memoryState = reducer(memoryState, action)
-  listeners.forEach((listener) => {
+  listeners.slice().forEach((listener) => {
     listener(memoryState)
   })
 }
@@ -172,14 +193,8 @@ function useToast() {
   const [state, setState] = React.useState<State>(memoryState)
 
   React.useEffect(() => {
-    listeners.push(setState)
-    return () => {
-      const index = listeners.indexOf(setState)
-      if (index > -1) {
-        listeners.splice(index, 1)
-      }
-    }
-  }, [state])
+    return subscribeToastState(setState)
+  }, [])
 
   return {
     ...state,

@@ -10,7 +10,7 @@ Das Projekt kann jetzt lokal ohne Replit gestartet werden.
 
 ```bash
 # 1. Container starten
-cd Nexora && docker-compose up --build
+cd Nexora && docker compose up --build
 
 # 2. Datenbank-Migrationen ausführen (einmalig)
 docker exec nexora-app npm run db:push
@@ -19,10 +19,25 @@ docker exec nexora-app npm run db:push
 docker restart nexora-app
 ```
 
+Wenn `docker compose ...` mit Pipe/Engine-Fehlern endet (`dockerDesktopLinuxEngine`), ist Docker Desktop/Daemon nicht bereit.
+Nutze dann unter Windows bevorzugt `run.bat` (mit Engine-Check und Auto-Wait) oder starte Docker Desktop manuell und warte auf Status `Running`.
+
+Fuer einen kompletten Clean-Rebuild unter Windows:
+
+```bat
+reset.bat --yes
+```
+
+Optional ohne Datenverlust (Volumes behalten):
+
+```bat
+reset.bat --yes --keep-data
+```
+
 #### Zugang
 
 - **URL**: http://localhost:5000
-- **Auth**: Automatischer Demo-User Login
+- **Auth**: Clerk (empfohlen) oder Demo-Modus
 
 ---
 
@@ -44,6 +59,7 @@ docker restart nexora-app
 ### 4. Auth
 - `replitAuth.ts` auf ESM umgestellt
 - Demo-User Modus für lokale Entwicklung
+- Clerk-Integration als primärer Auth-Provider ergänzt (`AUTH_PROVIDER=clerk`)
 
 ---
 

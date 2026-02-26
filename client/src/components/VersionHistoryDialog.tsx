@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { getPrdVersionsQueryKey } from "@/lib/prdQueryKeys";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/lib/i18n";
 import { formatDistance } from "date-fns";
@@ -28,7 +29,7 @@ export function VersionHistoryDialog({ prdId, open, onOpenChange, onRestore }: V
   const { t } = useTranslation();
 
   const { data: versions, isLoading } = useQuery<PrdVersion[]>({
-    queryKey: ["/api/prds", prdId, "versions"],
+    queryKey: getPrdVersionsQueryKey(prdId),
     enabled: open,
   });
 
@@ -37,7 +38,7 @@ export function VersionHistoryDialog({ prdId, open, onOpenChange, onRestore }: V
       return await apiRequest("POST", `/api/prds/${prdId}/versions`, {});
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId, "versions"] });
+      queryClient.invalidateQueries({ queryKey: getPrdVersionsQueryKey(prdId) });
       toast({
         title: t.common.success,
         description: t.versions.saveSuccess,
@@ -57,7 +58,7 @@ export function VersionHistoryDialog({ prdId, open, onOpenChange, onRestore }: V
     onOpenChange(false);
     toast({
       title: t.versions.restored,
-      description: `${t.versions.restoredTo} ${version.versionNumber}`,
+      description: t.versions.restoredToVersion(version.versionNumber),
     });
   };
 

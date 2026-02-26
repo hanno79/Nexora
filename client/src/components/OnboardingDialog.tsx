@@ -5,12 +5,12 @@ import { Card } from "@/components/ui/card";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/lib/i18n";
 
-interface OnboardingBannerProps {
+interface OnboardingDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-export function OnboardingDialog({ open, onOpenChange }: OnboardingBannerProps) {
+export function OnboardingDialog({ open, onOpenChange }: OnboardingDialogProps) {
   const [step, setStep] = useState(0);
   const { t } = useTranslation();
 

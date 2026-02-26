@@ -29,3 +29,8 @@ export const requestApprovalSchema = z.object({
 export const respondApprovalSchema = z.object({
   approved: z.boolean(),
 });
+
+export const sharePrdSchema = z.object({
+  email: z.string().trim().email("Valid email is required").transform((value) => value.toLowerCase()),
+  permission: z.enum(["view", "edit"]).default("view"),
+});

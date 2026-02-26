@@ -1,5 +1,6 @@
 // Anthropic AI integration - from javascript_anthropic blueprint
 import Anthropic from '@anthropic-ai/sdk';
+import { logger } from "./logger";
 
 /*
 <important_code_snippet_instructions>
@@ -51,7 +52,7 @@ When generating content:
     
     throw new Error('Claude AI returned an unexpected response format. Please try again.');
   } catch (error: any) {
-    console.error('Error generating PRD content:', error);
+    logger.error('Error generating PRD content', { error: error.message });
     
     // Handle specific Anthropic API errors
     if (error.status === 401 || error.message?.includes('authentication')) {

@@ -65,7 +65,17 @@ export function createHotContext() {
   };
 }
 export function updateStyle(id, css) {
-  let el = document.querySelector(\`[data-vite-dev-id="\${id}"]\`);
+  const escapeSelectorValue = (value) => {
+    if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+      return CSS.escape(value);
+    }
+    return String(value)
+      .replace(/\\\\/g, '\\\\\\\\')
+      .replace(/"/g, '\\\\"')
+      .replace(/\\\\]/g, '\\\\]');
+  };
+  const selector = \`[data-vite-dev-id="\${escapeSelectorValue(id)}"]\`;
+  let el = document.querySelector(selector);
   if (!el) {
     el = document.createElement('style');
     el.setAttribute('type', 'text/css');
@@ -75,7 +85,16 @@ export function updateStyle(id, css) {
   el.textContent = css;
 }
 export function removeStyle(id) {
-  const el = document.querySelector(\`[data-vite-dev-id="\${id}"]\`);
+  const escapeSelectorValue = (value) => {
+    if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+      return CSS.escape(value);
+    }
+    return String(value)
+      .replace(/\\\\/g, '\\\\\\\\')
+      .replace(/"/g, '\\\\"')
+      .replace(/\\\\]/g, '\\\\]');
+  };
+  const el = document.querySelector(\`[data-vite-dev-id="\${escapeSelectorValue(id)}"]\`);
   if (el) el.remove();
 }
 export function injectQuery(url) { return url; }

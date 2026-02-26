@@ -7,13 +7,19 @@
     "dev": "tsx server/index.ts",
     "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
     "start": "NODE_ENV=production node dist/index.js",
+    "postinstall": "node scripts/ensureRollupNative.cjs",
     "check": "tsc",
     "db:push": "drizzle-kit push",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:ci": "playwright test e2e/smoke.spec.ts --project=chromium"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.37.0",
+    "@clerk/backend": "^2.32.2",
+    "@clerk/clerk-react": "^5.61.2",
+    "@clerk/express": "^1.7.75",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
     "@linear/sdk": "^61.0.0",
@@ -114,8 +120,5 @@
     "typescript": "5.6.3",
     "vite": "^5.4.20",
     "vitest": "^4.0.18"
-  },
-  "optionalDependencies": {
-    "@rollup/rollup-win32-x64-msvc": "^4.57.1"
   }
 }

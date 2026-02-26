@@ -9,6 +9,24 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: nexora
+          POSTGRES_PASSWORD: nexora
+          POSTGRES_DB: nexora
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nexora -d nexora"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://nexora:nexora@localhost:5432/nexora
+      LOCAL_DEMO_AUTH: "true"
+      NODE_ENV: test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -16,9 +34,12 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - run: npm run db:push
       - run: npm run check
       - run: npm test
       - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e:ci
       - name: Upload Playwright report artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -33,21 +54,23 @@ jobs:
     if: always()
     steps:
       - name: Download Playwright report artifact
-        continue-on-error: true
+        id: download_playwright
         uses: actions/download-artifact@v4
         with:
           name: playwright-report
           path: playwright-report-artifact
       - name: List downloaded report files
+        if: steps.download_playwright.outcome == 'success'
         run: ls -la playwright-report-artifact || true
       - name: Validate externalized report script
+        if: steps.download_playwright.outcome == 'success'
         run: |
           if [ ! -f "playwright-report-artifact/index.html" ]; then
             echo "No report index found in artifact; skipping validation."
             exit 0
           fi
 
-          if grep -q '<script type="module">' "playwright-report-artifact/index.html"; then
+          if grep -Eo "<script[^>]*type=[\"']module[\"'][^>]*>" "playwright-report-artifact/index.html" | grep -Eviq 'src[[:space:]]*='; then
             echo "Inline module script still present in report index.html"
             exit 1
           fi
@@ -64,7 +87,7 @@ jobs:
             exit 1
           fi
 
-          if ! grep -q 'integrity="sha384-' "playwright-report-artifact/index.html"; then
-            echo "SRI hash missing from report module script tag"
+          if ! grep -Eq 'integrity="sha(256|384|512)-' "playwright-report-artifact/index.html"; then
+            echo "SRI hash missing or unsupported algorithm in report module script tag"
             exit 1
           fi

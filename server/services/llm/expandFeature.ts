@@ -1,4 +1,5 @@
 import type { OpenRouterClient } from '../../openrouter';
+import type { TokenUsage } from "@shared/schema";
 
 const FEATURE_EXPANSION_PROMPT = `You are part of the Nexora Requirements Compiler.
 
@@ -118,7 +119,7 @@ export interface ExpandedFeature {
   featureName: string;
   content: string;
   model: string;
-  usage: any;
+  usage: TokenUsage;
   retried: boolean;
   valid: boolean;
   compiled: boolean;

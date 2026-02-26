@@ -1,10 +1,12 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { getPrdDetailQueryKey, getPrdVersionsQueryKey } from "@/lib/prdQueryKeys";
 import { format } from "date-fns";
 import { History, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
+import { useTranslation } from "@/lib/i18n";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,12 +35,13 @@ interface PrdVersion {
 
 export function VersionHistory({ prdId }: VersionHistoryProps) {
   const { toast } = useToast();
+  const { t } = useTranslation();
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedVersion, setSelectedVersion] = useState<PrdVersion | null>(null);
 
   const { data: versions, isLoading } = useQuery<PrdVersion[]>({
-    queryKey: ['/api/prds', prdId, 'versions'],
+    queryKey: getPrdVersionsQueryKey(prdId),
     enabled: !!prdId,
   });
 
@@ -47,17 +50,18 @@ export function VersionHistory({ prdId }: VersionHistoryProps) {
       return await apiRequest("POST", `/api/prds/${prdId}/restore/${versionId}`, {});
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/prds', prdId] });
+      queryClient.invalidateQueries({ queryKey: getPrdDetailQueryKey(prdId) });
+      queryClient.invalidateQueries({ queryKey: getPrdVersionsQueryKey(prdId) });
       setRestoreDialogOpen(false);
       toast({
-        title: "Success",
-        description: "PRD restored to selected version",
+        title: t.common.success,
+        description: t.versions.restored,
       });
     },
     onError: (error: Error) => {
       toast({
-        title: "Error",
-        description: error.message || "Failed to restore version",
+        title: t.common.error,
+        description: error.message || t.versions.saveFailed,
         variant: "destructive",
       });
     },
@@ -68,17 +72,17 @@ export function VersionHistory({ prdId }: VersionHistoryProps) {
       return await apiRequest("DELETE", `/api/prds/${prdId}/versions/${versionId}`, {});
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/prds', prdId, 'versions'] });
+      queryClient.invalidateQueries({ queryKey: getPrdVersionsQueryKey(prdId) });
       setDeleteDialogOpen(false);
       toast({
-        title: "Success",
-        description: "Version deleted successfully",
+        title: t.common.success,
+        description: t.versions.deleteSuccess,
       });
     },
     onError: (error: Error) => {
       toast({
-        title: "Error",
-        description: error.message || "Failed to delete version",
+        title: t.common.error,
+        description: error.message || t.versions.deleteFailed,
         variant: "destructive",
       });
     },
@@ -109,7 +113,7 @@ export function VersionHistory({ prdId }: VersionHistoryProps) {
   if (isLoading) {
     return (
       <div className="p-4 text-sm text-muted-foreground">
-        Loading version history...
+        {t.versions.loadingVersions}
       </div>
     );
   }
@@ -119,10 +123,10 @@ export function VersionHistory({ prdId }: VersionHistoryProps) {
       <div className="p-4 text-center space-y-2">
         <History className="w-12 h-12 mx-auto text-muted-foreground" />
         <p className="text-sm text-muted-foreground">
-          No version history yet
+          {t.versions.noVersions}
         </p>
         <p className="text-xs text-muted-foreground">
-          Versions are created automatically when you save changes
+          {t.versions.versionsAutoCreated}
         </p>
       </div>
     );
@@ -134,7 +138,7 @@ export function VersionHistory({ prdId }: VersionHistoryProps) {
         <div className="p-4 space-y-3">
           <div className="flex items-center gap-2 mb-4">
             <History className="w-4 h-4" />
-            <h3 className="font-semibold text-sm">Version History</h3>
+            <h3 className="font-semibold text-sm">{t.versions.title}</h3>
             <span className="text-xs text-muted-foreground">
               ({versions.length})
             </span>
@@ -154,7 +158,7 @@ export function VersionHistory({ prdId }: VersionHistoryProps) {
                     </span>
                     {index === 0 && (
                       <span className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary">
-                        Current
+                        {t.versions.current}
                       </span>
                     )}
                   </div>
@@ -199,23 +203,21 @@ export function VersionHistory({ prdId }: VersionHistoryProps) {
       <AlertDialog open={restoreDialogOpen} onOpenChange={setRestoreDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Restore to {selectedVersion?.versionNumber}?</AlertDialogTitle>
+            <AlertDialogTitle>{t.versions.restoreToTitle.replace('{version}', selectedVersion?.versionNumber || '')}</AlertDialogTitle>
             <AlertDialogDescription>
-              This will replace the current content with the content from{" "}
-              <strong>{selectedVersion?.versionNumber}</strong>. Your current version
-              will be saved in history.
+              {t.versions.restoreDescription.replace('{version}', selectedVersion?.versionNumber || '')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel data-testid="button-cancel-restore">
-              Cancel
+              {t.common.cancel}
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmRestore}
               disabled={restoreMutation.isPending}
               data-testid="button-confirm-restore"
             >
-              {restoreMutation.isPending ? "Restoring..." : "Restore"}
+              {restoreMutation.isPending ? t.versions.restoring : t.versions.restore}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -224,16 +226,14 @@ export function VersionHistory({ prdId }: VersionHistoryProps) {
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {selectedVersion?.versionNumber}?</AlertDialogTitle>
+            <AlertDialogTitle>{t.versions.deleteTitle.replace('{version}', selectedVersion?.versionNumber || '')}</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete{" "}
-              <strong>{selectedVersion?.versionNumber}</strong> from the version history.
-              This action cannot be undone.
+              {t.versions.deleteDescription.replace('{version}', selectedVersion?.versionNumber || '')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel data-testid="button-cancel-delete">
-              Cancel
+              {t.common.cancel}
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmDelete}
@@ -241,7 +241,7 @@ export function VersionHistory({ prdId }: VersionHistoryProps) {
               data-testid="button-confirm-delete"
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+              {deleteMutation.isPending ? t.versions.deleting : t.common.delete}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

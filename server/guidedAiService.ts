@@ -16,6 +16,8 @@ import { getLanguageInstruction } from './dualAiPrompts';
 import { db } from './db';
 import { users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
+import { GuidedSessionStore } from './guidedSessionStore';
+import { logger } from './logger';
 
 interface ConversationContext {
   projectIdea: string;
@@ -24,21 +26,23 @@ interface ConversationContext {
   roundNumber: number;
 }
 
+const SESSION_NOT_AVAILABLE_MESSAGE = 'Session not found or expired. Please start a new guided workflow.';
+
 export class GuidedAiService {
-  private conversationContexts: Map<string, ConversationContext> = new Map();
+  private conversationContexts: GuidedSessionStore<ConversationContext> = new GuidedSessionStore();
 
   async startGuidedWorkflow(
     projectIdea: string,
-    userId?: string
+    userId: string
   ): Promise<GuidedStartResponse & { sessionId: string }> {
-    const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
+    const authenticatedUserId = this.requireAuthenticatedUserId(userId);
+    const { client, contentLanguage } = await this.createClientWithUserPreferences(authenticatedUserId);
     const langInstruction = getLanguageInstruction(contentLanguage);
     
-    console.log('🎯 Starting Guided AI Workflow...');
-    console.log(`📝 Project idea: ${projectIdea.substring(0, 100)}...`);
+    logger.debug('Guided workflow started', { projectIdeaLength: projectIdea.length });
 
     // Step 1: Analyze the project idea and create initial feature overview
-    console.log('🔍 Step 1: Analyzing project idea...');
+    logger.debug('Guided workflow analyzing project idea');
     
     const analysisResult = await client.callWithFallback(
       'generator',
@@ -48,10 +52,12 @@ export class GuidedAiService {
     );
 
     const featureOverview = analysisResult.content;
-    console.log(`✅ Feature analysis complete (${analysisResult.usage.completion_tokens} tokens)`);
+    logger.debug('Guided workflow feature analysis complete', {
+      completionTokens: analysisResult.usage.completion_tokens,
+    });
 
     // Step 2: Generate initial questions for the user
-    console.log('❓ Step 2: Generating clarifying questions...');
+    logger.debug('Guided workflow generating clarifying questions');
     
     const questionsResult = await client.callWithFallback(
       'reviewer',
@@ -60,14 +66,16 @@ export class GuidedAiService {
       2500
     );
 
-    console.log(`✅ Questions generated (${questionsResult.usage.completion_tokens} tokens)`);
+    logger.debug('Guided workflow questions generated', {
+      completionTokens: questionsResult.usage.completion_tokens,
+    });
 
     // Parse the JSON response
     const parsedQuestions = this.parseQuestionsResponse(questionsResult.content);
 
     // Create session ID and store context
     const sessionId = this.generateSessionId();
-    this.conversationContexts.set(sessionId, {
+    this.conversationContexts.create(sessionId, authenticatedUserId, {
       projectIdea,
       featureOverview,
       answers: [],
@@ -86,17 +94,15 @@ export class GuidedAiService {
     sessionId: string,
     answers: GuidedAnswerInput[],
     questions: GuidedQuestion[],
-    userId?: string
+    userId: string
   ): Promise<GuidedAnswerResponse> {
-    const context = this.conversationContexts.get(sessionId);
-    if (!context) {
-      throw new Error('Session not found. Please start a new guided workflow.');
-    }
+    const authenticatedUserId = this.requireAuthenticatedUserId(userId);
+    const context = this.getSessionContextOrThrow(sessionId, authenticatedUserId);
 
-    const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
+    const { client, contentLanguage } = await this.createClientWithUserPreferences(authenticatedUserId);
     const langInstruction = getLanguageInstruction(contentLanguage);
 
-    console.log(`📝 Processing ${answers.length} answers for session ${sessionId}...`);
+    logger.debug('Guided workflow processing answers', { answerCount: answers.length });
 
     // Create a map of questions for lookup
     const questionMap = new Map(questions.map(q => [q.id, q]));
@@ -135,7 +141,7 @@ export class GuidedAiService {
     });
 
     // Refine the plan based on answers
-    console.log('🔄 Refining product vision based on answers...');
+    logger.debug('Guided workflow refining product vision');
     
     const refinementResult = await client.callWithFallback(
       'generator',
@@ -145,16 +151,18 @@ export class GuidedAiService {
     );
 
     context.featureOverview = refinementResult.content;
-    console.log(`✅ Refinement complete (${refinementResult.usage.completion_tokens} tokens)`);
+    logger.debug('Guided workflow refinement complete', {
+      completionTokens: refinementResult.usage.completion_tokens,
+    });
 
     // Decide if we need more questions (use user's configured max rounds)
-    const userPrefs = await this.getUserPreferences(userId);
+    const userPrefs = await this.getUserPreferences(authenticatedUserId);
     const maxRounds = userPrefs?.guidedQuestionRounds || 3;
     context.roundNumber++;
 
     if (context.roundNumber <= maxRounds) {
       // Generate follow-up questions
-      console.log('❓ Generating follow-up questions...');
+      logger.debug('Guided workflow generating follow-up questions');
       
       const followUpResult = await client.callWithFallback(
         'reviewer',
@@ -164,7 +172,9 @@ export class GuidedAiService {
       );
 
       const parsedFollowUp = this.parseQuestionsResponse(followUpResult.content);
-      console.log(`✅ Follow-up questions generated (${followUpResult.usage.completion_tokens} tokens)`);
+      logger.debug('Guided workflow follow-up questions generated', {
+        completionTokens: followUpResult.usage.completion_tokens,
+      });
 
       // If no valid questions, mark as complete
       if (!parsedFollowUp.questions || parsedFollowUp.questions.length === 0) {
@@ -193,27 +203,26 @@ export class GuidedAiService {
 
   async finalizePRD(
     sessionId: string,
-    userId?: string
+    userId: string
   ): Promise<GuidedFinalizeResponse> {
-    const context = this.conversationContexts.get(sessionId);
-    if (!context) {
-      throw new Error('Session not found. Please start a new guided workflow.');
-    }
+    const authenticatedUserId = this.requireAuthenticatedUserId(userId);
+    const context = this.consumeSessionContextOrThrow(sessionId, authenticatedUserId);
 
-    const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
+    const { client, contentLanguage } = await this.createClientWithUserPreferences(authenticatedUserId);
     const langInstruction = getLanguageInstruction(contentLanguage);
 
-    console.log('📄 Generating final PRD...');
+    logger.debug('Guided workflow generating final PRD');
 
     // Compile all context for final PRD generation
     const allAnswers = context.answers.map(a => 
       `- ${a.questionId}: ${a.answer}`
     ).join('\n');
 
-    const prdResult = await client.callWithFallback(
-      'generator',
-      FINAL_PRD_GENERATION_PROMPT + langInstruction,
-      `Create a complete PRD based on:
+    try {
+      const prdResult = await client.callWithFallback(
+        'generator',
+        FINAL_PRD_GENERATION_PROMPT + langInstruction,
+        `Create a complete PRD based on:
 
 ORIGINAL PROJECT IDEA:
 ${context.projectIdea}
@@ -225,19 +234,23 @@ USER DECISIONS & PREFERENCES:
 ${allAnswers || 'No specific user preferences collected.'}
 
 Generate a complete, professional PRD that incorporates all gathered requirements.`,
-      8000
-    );
+        8000
+      );
 
-    console.log(`✅ Final PRD generated (${prdResult.usage.completion_tokens} tokens)`);
+      logger.debug('Guided workflow final PRD generated', {
+        completionTokens: prdResult.usage.completion_tokens,
+      });
 
-    // Clean up session
-    this.conversationContexts.delete(sessionId);
-
-    return {
-      prdContent: prdResult.content,
-      tokensUsed: prdResult.usage.total_tokens,
-      modelsUsed: [prdResult.model],
-    };
+      return {
+        prdContent: prdResult.content,
+        tokensUsed: prdResult.usage.total_tokens,
+        modelsUsed: [prdResult.model],
+      };
+    } catch (error) {
+      // Restore session context on failure so users can retry finalize.
+      this.conversationContexts.create(sessionId, authenticatedUserId, context);
+      throw error;
+    }
   }
 
   async skipToFinalize(
@@ -247,7 +260,7 @@ Generate a complete, professional PRD that incorporates all gathered requirement
     const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
     const langInstruction = getLanguageInstruction(contentLanguage);
 
-    console.log('⚡ Skipping guided workflow, generating PRD directly...');
+    logger.debug('Guided workflow skipped directly to finalize');
 
     // First do a quick feature analysis
     const analysisResult = await client.callWithFallback(
@@ -273,7 +286,9 @@ Generate a complete, professional PRD.`,
       8000
     );
 
-    console.log(`✅ PRD generated directly (${prdResult.usage.total_tokens} total tokens)`);
+    logger.debug('Guided direct finalize complete', {
+      totalTokens: prdResult.usage.total_tokens,
+    });
 
     return {
       prdContent: prdResult.content,
@@ -299,7 +314,9 @@ Generate a complete, professional PRD.`,
         };
       }
     } catch (e) {
-      console.warn('Failed to parse questions JSON, attempting text extraction:', e);
+      logger.warn('Failed to parse guided questions JSON; falling back to text extraction', {
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
 
     // Fallback: Try to extract questions from text format
@@ -341,7 +358,9 @@ Generate a complete, professional PRD.`,
       
       // If we have less than 2 meaningful options, add default options
       if (meaningfulOptions.length < 2) {
-        console.warn(`Question "${question.question}" has only ${meaningfulOptions.length} options, adding defaults`);
+        logger.warn('Guided question has insufficient options; injecting defaults', {
+          meaningfulOptionCount: meaningfulOptions.length,
+        });
         
         const defaultOptions = [
           { id: 'a', label: 'Yes', description: 'Include this in the product' },
@@ -380,6 +399,29 @@ Generate a complete, professional PRD.`,
 
   private generateSessionId(): string {
     return `guided_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+  }
+
+  private requireAuthenticatedUserId(userId?: string): string {
+    if (!userId || !userId.trim()) {
+      throw new Error('Authenticated user is required for guided workflow.');
+    }
+    return userId;
+  }
+
+  private getSessionContextOrThrow(sessionId: string, userId: string): ConversationContext {
+    const session = this.conversationContexts.get(sessionId, userId);
+    if (session.status !== 'ok' || !session.context) {
+      throw new Error(SESSION_NOT_AVAILABLE_MESSAGE);
+    }
+    return session.context;
+  }
+
+  private consumeSessionContextOrThrow(sessionId: string, userId: string): ConversationContext {
+    const session = this.conversationContexts.consume(sessionId, userId);
+    if (session.status !== 'ok' || !session.context) {
+      throw new Error(SESSION_NOT_AVAILABLE_MESSAGE);
+    }
+    return session.context;
   }
 
   private async createClientWithUserPreferences(userId?: string) {

@@ -1,5 +1,9 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
+type HttpError = Error & {
+  status?: number;
+};
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     let errorMessage = res.statusText;
@@ -27,7 +31,10 @@ async function throwIfResNotOk(res: Response) {
       errorMessage = res.statusText;
     }
     
-    throw new Error(errorMessage);
+    const error: HttpError = new Error(errorMessage);
+    error.name = "HttpError";
+    error.status = res.status;
+    throw error;
   }
 }
 

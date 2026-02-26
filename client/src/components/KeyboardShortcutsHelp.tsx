@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   Dialog,
   DialogContent,
@@ -17,7 +18,7 @@ const modKey = isMac ? '\u2318' : 'Ctrl';
 export function KeyboardShortcutsHelp({ open, onOpenChange }: KeyboardShortcutsHelpProps) {
   const { t } = useTranslation();
 
-  const shortcuts = [
+  const shortcuts = useMemo(() => [
     { category: t.shortcuts.editor, items: [
       { keys: `${modKey}+S`, description: t.shortcuts.savePrd },
       { keys: `${modKey}+Shift+E`, description: t.shortcuts.exportPdf },
@@ -27,7 +28,7 @@ export function KeyboardShortcutsHelp({ open, onOpenChange }: KeyboardShortcutsH
       { keys: `${modKey}+B`, description: t.shortcuts.toggleSidebar },
       { keys: `${modKey}+/`, description: t.shortcuts.showShortcuts },
     ]},
-  ];
+  ], [t, modKey]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

@@ -33,9 +33,9 @@ export function TopBar({ onSearchChange, searchValue }: TopBarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navLinks = [
-    { href: "/", label: t.nav.dashboard, icon: LayoutDashboard },
-    { href: "/templates", label: t.nav.templates, icon: FileText },
-    { href: "/settings", label: t.nav.settings, icon: Settings },
+    { href: "/", label: t.nav.dashboard, icon: LayoutDashboard, testId: "nav-dashboard" },
+    { href: "/templates", label: t.nav.templates, icon: FileText, testId: "nav-templates" },
+    { href: "/settings", label: t.nav.settings, icon: Settings, testId: "nav-settings" },
   ];
 
   const getInitials = (firstName?: string | null, lastName?: string | null, email?: string | null) => {
@@ -56,7 +56,7 @@ export function TopBar({ onSearchChange, searchValue }: TopBarProps) {
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="container flex h-14 items-center gap-4 px-4 md:px-6">
-        {/* Mobile menu */}
+        {/* Mobiles Menü */}
         <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
           <SheetTrigger asChild>
             <Button
@@ -79,11 +79,12 @@ export function TopBar({ onSearchChange, searchValue }: TopBarProps) {
               </SheetTitle>
             </SheetHeader>
             <nav className="mt-6 flex flex-col gap-1">
-              {navLinks.map(({ href, label, icon: Icon }) => (
+              {navLinks.map(({ href, label, icon: Icon, testId }) => (
                 <Link
                   key={href}
                   href={href}
                   onClick={() => setMobileMenuOpen(false)}
+                  data-testid={`${testId}-mobile`}
                   className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
                     isActive(href)
                       ? "bg-primary/10 text-primary font-medium"
@@ -108,9 +109,9 @@ export function TopBar({ onSearchChange, searchValue }: TopBarProps) {
           </span>
         </Link>
 
-        {/* Desktop Navigation Links */}
+        {/* Desktop-Navigationslinks */}
         <nav className="hidden md:flex items-center gap-1" data-testid="nav-links">
-          {navLinks.map(({ href, label, icon: Icon }) => (
+          {navLinks.map(({ href, label, icon: Icon, testId }) => (
             <Link
               key={href}
               href={href}
@@ -119,7 +120,7 @@ export function TopBar({ onSearchChange, searchValue }: TopBarProps) {
                   ? "bg-primary/10 text-primary font-medium"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground"
               }`}
-              data-testid={`nav-${label.toLowerCase()}`}
+              data-testid={testId}
             >
               <Icon className="w-3.5 h-3.5" />
               {label}

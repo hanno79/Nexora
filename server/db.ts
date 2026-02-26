@@ -6,6 +6,7 @@ import pg from "pg";
 import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
 import ws from "ws";
 import * as schema from "@shared/schema";
+import { logger } from "./logger";
 const { Pool: PgPool } = pg;
 
 if (!process.env.DATABASE_URL) {
@@ -23,7 +24,7 @@ if (useNeon) {
   neonConfig.webSocketConstructor = ws;
   pool = new NeonPool({ connectionString: process.env.DATABASE_URL });
   db = drizzleNeon({ client: pool, schema });
-  console.log("🗄️ Database driver: Neon Serverless (websocket)");
+  logger.info("Database driver: Neon Serverless (websocket)");
 } else {
   pool = new PgPool({
     connectionString: process.env.DATABASE_URL,
@@ -33,7 +34,7 @@ if (useNeon) {
     statement_timeout: 30000,
   });
   db = drizzlePg({ client: pool, schema });
-  console.log("🗄️ Database driver: Local Postgres (pg)");
+  logger.info("Database driver: Local Postgres (pg)");
 }
 
 export { pool, db };

@@ -68,7 +68,7 @@ export function DualAiDialog({
   const [reviewerModel, setReviewerModel] = useState('');
   const [error, setError] = useState('');
   
-  // Workflow mode: simple, iterative, or guided (new)
+  // Workflow-Modus: einfach, iterativ oder geführt (neu)
   const [workflowMode, setWorkflowMode] = useState<'simple' | 'iterative' | 'guided'>('simple');
   const [iterationCount, setIterationCount] = useState(3);
   const [iterativeTimeoutMinutes, setIterativeTimeoutMinutes] = useState(30);
@@ -85,7 +85,7 @@ export function DualAiDialog({
   const [totalTokensSoFar, setTotalTokensSoFar] = useState(0);
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Load user AI preferences to set default workflow mode
+  // KI-Benutzereinstellungen laden, um den Standard-Workflow-Modus zu setzen
   useEffect(() => {
     if (open) {
       loadUserSettings();
@@ -153,7 +153,7 @@ export function DualAiDialog({
       if (err?.name === 'AbortError') {
         setError(t.dualAi.timeoutError);
       } else {
-        setError(err.message || 'Failed to generate content');
+        setError(err.message || t.errors.generateFailed);
       }
       setCurrentStep('idle');
       setCurrentIteration(0);
@@ -177,8 +177,8 @@ export function DualAiDialog({
     }, iterativeTimeoutMinutes * 60 * 1000);
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.message || 'Failed to generate content');
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || t.errors.generateFailed);
     }
 
     const data = await response.json();
@@ -206,7 +206,7 @@ export function DualAiDialog({
     setProgressDetail(t.dualAi.startingIterative);
     setCurrentStep('iterating');
 
-    // Start elapsed timer
+    // Timer für die verstrichene Zeit starten
     const startTime = Date.now();
     setElapsedSeconds(0);
     elapsedTimerRef.current = setInterval(() => {
@@ -236,19 +236,17 @@ export function DualAiDialog({
         signal: controller.signal,
       });
 
-      clearTimeout(timeout);
-
       if (!response.ok) {
         const errorText = await response.text();
-        let msg = 'Failed to generate content';
+        let msg = t.errors.generateFailed;
         try { msg = JSON.parse(errorText).message || msg; } catch {}
         throw new Error(msg);
       }
 
-      // Check if server responded with SSE
+      // Prüfen, ob der Server mit SSE geantwortet hat
       const contentType = response.headers.get('content-type') || '';
       if (contentType.includes('text/event-stream') && response.body) {
-        // Stream SSE events
+        // SSE-Ereignisse als Stream verarbeiten
         const data = await readSSEStream(response.body, (event) => {
           switch (event.type) {
             case 'iteration_start':
@@ -297,7 +295,7 @@ export function DualAiDialog({
         setCurrentStep('done');
         onContentGenerated(finalContent, data);
       } else {
-        // Fallback: traditional JSON response (non-SSE)
+        // Fallback: klassische JSON-Antwort (kein SSE)
         const data = await response.json();
         const finalContent = data.finalContent || data.mergedPRD || '';
         if (!finalContent.trim()) throw new Error('AI returned no content. Please retry.');
@@ -340,7 +338,7 @@ export function DualAiDialog({
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
-      // Process complete SSE messages (delimited by double newline)
+      // Vollständige SSE-Nachrichten verarbeiten (getrennt durch doppelten Zeilenumbruch)
       const parts = buffer.split('\n\n');
       buffer = parts.pop() || '';
 
@@ -361,7 +359,7 @@ export function DualAiDialog({
             result = parsed;
           } else if (eventType === 'error') {
             isErrorEvent = true;
-            throw new Error(parsed.message || 'Server error during generation');
+            throw new Error(parsed.message || t.errors.generateFailed);
           } else {
             onEvent(parsed);
           }
@@ -440,7 +438,7 @@ export function DualAiDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {/* Workflow Mode Selection */}
+          {/* Auswahl des Workflow-Modus */}
           <div className="space-y-3">
             <Label className="text-base font-medium">{t.dualAi.workflowMode}</Label>
             <div className="grid grid-cols-3 gap-2">
@@ -482,7 +480,7 @@ export function DualAiDialog({
             </p>
           </div>
 
-          {/* Iterative Mode Settings */}
+          {/* Einstellungen für den Iterationsmodus */}
           {workflowMode === 'iterative' && (
             <div className="space-y-4 p-4 rounded-lg border bg-muted/50">
               <div className="space-y-2">
@@ -529,7 +527,7 @@ export function DualAiDialog({
             </div>
           )}
 
-          {/* Status Display */}
+          {/* Statusanzeige */}
           <div className="space-y-2">
             <div className="flex items-center gap-2 p-3 rounded-md bg-muted">
               {getStepIcon()}
@@ -542,7 +540,7 @@ export function DualAiDialog({
                 </div>
               )}
             </div>
-            {/* Live stats for iterative mode */}
+            {/* Live-Statistiken für den Iterationsmodus */}
             {currentStep === 'iterating' && (
               <div className="flex items-center gap-4 px-3 text-xs text-muted-foreground">
                 {elapsedSeconds > 0 && (
@@ -565,7 +563,7 @@ export function DualAiDialog({
             )}
           </div>
 
-          {/* Model Info */}
+          {/* Modellinformationen */}
           {(generatorModel || reviewerModel) && (
             <div className="flex gap-2 flex-wrap">
               {generatorModel && (
@@ -581,7 +579,7 @@ export function DualAiDialog({
             </div>
           )}
 
-          {/* User Input */}
+          {/* Benutzereingabe */}
           <div className="space-y-2">
             <Label htmlFor="ai-input">
               {hasRealContent ? t.dualAi.improvementLabel : t.dualAi.descriptionLabel}
@@ -600,7 +598,7 @@ export function DualAiDialog({
             />
           </div>
 
-          {/* Error Display */}
+          {/* Fehleranzeige */}
           {error && (
             <div className="flex items-start gap-2 p-3 rounded-md bg-destructive/10 text-destructive">
               <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
@@ -664,7 +662,7 @@ export function DualAiDialog({
         </DialogFooter>
       </DialogContent>
 
-      {/* Guided AI Dialog - opened when guided mode is selected */}
+      {/* Geführter KI-Dialog - wird geöffnet, wenn der geführte Modus ausgewählt ist */}
       <GuidedAiDialog
         open={showGuidedDialog}
         onOpenChange={(isOpen) => {

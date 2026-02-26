@@ -1,7 +1,16 @@
 // Linear integration helper - from linear blueprint
 import { LinearClient } from '@linear/sdk';
+import { logger } from "./logger";
 
-let connectionSettings: any;
+interface LinearConnectionSettings {
+  settings: {
+    access_token?: string;
+    expires_at?: string;
+    oauth?: { credentials?: { access_token?: string } };
+  };
+}
+
+let connectionSettings: LinearConnectionSettings | undefined;
 
 async function getAccessToken() {
   if (connectionSettings && connectionSettings.settings.expires_at && new Date(connectionSettings.settings.expires_at).getTime() > Date.now()) {
@@ -29,7 +38,7 @@ async function getAccessToken() {
     }
   ).then(res => res.json()).then(data => data.items?.[0]);
 
-  const accessToken = connectionSettings?.settings?.access_token || connectionSettings.settings?.oauth?.credentials?.access_token;
+  const accessToken = connectionSettings?.settings?.access_token || connectionSettings?.settings?.oauth?.credentials?.access_token;
 
   if (!connectionSettings || !accessToken) {
     throw new Error('Linear not connected');
@@ -74,7 +83,7 @@ export async function exportToLinear(title: string, description: string): Promis
       url: createdIssue.url,
     };
   } catch (error: any) {
-    console.error('Error exporting to Linear:', error);
+    logger.error('Error exporting to Linear', { error: error.message });
     
     // Handle specific Linear error types
     if (error.type === 'UsageLimitExceeded' || error.message?.includes('usage limit exceeded')) {
@@ -103,7 +112,7 @@ export async function checkLinearConnection(): Promise<boolean> {
   }
 }
 
-export async function getLinearIssue(issueIdentifier: string): Promise<any> {
+export async function getLinearIssue(issueIdentifier: string): Promise<Record<string, unknown>> {
   try {
     const linear = await getUncachableLinearClient();
     
@@ -125,7 +134,7 @@ export async function getLinearIssue(issueIdentifier: string): Promise<any> {
       updatedAt: issue.updatedAt,
     };
   } catch (error: any) {
-    console.error('Error fetching Linear issue:', error);
+    logger.error('Error fetching Linear issue', { issueIdentifier, error: error.message });
     throw new Error(`Failed to fetch Linear issue: ${error.message}`);
   }
 }

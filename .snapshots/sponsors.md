@@ -7,7 +7,7 @@ If you would like to support our work, please help us by considering the followi
 ## Ways to Support
 
 ### Join the GBTI Network!!! 🙏🙏🙏
-The GBTI Network is a community of developers who are passionate about open source and community-driven development. Members enjoy access to exclusive tools, resources, a private MineCraft server, a listing in our members directory, co-op opportunities and more.
+The GBTI Network is a community of developers who are passionate about open source and community-driven development. Members enjoy access to exclussive tools, resources, a private MineCraft server, a listing in our members directory, co-op opportunities and more.
 
 - Support our work by becoming a [GBTI Network member](https://gbti.network/membership/).
 
@@ -21,7 +21,7 @@ Codeable connects you with top-tier professionals skilled in frameworks and tech
 
 - Visit [Codeable](https://www.codeable.io/developers/?ref=z8h3e) to hire your next team member. 
 
-### Leave positive reviews on our marketplace listing ⭐⭐⭐⭐⭐
+### Lead positive reviews on our marketplace listing ⭐⭐⭐⭐⭐
 - Rate us on [VSCode marketplace](https://marketplace.visualstudio.com/items?itemName=GBTI.snapshots-for-ai)
 - Review us on [Cursor marketplace](https://open-vsx.org/extension/GBTI/snapshots-for-ai)
 

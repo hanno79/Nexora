@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { ArrowLeft, Plus, Trash2, GripVertical, Save } from "lucide-react";
@@ -10,8 +10,8 @@ import { TopBar } from "@/components/TopBar";
 import { Card } from "@/components/ui/card";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { isUnauthorizedError } from "@/lib/authUtils";
 import { useTranslation } from "@/lib/i18n";
+import { useMutationErrorHandler } from "@/hooks/useMutationErrorHandler";
 
 interface Section {
   id: string;
@@ -23,12 +23,46 @@ export default function CreateTemplate() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const { t } = useTranslation();
+  const onMutationError = useMutationErrorHandler();
   
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [sections, setSections] = useState<Section[]>([
     { id: "1", title: t.templates.defaultSectionTitle, content: t.templates.defaultSectionContent },
   ]);
+  const defaultSectionRef = useRef({
+    title: t.templates.defaultSectionTitle,
+    content: t.templates.defaultSectionContent,
+  });
+
+  useEffect(() => {
+    const prevDefault = defaultSectionRef.current;
+    const nextDefault = {
+      title: t.templates.defaultSectionTitle,
+      content: t.templates.defaultSectionContent,
+    };
+
+    if (
+      prevDefault.title === nextDefault.title &&
+      prevDefault.content === nextDefault.content
+    ) {
+      return;
+    }
+
+    setSections((currentSections) => {
+      if (
+        currentSections.length === 1 &&
+        currentSections[0].id === "1" &&
+        currentSections[0].title === prevDefault.title &&
+        currentSections[0].content === prevDefault.content
+      ) {
+        return [{ ...currentSections[0], ...nextDefault }];
+      }
+      return currentSections;
+    });
+
+    defaultSectionRef.current = nextDefault;
+  }, [t.templates.defaultSectionTitle, t.templates.defaultSectionContent]);
 
   const addSection = () => {
     const newSection: Section = {
@@ -86,24 +120,7 @@ export default function CreateTemplate() {
       });
       navigate("/templates");
     },
-    onError: (error: Error) => {
-      if (isUnauthorizedError(error)) {
-        toast({
-          title: t.auth.unauthorized,
-          description: t.auth.loggedOut,
-          variant: "destructive",
-        });
-        setTimeout(() => {
-          window.location.href = "/api/login";
-        }, 500);
-        return;
-      }
-      toast({
-        title: t.common.error,
-        description: error.message || t.templates.create.error,
-        variant: "destructive",
-      });
-    },
+    onError: onMutationError,
   });
 
   return (
@@ -147,6 +164,7 @@ export default function CreateTemplate() {
                 placeholder={t.templates.create.namePlaceholder}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                maxLength={200}
                 data-testid="input-template-name"
                 className="mt-2"
               />

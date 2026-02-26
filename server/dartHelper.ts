@@ -1,6 +1,8 @@
 // Dart AI integration helper
 // API Documentation: https://app.dartai.com/api/v0/public/docs/
 
+import { logger } from "./logger";
+
 const DART_API_BASE_URL = 'https://app.dartai.com/api/v0/public';
 
 /**
@@ -62,11 +64,17 @@ async function dartApiRequest(
     }
 
     if (!response.ok) {
-      // Log full error response for debugging
-      console.error(`Dart AI API error ${response.status}:`, JSON.stringify(data, null, 2));
-      console.error('Request URL:', url);
-      console.error('Request method:', method);
-      if (body) console.error('Request body:', JSON.stringify(body, null, 2));
+      const requestBodySize = body ? JSON.stringify(body).length : 0;
+      const responseKeys = data && typeof data === "object" ? Object.keys(data) : [];
+
+      // Log sanitized error metadata only (no payload/content dumps)
+      logger.error('Dart AI API error', {
+        status: response.status,
+        endpoint,
+        method,
+        responseKeys,
+        requestBodySize,
+      });
       
       // Handle specific HTTP error codes
       if (response.status === 401) {
@@ -131,7 +139,9 @@ export async function exportToDart(
     const docFolder = response.item?.folder;
     
     if (!docId) {
-      console.error('Dart API response:', response);
+      logger.error('Dart AI did not return a doc ID', {
+        responseKeys: response && typeof response === "object" ? Object.keys(response) : [],
+      });
       throw new Error('Dart AI did not return a doc ID. Response may have changed.');
     }
 
@@ -144,7 +154,7 @@ export async function exportToDart(
       folder: docFolder || folder || 'General/Docs',
     };
   } catch (error: any) {
-    console.error('Error exporting to Dart AI:', error);
+    logger.error('Error exporting to Dart AI', { error: error.message });
     
     // Handle specific Dart AI error types
     if (error.message?.includes('authentication') || error.message?.includes('API key')) {
@@ -179,7 +189,7 @@ export async function checkDartConnection(): Promise<boolean> {
     
     return true;
   } catch (error) {
-    console.error('Dart AI connection check failed:', error);
+    logger.error('Dart AI connection check failed', { error: (error as Error).message });
     return false;
   }
 }
@@ -206,19 +216,26 @@ export async function updateDartDoc(
       }
     };
 
-    console.log('Dart AI Update - docId:', docId);
-    console.log('Dart AI Update - payload:', JSON.stringify(payload, null, 2));
+    logger.info('Dart AI Update request', {
+      docId,
+      titleLength: title.length,
+      contentLength: content.length,
+    });
 
     const response = await dartApiRequest(`/docs/${docId}`, 'PUT', payload);
-    
-    console.log('Dart AI Update response:', JSON.stringify(response, null, 2));
+
+    logger.info('Dart AI Update response', {
+      docId,
+      hasItem: !!response?.item,
+      responseKeys: response && typeof response === "object" ? Object.keys(response) : [],
+    });
     
     // Extract doc info from response
     const updatedDoc = response.item;
     if (!updatedDoc) {
       // If no item in response, the update may have succeeded but with different response format
       // Try to construct the URL from the docId
-      console.log('No item in response, using docId for URL');
+      logger.info('No item in response, using docId for URL', { docId });
       return {
         docId: docId,
         url: `https://app.dartai.com/o/${docId}`,
@@ -232,8 +249,7 @@ export async function updateDartDoc(
       url,
     };
   } catch (error: any) {
-    console.error('Error updating Dart AI doc:', error);
-    console.error('Error details:', error.message);
+    logger.error('Error updating Dart AI doc', { docId, error: error.message });
     
     if (error.message?.includes('authentication') || error.message?.includes('API key')) {
       throw new Error('Dart AI authentication failed. Please check your DART_AI_API_KEY secret.');
@@ -276,7 +292,7 @@ export async function getDartDoc(docId: string): Promise<any> {
       updatedAt: doc.updatedAt,
     };
   } catch (error: any) {
-    console.error('Error fetching Dart AI doc:', error);
+    logger.error('Error fetching Dart AI doc', { docId, error: error.message });
     throw new Error(`Failed to fetch Dart AI doc: ${error.message}`);
   }
 }
@@ -299,7 +315,7 @@ export async function getDartboards(): Promise<{ dartboards: string[]; folders: 
       folders,
     };
   } catch (error: any) {
-    console.error('Error fetching Dart AI dartboards:', error);
+    logger.error('Error fetching Dart AI dartboards', { error: error.message });
     throw new Error(`Failed to fetch Dart AI dartboards: ${error.message}`);
   }
 }

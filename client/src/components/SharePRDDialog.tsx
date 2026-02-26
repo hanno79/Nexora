@@ -97,6 +97,7 @@ export function SharePRDDialog({ prdId, open, onOpenChange }: SharePRDDialogProp
                 placeholder="colleague@company.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                maxLength={320}
                 data-testid="input-share-email"
               />
 
@@ -112,7 +113,7 @@ export function SharePRDDialog({ prdId, open, onOpenChange }: SharePRDDialogProp
 
               <Button
                 onClick={() => shareMutation.mutate()}
-                disabled={!email || shareMutation.isPending}
+                disabled={!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || shareMutation.isPending}
                 className="w-full"
                 data-testid="button-send-invite"
               >

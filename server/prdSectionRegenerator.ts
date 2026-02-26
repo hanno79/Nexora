@@ -1,5 +1,6 @@
 import type { PRDStructure } from './prdStructure';
 import type { OpenRouterClient } from './openrouter';
+import { logger } from './logger';
 
 interface SectionPattern {
   regex: RegExp;
@@ -49,8 +50,7 @@ export function detectTargetSection(
   reviewText: string,
   options?: DetectTargetSectionOptions
 ): keyof PRDStructure | null {
-  console.log(`\n🔍 [detectTargetSection] Analyzing reviewer feedback (${reviewText.length} chars)...`);
-  console.log(`🔍 [detectTargetSection] Feedback preview: "${reviewText.substring(0, 200)}..."`);
+  logger.debug('Section targeting started', { reviewLength: reviewText.length });
 
   const scoreMap: Map<keyof PRDStructure, number> = new Map();
 
@@ -69,17 +69,22 @@ export function detectTargetSection(
     if (mappedKey) {
       const current = scoreMap.get(mappedKey) || 0;
       scoreMap.set(mappedKey, current + 20);
-      console.log(`🔍 [detectTargetSection] Explicit section reference found: "${match[1].trim()}" → ${String(mappedKey)} (+20 boost)`);
+      logger.debug('Section targeting explicit section match', {
+        sectionKey: String(mappedKey),
+      });
     }
   }
 
   if (scoreMap.size === 0) {
-    console.warn(`⚠️ [detectTargetSection] No section match detected. Falling back to full regeneration.`);
+    logger.warn('Section targeting found no matching section; using full regeneration fallback');
     return null;
   }
 
   const sorted = Array.from(scoreMap.entries()).sort((a, b) => b[1] - a[1]);
-  console.log(`🔍 [detectTargetSection] Section scores:`, sorted.map(([k, v]) => `${String(k)}=${v}`).join(', '));
+  logger.debug('Section targeting scores computed', {
+    topSection: String(sorted[0][0]),
+    topScore: sorted[0][1],
+  });
 
   const bestKey = sorted[0][0];
   const bestScore = sorted[0][1];
@@ -88,15 +93,19 @@ export function detectTargetSection(
   const hasFeatureContext = featurePatterns.some(p => p.test(reviewText));
   const allowFeatureContext = options?.allowFeatureContext === true;
   if (hasFeatureContext && !allowFeatureContext) {
-    console.log(`🔍 [detectTargetSection] Feature context detected (F-XX pattern). Skipping section targeting.`);
+    logger.debug('Section targeting skipped because feature context was detected');
     return null;
   }
   if (hasFeatureContext && allowFeatureContext) {
-    console.log(`🔍 [detectTargetSection] Feature context detected but allowed (freeze patch mode).`);
+    logger.debug('Section targeting feature context allowed (freeze patch mode)');
   }
 
   const displayName = (SECTION_DISPLAY_NAMES as Record<string, string>)[bestKey as string] || String(bestKey);
-  console.log(`🔍 [detectTargetSection] Detected Section: "${displayName}" (key: ${String(bestKey)}, confidence: ${bestScore})`);
+  logger.debug('Section targeting selected section', {
+    sectionName: displayName,
+    sectionKey: String(bestKey),
+    confidence: bestScore,
+  });
   return bestKey;
 }
 
@@ -151,6 +160,10 @@ Regenerate ONLY the "${displayName}" section content. Incorporate the feedback. 
     throw new Error(`Section regeneration produced insufficient content (${content.length} chars)`);
   }
 
-  console.log(`📝 Section "${displayName}" regenerated: ${result.usage.completion_tokens} tokens using ${result.model}`);
+  logger.debug('Section regeneration completed', {
+    sectionName: displayName,
+    completionTokens: result.usage.completion_tokens,
+    model: result.model,
+  });
   return content;
 }

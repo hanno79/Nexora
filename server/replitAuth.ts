@@ -7,15 +7,30 @@ import type { Express, RequestHandler } from "express";
 import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
+import { getMissingReplitAuthEnv, parseReplitDomains, resolveDemoAuthEnabled } from "./authMode";
 
-const DEMO_AUTH_ENABLED =
-  process.env.LOCAL_DEMO_AUTH === "true" ||
-  process.env.REPLIT_DOMAINS === "localhost" ||
-  !process.env.REPLIT_DOMAINS ||
-  !process.env.REPL_ID;
+const DEMO_AUTH_ENABLED = resolveDemoAuthEnabled(process.env);
 
 const DEMO_USER_ID = "demo-user-local";
 const DEMO_USER_EMAIL = "demo+nexora-local@localhost";
+
+function getReplitClientId() {
+  const replId = process.env.REPL_ID;
+  if (!replId) {
+    throw new Error("REPL_ID must be set when LOCAL_DEMO_AUTH is not enabled.");
+  }
+  return replId;
+}
+
+function assertReplitAuthEnvironment() {
+  const missing = getMissingReplitAuthEnv(process.env);
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing auth environment variables: ${missing.join(", ")}. ` +
+      `Set LOCAL_DEMO_AUTH=true for explicit local demo mode.`
+    );
+  }
+}
 
 function buildDemoSessionUser() {
   const expiresAt = Math.floor(Date.now() / 1000) + 24 * 60 * 60;
@@ -60,13 +75,18 @@ const getOidcConfig = memoize(
   async () => {
     return await client.discovery(
       new URL(process.env.ISSUER_URL ?? "https://replit.com/oidc"),
-      process.env.REPL_ID!
+      getReplitClientId()
     );
   },
   { maxAge: 3600 * 1000 }
 );
 
 export function getSession() {
+  const sessionSecret = process.env.SESSION_SECRET;
+  if (!sessionSecret) {
+    throw new Error("SESSION_SECRET must be set when LOCAL_DEMO_AUTH is not enabled.");
+  }
+
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
@@ -76,7 +96,7 @@ export function getSession() {
     tableName: "sessions",
   });
   return session({
-    secret: process.env.SESSION_SECRET!,
+    secret: sessionSecret,
     store: sessionStore,
     resave: false,
     saveUninitialized: false,
@@ -131,6 +151,8 @@ export async function setupAuth(app: Express) {
     return;
   }
 
+  assertReplitAuthEnvironment();
+
   app.set("trust proxy", 1);
   app.use(getSession());
   app.use(passport.initialize());
@@ -154,8 +176,12 @@ export async function setupAuth(app: Express) {
     verified(null, user);
   };
 
-  for (const domain of process.env
-    .REPLIT_DOMAINS!.split(",")) {
+  const domains = parseReplitDomains(process.env.REPLIT_DOMAINS || "");
+  if (domains.length === 0) {
+    throw new Error("REPLIT_DOMAINS must contain at least one domain when LOCAL_DEMO_AUTH is not enabled.");
+  }
+
+  for (const domain of domains) {
     const strategy = new Strategy(
       {
         name: `replitauth:${domain}`,
@@ -189,7 +215,7 @@ export async function setupAuth(app: Express) {
     req.logout(() => {
       res.redirect(
         client.buildEndSessionUrl(config, {
-          client_id: process.env.REPL_ID!,
+          client_id: getReplitClientId(),
           post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
         }).href
       );
@@ -236,3 +262,11 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
     return;
   }
 };
+
+export function isDemoAuthEnabled() {
+  return DEMO_AUTH_ENABLED;
+}
+
+export function getDemoUserId() {
+  return DEMO_USER_ID;
+}

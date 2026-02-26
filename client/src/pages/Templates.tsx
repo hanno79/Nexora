@@ -28,8 +28,8 @@ import {
 import type { Template, User } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { isUnauthorizedError } from "@/lib/authUtils";
 import { resolveLanguage } from "@/lib/i18n";
+import { useMutationErrorHandler } from "@/hooks/useMutationErrorHandler";
 import { useState } from "react";
 import { useTranslation } from "@/lib/i18n";
 
@@ -45,7 +45,8 @@ export default function Templates() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const { t } = useTranslation();
-  
+  const onMutationError = useMutationErrorHandler();
+
   // Dialog state
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
@@ -93,24 +94,7 @@ export default function Templates() {
       setSelectedTemplateId(null);
       navigate(`/editor/${data.id}`);
     },
-    onError: (error: Error) => {
-      if (isUnauthorizedError(error)) {
-        toast({
-          title: t.auth.unauthorized,
-          description: t.auth.loggedOut,
-          variant: "destructive",
-        });
-        setTimeout(() => {
-          window.location.href = "/api/login";
-        }, 500);
-        return;
-      }
-      toast({
-        title: t.common.error,
-        description: t.errors.saveFailed,
-        variant: "destructive",
-      });
-    },
+    onError: onMutationError,
   });
 
   const handleTemplateClick = (templateId: string) => {

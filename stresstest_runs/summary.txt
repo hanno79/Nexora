@@ -1,0 +1,18 @@
+S1|200|214s|17604|"modelsUsed":["nvidia/nemotron-3-nano-30b-a3b:free","arcee-ai/trinity-large-preview:free"]
+S2|200|297s|18047|"modelsUsed":["nvidia/nemotron-3-nano-30b-a3b:free","arcee-ai/trinity-large-preview:free"]
+S3|200|154s|14043|"modelsUsed":["google/gemini-3-flash-preview","anthropic/claude-haiku-4.5"]
+S4|200|175s|14228|"modelsUsed":["google/gemini-3-flash-preview","anthropic/claude-haiku-4.5"]
+S5|500|332s|ERROR|{"message":"All 3 configured AI models failed. Please go to Settings and verify your models are available on OpenRouter.\n\nModels tried:\n1. google/gemini-3-pro-preview: OpenRouter API key is invalid or unauthorized. Please check your OPENROUTER_API_KEY in settings or get a new key at https://openrouter.ai/keys\n2. anthropic/claude-opus-4.6: OpenRouter API key is invalid or unauthorized. Please check your OPENROUTER_API_KEY in settings or get a new key at https://openrouter.ai/keys\n3. google/g
+S6|500|1s|ERROR|{"message":"All 3 configured AI models failed. Please go to Settings and verify your models are available on OpenRouter.\n\nModels tried:\n1. openai/gpt-5.2-pro: OpenRouter API key is invalid or unauthorized. Please check your OPENROUTER_API_KEY in settings or get a new key at https://openrouter.ai/keys\n2. anthropic/claude-opus-4.6: OpenRouter API key is invalid or unauthorized. Please check your OPENROUTER_API_KEY in settings or get a new key at https://openrouter.ai/keys\n3. anthropic/claude-
+I1|000|601s|ERROR|
+I3|500|1s|ERROR|{"message":"All 3 configured AI models failed. Please go to Settings and verify your models are available on OpenRouter.\n\nModels tried:\n1. google/gemini-3-flash-preview: OpenRouter API key is invalid or unauthorized. Please check your OPENROUTER_API_KEY in settings or get a new key at https://openrouter.ai/keys\n2. deepseek/deepseek-chat-v3.1: OpenRouter API key is invalid or unauthorized. Please check your OPENROUTER_API_KEY in settings or get a new key at https://openrouter.ai/keys\n3. goog
+I3|200|286s|35212|"modelsUsed":["google/gemini-3-flash-preview","anthropic/claude-haiku-4.5"]
+I4|200|431s|80960|"modelsUsed":["google/gemini-3-flash-preview","anthropic/claude-haiku-4.5"]
+I5|200|656s|129664|"modelsUsed":["google/gemini-3-flash-preview","anthropic/claude-haiku-4.5"]
+I6|000|1800s|ERROR|
+I1|200|341s|26702|"modelsUsed":["nvidia/nemotron-3-nano-30b-a3b:free","arcee-ai/trinity-large-preview:free"]
+E2|500|16s|ERROR|{"message":"All 3 configured AI models failed. Please go to Settings and verify your models are available on OpenRouter.\n\nModels tried:\n1. google/gemini-3-flash-preview: OpenRouter API key is invalid or unauthorized. Please check your OPENROUTER_API_KEY in settings or get a new key at https://openrouter.ai/keys\n2. deepseek/deepseek-chat-v3.1: OpenRouter API key is invalid or unauthorized. Please check your OPENROUTER_API_KEY in settings or get a new key at https://openrouter.ai/keys\n3. goog
+S5|000|1800s|ERROR|{"message":"All 3 configured AI models failed. Please go to Settings and verify your models are available on OpenRouter.\n\nModels tried:\n1. google/gemini-3-pro-preview: OpenRouter API key is invalid or unauthorized. Please check your OPENROUTER_API_KEY in settings or get a new key at https://openrouter.ai/keys\n2. anthropic/claude-opus-4.6: OpenRouter API key is invalid or unauthorized. Please check your OPENROUTER_API_KEY in settings or get a new key at https://openrouter.ai/keys\n3. google/g
+E2|200|367s|16236|"modelsUsed":["google/gemini-3-flash-preview","anthropic/claude-haiku-4.5"]
+E4|200|746s|15346|"modelsUsed":["deepseek/deepseek-chat-v3.1","anthropic/claude-haiku-4.5"]
+I2|200|985s|99601|"modelsUsed":["nvidia/nemotron-3-nano-30b-a3b:free","arcee-ai/trinity-large-preview:free"]

@@ -5,6 +5,7 @@ import {
   updatePrdSchema,
   requestApprovalSchema,
   respondApprovalSchema,
+  sharePrdSchema,
 } from '../server/schemas';
 
 describe('updateUserSchema', () => {
@@ -178,6 +179,37 @@ describe('respondApprovalSchema', () => {
   it('rejects missing approved field', () => {
     expect(() =>
       respondApprovalSchema.parse({})
+    ).toThrow();
+  });
+});
+
+describe('sharePrdSchema', () => {
+  it('accepts valid share payload', () => {
+    const result = sharePrdSchema.parse({
+      email: 'colleague@example.com',
+      permission: 'edit',
+    });
+    expect(result.email).toBe('colleague@example.com');
+    expect(result.permission).toBe('edit');
+  });
+
+  it('trims email and applies default permission', () => {
+    const result = sharePrdSchema.parse({
+      email: '  TEAMMATE@EXAMPLE.COM  ',
+    });
+    expect(result.email).toBe('teammate@example.com');
+    expect(result.permission).toBe('view');
+  });
+
+  it('rejects invalid email', () => {
+    expect(() =>
+      sharePrdSchema.parse({ email: 'not-an-email' })
+    ).toThrow();
+  });
+
+  it('rejects invalid permission', () => {
+    expect(() =>
+      sharePrdSchema.parse({ email: 'ok@example.com', permission: 'admin' })
     ).toThrow();
   });
 });

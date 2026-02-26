@@ -21,7 +21,7 @@ import { Info, Loader2, RefreshCw } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/lib/i18n/useTranslation";
-import { isUnauthorizedError } from "@/lib/authUtils";
+import { useMutationErrorHandler } from "@/hooks/useMutationErrorHandler";
 
 interface DartExportDialogProps {
   open: boolean;
@@ -44,6 +44,7 @@ export function DartExportDialog({
 }: DartExportDialogProps) {
   const { toast } = useToast();
   const { t } = useTranslation();
+  const onMutationError = useMutationErrorHandler();
   const [selectedFolder, setSelectedFolder] = useState<string>("");
   
   // Check if this is an update (already exported) or new export
@@ -79,24 +80,7 @@ export function DartExportDialog({
       onOpenChange(false);
       setSelectedFolder("");
     },
-    onError: (error: Error) => {
-      if (isUnauthorizedError(error)) {
-        toast({
-          title: "Unauthorized",
-          description: "You are logged out. Logging in again...",
-          variant: "destructive",
-        });
-        setTimeout(() => {
-          window.location.href = "/api/login";
-        }, 500);
-        return;
-      }
-      toast({
-        title: t.errors.exportFailed,
-        description: error.message || "Failed to export to Dart AI",
-        variant: "destructive",
-      });
-    },
+    onError: onMutationError,
   });
 
   const updateMutation = useMutation({
@@ -119,24 +103,7 @@ export function DartExportDialog({
       
       onOpenChange(false);
     },
-    onError: (error: Error) => {
-      if (isUnauthorizedError(error)) {
-        toast({
-          title: "Unauthorized",
-          description: "You are logged out. Logging in again...",
-          variant: "destructive",
-        });
-        setTimeout(() => {
-          window.location.href = "/api/login";
-        }, 500);
-        return;
-      }
-      toast({
-        title: t.errors.exportFailed,
-        description: error.message || "Failed to update Dart AI doc",
-        variant: "destructive",
-      });
-    },
+    onError: onMutationError,
   });
 
   const handleAction = () => {

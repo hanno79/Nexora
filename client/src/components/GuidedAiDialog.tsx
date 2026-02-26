@@ -50,21 +50,6 @@ export function GuidedAiDialog({
   const [step, setStep] = useState<Step>('input');
   const abortControllerRef = useRef<AbortController | null>(null);
   const [hasAutoStarted, setHasAutoStarted] = useState(false);
-  
-  // Sync project idea and auto-start when dialog opens with initial value
-  useEffect(() => {
-    if (open && initialProjectIdea && initialProjectIdea.trim().length >= 10) {
-      setProjectIdea(initialProjectIdea);
-      // Auto-start if we have a valid initial idea and haven't started yet
-      if (!hasAutoStarted && step === 'input') {
-        setHasAutoStarted(true);
-        handleStartWithIdea(initialProjectIdea);
-      }
-    }
-    if (!open) {
-      setHasAutoStarted(false);
-    }
-  }, [open, initialProjectIdea]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [featureOverview, setFeatureOverview] = useState('');
   const [questions, setQuestions] = useState<GuidedQuestion[]>([]);
@@ -117,7 +102,7 @@ export function GuidedAiDialog({
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.message || 'Failed to start guided workflow');
       }
 
@@ -139,6 +124,21 @@ export function GuidedAiDialog({
     }
   };
 
+  // Sync project idea and auto-start when dialog opens with initial value
+  useEffect(() => {
+    if (open && initialProjectIdea && initialProjectIdea.trim().length >= 10) {
+      setProjectIdea(initialProjectIdea);
+      // Auto-start if we have a valid initial idea and haven't started yet
+      if (!hasAutoStarted && step === 'input') {
+        setHasAutoStarted(true);
+        handleStartWithIdea(initialProjectIdea);
+      }
+    }
+    if (!open) {
+      setHasAutoStarted(false);
+    }
+  }, [open, initialProjectIdea, hasAutoStarted, step, handleStartWithIdea]);
+
   const handleStart = async () => {
     if (projectIdea.trim().length < 10) {
       setError(t.guidedAi.minLengthError);
@@ -158,7 +158,7 @@ export function GuidedAiDialog({
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.message || 'Failed to start guided workflow');
       }
 
@@ -228,7 +228,7 @@ export function GuidedAiDialog({
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.message || 'Failed to process answers');
       }
 
@@ -264,7 +264,7 @@ export function GuidedAiDialog({
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.message || 'Failed to finalize PRD');
       }
 
@@ -309,7 +309,7 @@ export function GuidedAiDialog({
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.message || 'Failed to generate PRD');
       }
 

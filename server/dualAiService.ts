@@ -1,6 +1,7 @@
 // Dual-AI Service - Orchestrates Generator & Reviewer based on HRP-17
 import { getOpenRouterClient, MODEL_TIERS } from './openrouter';
 import type { OpenRouterClient } from './openrouter';
+import type { TokenUsage } from "@shared/schema";
 import {
   GENERATOR_SYSTEM_PROMPT,
   REVIEWER_SYSTEM_PROMPT,
@@ -33,6 +34,24 @@ import { eq } from 'drizzle-orm';
 import fs from 'fs';
 import path from 'path';
 
+const DUAL_AI_VERBOSE_LOGS = process.env.ENABLE_VERBOSE_LOGS === 'true';
+
+function dualAiLog(...args: unknown[]) {
+  if (DUAL_AI_VERBOSE_LOGS) {
+    console.log(...args);
+  }
+}
+
+function dualAiWarn(...args: unknown[]) {
+  if (DUAL_AI_VERBOSE_LOGS) {
+    console.warn(...args);
+  }
+}
+
+function dualAiError(...args: unknown[]) {
+  console.error(...args);
+}
+
 interface StructuredFeatureDelta {
   addedFeatures: Array<{
     featureId?: string;
@@ -57,7 +76,7 @@ export class DualAiService {
     // Create fresh client per request to prevent cross-user contamination
     const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
     const langInstruction = getLanguageInstruction(contentLanguage);
-    console.log(`🎯 Simple run models: generator=${client.getPreferredModel('generator') || '(tier default)'}, reviewer=${client.getPreferredModel('reviewer') || '(tier default)'}, fallback=${client.getPreferredModel('fallback') || '(none)'}`);
+    dualAiLog(`🎯 Simple run models: generator=${client.getPreferredModel('generator') || '(tier default)'}, reviewer=${client.getPreferredModel('reviewer') || '(tier default)'}, fallback=${client.getPreferredModel('fallback') || '(none)'}`);
     
     const { userInput, existingContent, mode } = request;
 
@@ -71,7 +90,7 @@ export class DualAiService {
 
     // Step 1: Generate initial PRD (skip if review-only)
     if (mode !== 'review-only') {
-      console.log('🤖 Step 1: Generating PRD with AI Generator...');
+      dualAiLog('🤖 Step 1: Generating PRD with AI Generator...');
       
       let generatorPrompt: string;
       if (existingContent) {
@@ -111,7 +130,7 @@ Create an improved version that incorporates the new requirements while keeping 
         tier: genResult.tier
       };
 
-      console.log(`✅ Generated ${genResult.usage.completion_tokens} tokens with ${genResult.model}`);
+      dualAiLog(`✅ Generated ${genResult.usage.completion_tokens} tokens with ${genResult.model}`);
     } else {
       generatorResponse = {
         content: existingContent!,
@@ -125,38 +144,44 @@ Create an improved version that incorporates the new requirements while keeping 
     let enrichedStructure: PRDStructure | undefined;
     if (mode !== 'review-only') {
       try {
-        console.log('🧩 Feature Identification Layer: Extracting atomic features...');
+        dualAiLog('🧩 Feature Identification Layer: Extracting atomic features...');
         const vision = this.extractVisionFromContent(generatorResponse.content);
         const featureResult = await generateFeatureList(userInput, vision, client);
-        console.log(`🧩 Feature List (model: ${featureResult.model}, retried: ${featureResult.retried}):`);
-        console.log(featureResult.featureList);
+        const topLevelFeatureLines = featureResult.featureList
+          .split('\n')
+          .filter((line) => line.trim().startsWith('- '))
+          .length;
+        dualAiLog(
+          `🧩 Feature List generated (model: ${featureResult.model}, retried: ${featureResult.retried}, ` +
+          `${topLevelFeatureLines} lines, ${featureResult.featureList.length} chars)`
+        );
 
         // Feature Expansion Engine (modular, parallel to monolithic PRD — testing phase)
         try {
-          console.log('🏗️ Feature Expansion Engine: Starting modular expansion...');
+          dualAiLog('🏗️ Feature Expansion Engine: Starting modular expansion...');
           const expansionResult = await expandAllFeatures(userInput, vision, featureResult.featureList, client);
-          console.log(`🏗️ Feature Expansion complete: ${expansionResult.expandedFeatures.length} features, ${expansionResult.totalTokens} tokens`);
+          dualAiLog(`🏗️ Feature Expansion complete: ${expansionResult.expandedFeatures.length} features, ${expansionResult.totalTokens} tokens`);
 
           // Merge expansion into structured representation for persistence
           if (expansionResult.expandedFeatures.length > 0) {
             try {
               const baseStructure = parsePRDToStructure(generatorResponse.content);
               enrichedStructure = mergeExpansionIntoStructure(baseStructure, expansionResult.expandedFeatures);
-              console.log(`📦 Structure enriched: ${enrichedStructure.features.length} features with structured fields`);
+              dualAiLog(`📦 Structure enriched: ${enrichedStructure.features.length} features with structured fields`);
             } catch (mergeError: any) {
-              console.warn('⚠️ Structure merge failed (non-blocking):', mergeError.message);
+              dualAiWarn('⚠️ Structure merge failed (non-blocking):', mergeError.message);
             }
           }
         } catch (expansionError: any) {
-          console.warn('⚠️ Feature Expansion Engine failed (non-blocking):', expansionError.message);
+          dualAiWarn('⚠️ Feature Expansion Engine failed (non-blocking):', expansionError.message);
         }
       } catch (error: any) {
-        console.warn('⚠️ Feature Identification Layer failed (non-blocking):', error.message);
+        dualAiWarn('⚠️ Feature Identification Layer failed (non-blocking):', error.message);
       }
     }
 
     // Step 2: Review with AI Reviewer
-    console.log('🔍 Step 2: Reviewing PRD with AI Reviewer...');
+    dualAiLog('🔍 Step 2: Reviewing PRD with AI Reviewer...');
     
     const reviewerPrompt = `Bewerte folgendes PRD kritisch:\n\n${generatorResponse.content}`;
 
@@ -179,11 +204,11 @@ Create an improved version that incorporates the new requirements while keeping 
       tier: reviewResult.tier
     };
 
-    console.log(`✅ Review complete with ${reviewResult.usage.completion_tokens} tokens using ${reviewResult.model}`);
+    dualAiLog(`✅ Review complete with ${reviewResult.usage.completion_tokens} tokens using ${reviewResult.model}`);
 
     // Step 3: Improve based on review (always run in improve mode, regardless of question extraction)
     if (mode === 'improve') {
-      console.log('🔧 Step 3: Improving PRD based on review feedback...');
+      dualAiLog('🔧 Step 3: Improving PRD based on review feedback...');
       
       const improvementPrompt = `ORIGINAL PRD:\n${generatorResponse.content}\n\nREVIEW FEEDBACK:\n${reviewContent}\n\nVerbessere das PRD und adressiere die kritischen Fragen.`;
 
@@ -201,7 +226,7 @@ Create an improved version that incorporates the new requirements while keeping 
         tier: improveResult.tier
       };
 
-      console.log(`✅ Improved version generated with ${improveResult.usage.completion_tokens} tokens`);
+      dualAiLog(`✅ Improved version generated with ${improveResult.usage.completion_tokens} tokens`);
     }
 
     // Calculate totals
@@ -228,7 +253,7 @@ Create an improved version that incorporates the new requirements while keeping 
       }
       logStructureValidation(finalStructuredContent);
     } catch (parseError: any) {
-      console.warn('⚠️ PRD structure parsing failed (non-blocking):', parseError.message);
+      dualAiWarn('⚠️ PRD structure parsing failed (non-blocking):', parseError.message);
     }
 
     return {
@@ -247,7 +272,7 @@ Create an improved version that incorporates the new requirements while keeping 
     const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
     const langInstruction = getLanguageInstruction(contentLanguage);
     
-    console.log('🔍 Reviewing existing PRD...');
+    dualAiLog('🔍 Reviewing existing PRD...');
     
     const reviewerPrompt = `Critically evaluate the following PRD:\n\n${prdContent}`;
 
@@ -276,7 +301,8 @@ Create an improved version that incorporates the new requirements while keeping 
     iterationCount: number = 3,
     useFinalReview: boolean = false,
     userId?: string,
-    onProgress?: (event: { type: string; [key: string]: any }) => void
+    onProgress?: (event: { type: string; [key: string]: any }) => void,
+    isCancelled?: () => boolean
   ): Promise<IterativeResponse> {
     // Create fresh client per request to prevent cross-user contamination
     const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
@@ -286,13 +312,21 @@ Create an improved version that incorporates the new requirements while keeping 
     const isImprovement = mode === 'improve';
     const trimmedContent = existingContent?.trim() || '';
     
-    console.log(`🎯 Iterative run models: generator=${client.getPreferredModel('generator') || '(tier default)'}, reviewer=${client.getPreferredModel('reviewer') || '(tier default)'}, fallback=${client.getPreferredModel('fallback') || '(none)'}`);
-    console.log(`🔄 Starting iterative workflow: ${iterationCount} iterations, final review: ${useFinalReview}`);
-    console.log(`📝 Mode: ${isImprovement ? 'IMPROVEMENT (building upon existing content)' : 'NEW GENERATION'}`);
-    console.log(`📄 Existing content length: ${trimmedContent.length} characters`);
+    dualAiLog(`🎯 Iterative run models: generator=${client.getPreferredModel('generator') || '(tier default)'}, reviewer=${client.getPreferredModel('reviewer') || '(tier default)'}, fallback=${client.getPreferredModel('fallback') || '(none)'}`);
+    dualAiLog(`🔄 Starting iterative workflow: ${iterationCount} iterations, final review: ${useFinalReview}`);
+    dualAiLog(`📝 Mode: ${isImprovement ? 'IMPROVEMENT (building upon existing content)' : 'NEW GENERATION'}`);
+    dualAiLog(`📄 Existing content length: ${trimmedContent.length} characters`);
     if (additionalRequirements) {
-      console.log(`➕ Additional requirements provided: ${additionalRequirements.substring(0, 100)}...`);
+      dualAiLog(`➕ Additional requirements provided (${additionalRequirements.length} chars)`);
     }
+
+    const throwIfCancelled = (stage: string) => {
+      if (!isCancelled?.()) return;
+      const cancelError: any = new Error(`Iterative generation cancelled during ${stage}`);
+      cancelError.name = 'AbortError';
+      cancelError.code = 'ERR_CLIENT_DISCONNECT';
+      throw cancelError;
+    };
     
     const iterations: IterationData[] = [];
     let currentPRD = existingContent || '';
@@ -331,7 +365,7 @@ Create an improved version that incorporates the new requirements while keeping 
     let freezeActivated = false;
     let blockedRegenerationAttempts = 0;
     let iterativeEnrichedStructure: PRDStructure | undefined;
-    console.log("❄️ Feature Freeze Engine initialisiert (wartet auf erste Kompilierung)");
+    dualAiLog("❄️ Feature Freeze Engine initialisiert (wartet auf erste Kompilierung)");
 
     // Improvement mode: use existing parsed features as authoritative baseline.
     // This prevents first-iteration collapse from redefining the freeze base.
@@ -344,23 +378,24 @@ Create an improved version that incorporates the new requirements while keeping 
           featuresFrozen = true;
           freezeActivated = true;
           diagnostics.freezeSeedSource = 'existingContent';
-          console.log("🧊 FEATURE CATALOGUE FROZEN – Baseline loaded from existing content");
-          console.log("   " + baselineStructure.features.length + " baseline feature(s) locked");
+          dualAiLog("🧊 FEATURE CATALOGUE FROZEN – Baseline loaded from existing content");
+          dualAiLog("   " + baselineStructure.features.length + " baseline feature(s) locked");
         }
       } catch (baselineParseError: any) {
-        console.warn("⚠️ Failed to parse improvement baseline for freeze seeding:", baselineParseError.message);
+        dualAiWarn("⚠️ Failed to parse improvement baseline for freeze seeding:", baselineParseError.message);
       }
     }
 
     // Iterative Q&A Loop
     for (let i = 1; i <= iterationCount; i++) {
-      console.log(`\n📝 Iteration ${i}/${iterationCount}`);
+      throwIfCancelled(`iteration ${i} start`);
+      dualAiLog(`\n📝 Iteration ${i}/${iterationCount}`);
       onProgress?.({ type: 'iteration_start', iteration: i, total: iterationCount });
       const previousIteration = iterations[iterations.length - 1];
       
       // Step 1: AI #1 (Generator) - Creates PRD draft + asks questions
       // Try section-level regeneration first (iterations >= 2 only)
-      let genResult: { content: string; usage: any; model: string; tier: string; usedFallback: boolean } | null = null;
+      let genResult: { content: string; usage: TokenUsage; model: string; tier: string; usedFallback: boolean } | null = null;
 
       if (i >= 2 && previousStructure) {
         try {
@@ -371,7 +406,7 @@ Create an improved version that incorporates the new requirements while keeping 
           if (!targetSection && featuresFrozen) {
             targetSection = this.pickFallbackPatchSection(previousStructure);
             if (targetSection) {
-              console.log(`🎯 Iteration ${i}: Freeze fallback patch section selected: "${String(targetSection)}"`);
+              dualAiLog(`🎯 Iteration ${i}: Freeze fallback patch section selected: "${String(targetSection)}"`);
             }
           }
 
@@ -379,9 +414,9 @@ Create an improved version that incorporates the new requirements while keeping 
             const currentSectionValue = previousStructure[targetSection];
             const hasSectionContent = typeof currentSectionValue === 'string' && currentSectionValue.trim().length > 0;
             if (!hasSectionContent) {
-              console.log(`🧱 Iteration ${i}: Target section "${String(targetSection)}" is empty and will be initialized via section regeneration`);
+              dualAiLog(`🧱 Iteration ${i}: Target section "${String(targetSection)}" is empty and will be initialized via section regeneration`);
             }
-            console.log(`🎯 Iteration ${i}: JSON Mode Triggered for Section: "${String(targetSection)}"`);
+            dualAiLog(`🎯 Iteration ${i}: JSON Mode Triggered for Section: "${String(targetSection)}"`);
             const visionContext = previousStructure.systemVision || '';
 
             let regenContent: string | null = null;
@@ -389,6 +424,7 @@ Create an improved version that incorporates the new requirements while keeping 
             const strictMode = process.env.STRICT_JSON_MODE !== 'false'; // Default: true
 
             try {
+              throwIfCancelled(`iteration ${i} json regeneration`);
               const jsonResult = await regenerateSectionAsJson(
                 targetSection,
                 previousStructure,
@@ -402,18 +438,19 @@ Create an improved version that incorporates the new requirements while keeping 
               diagnostics.jsonSectionUpdates++;
               diagnostics.jsonRetryAttempts = (diagnostics.jsonRetryAttempts || 0) + (jsonResult.diagnostics?.retryAttempts || 1);
               diagnostics.jsonRepairSuccesses = (diagnostics.jsonRepairSuccesses || 0) + (jsonResult.diagnostics?.repairSuccesses || 0);
-              console.log(`✅ Iteration ${i}: JSON structured section update succeeded for "${String(targetSection)}" (attempts: ${jsonResult.diagnostics?.retryAttempts || 1})`);
+              dualAiLog(`✅ Iteration ${i}: JSON structured section update succeeded for "${String(targetSection)}" (attempts: ${jsonResult.diagnostics?.retryAttempts || 1})`);
             } catch (jsonError: any) {
               const retryCount = (jsonError as any).retryCount || 1;
               diagnostics.jsonRetryAttempts = (diagnostics.jsonRetryAttempts || 0) + retryCount;
-              console.warn(`⚠️ Iteration ${i}: JSON Mode failed after ${retryCount} attempts. Falling back to Markdown. Error: ${jsonError.message}`);
+              dualAiWarn(`⚠️ Iteration ${i}: JSON Mode failed after ${retryCount} attempts. Falling back to Markdown. Error: ${jsonError.message}`);
               if (strictMode) {
-                console.error(`🚨 STRICT MODE: JSON failed for "${String(targetSection)}" after all retries. Diagnostic drift event raised.`);
+                dualAiError(`🚨 STRICT MODE: JSON failed for "${String(targetSection)}" after all retries. Diagnostic drift event raised.`);
                 diagnostics.driftEvents++;
               }
             }
 
             if (!regenContent) {
+              throwIfCancelled(`iteration ${i} markdown regeneration`);
               regenContent = await regenerateSection(
                 targetSection,
                 previousStructure,
@@ -423,7 +460,7 @@ Create an improved version that incorporates the new requirements while keeping 
                 langInstruction
               );
               diagnostics.markdownSectionRegens++;
-              console.log(`✅ Iteration ${i}: Markdown section regeneration complete for "${String(targetSection)}"`);
+              dualAiLog(`✅ Iteration ${i}: Markdown section regeneration complete for "${String(targetSection)}"`);
             }
 
             const updatedStructure = { ...previousStructure, features: [...previousStructure.features] };
@@ -442,14 +479,14 @@ Create an improved version that incorporates the new requirements while keeping 
               feedbackSnippet: feedbackText.substring(0, 150),
               mode: usedJsonMode ? 'json' : 'markdown'
             });
-            console.log(`✅ Iteration ${i}: Section-level regeneration complete for "${targetSection}" (mode: ${usedJsonMode ? 'json' : 'markdown'})`);
+            dualAiLog(`✅ Iteration ${i}: Section-level regeneration complete for "${targetSection}" (mode: ${usedJsonMode ? 'json' : 'markdown'})`);
           }
         } catch (sectionRegenError: any) {
           // FEATURE FREEZE: Block full regeneration when frozen
           if (featuresFrozen) {
-            console.warn('🚫 FULL REGENERATION BLOCKED (freeze active)');
-            console.warn('   Section-level regen failed: ' + sectionRegenError.message);
-            console.warn('   Using previous iteration instead');
+            dualAiWarn('🚫 FULL REGENERATION BLOCKED (freeze active)');
+            dualAiWarn('   Section-level regen failed: ' + sectionRegenError.message);
+            dualAiWarn('   Using previous iteration instead');
             const prevIteration = iterations[iterations.length - 1];
             if (prevIteration) {
               genResult = {
@@ -462,7 +499,7 @@ Create an improved version that incorporates the new requirements while keeping 
             } else {
               const frozenFallbackContent = iterations[0]?.mergedPRD || currentPRD || '';
               if (!frozenFallbackContent) {
-                console.warn(`⚠️ Iteration ${i}: freeze fallback content is empty (no previous mergedPRD/currentPRD available)`);
+                dualAiWarn(`⚠️ Iteration ${i}: freeze fallback content is empty (no previous mergedPRD/currentPRD available)`);
               }
               genResult = {
                 content: frozenFallbackContent,
@@ -473,7 +510,7 @@ Create an improved version that incorporates the new requirements while keeping 
               };
             }
           } else {
-            console.error(`🚨 Iteration ${i}: Section-level regeneration failed. Falling back to FULL regeneration. Error: ${sectionRegenError.message}`);
+            dualAiError(`🚨 Iteration ${i}: Section-level regeneration failed. Falling back to FULL regeneration. Error: ${sectionRegenError.message}`);
             genResult = null;
           }
         }
@@ -481,7 +518,7 @@ Create an improved version that incorporates the new requirements while keeping 
 
       if (!genResult) {
         if (featuresFrozen && i >= 2) {
-          console.warn('🚫 FULL REGENERATION BLOCKED (freeze patch mode)');
+          dualAiWarn('🚫 FULL REGENERATION BLOCKED (freeze patch mode)');
           const prevIteration = iterations[iterations.length - 1];
           if (prevIteration) {
             blockedRegenerationAttempts++;
@@ -492,14 +529,14 @@ Create an improved version that incorporates the new requirements while keeping 
               tier: 'fallback',
               usedFallback: true
             };
-            console.log(`✅ Iteration ${i}: Reused previous PRD because no safe patch target was available`);
+            dualAiLog(`✅ Iteration ${i}: Reused previous PRD because no safe patch target was available`);
           }
         }
       }
 
       if (!genResult) {
         diagnostics.fullRegenerations++;
-        console.log(`🤖 AI #1: Generating PRD draft and identifying gaps...`);
+        dualAiLog(`🤖 AI #1: Generating PRD draft and identifying gaps...`);
         
         let generatorPrompt: string;
         
@@ -550,7 +587,7 @@ You may only:
 If you modify or remove existing features, your output will be discarded.
 === END CRITICAL RULE ===
 `;
-            console.log('🔒 Feature Freeze Rule added to generator prompt');
+            dualAiLog('🔒 Feature Freeze Rule added to generator prompt');
           }
 
           generatorPrompt = `CURRENT PRD (DO NOT DISCARD - BUILD UPON IT):
@@ -567,7 +604,8 @@ Your task:
 5. Ask questions about remaining gaps only (do NOT repeat already-answered questions)
 6. The final PRD must be self-contained — a reader should find all information IN the document, not in a separate Q&A section`
         }
-        
+
+        throwIfCancelled(`iteration ${i} generator call`);
         genResult = await client.callWithFallback(
           'generator',
           ITERATIVE_GENERATOR_PROMPT + langInstruction,
@@ -576,11 +614,12 @@ Your task:
         );
         
         modelsUsed.add(genResult.model);
-        console.log(`✅ Generated ${genResult.usage.completion_tokens} tokens with ${genResult.model}`);
+        dualAiLog(`✅ Generated ${genResult.usage.completion_tokens} tokens with ${genResult.model}`);
         onProgress?.({ type: 'generator_done', iteration: i, tokensUsed: genResult.usage.total_tokens, model: genResult.model });
       }
 
       if (featuresFrozen && i >= 2) {
+        throwIfCancelled(`iteration ${i} structured delta section`);
         const deltaSection = await this.generateStructuredDeltaSection({
           currentPrd: currentPRD,
           generatorOutput: genResult.content,
@@ -590,7 +629,7 @@ Your task:
         });
         if (deltaSection && !/##\s*Feature Delta(?:\s*\(JSON\))?/i.test(genResult.content)) {
           genResult.content = `${genResult.content.trim()}\n\n---\n\n${deltaSection}`;
-          console.log(`🧩 Iteration ${i}: Structured Feature Delta appended via delta-only pass`);
+          dualAiLog(`🧩 Iteration ${i}: Structured Feature Delta appended via delta-only pass`);
         }
       }
       
@@ -601,20 +640,28 @@ Your task:
         try {
           firstIterationStructure = parsePRDToStructure(this.extractCleanPRD(genResult.content));
         } catch (firstIterationParseError: any) {
-          console.warn('⚠️ Unable to parse first iteration PRD for freeze seeding:', firstIterationParseError.message);
+          dualAiWarn('⚠️ Unable to parse first iteration PRD for freeze seeding:', firstIterationParseError.message);
         }
         try {
-          console.log('🧩 Feature Identification Layer (iterative): Extracting atomic features...');
+          dualAiLog('🧩 Feature Identification Layer (iterative): Extracting atomic features...');
           const vision = this.extractVisionFromContent(genResult.content);
+          throwIfCancelled(`iteration ${i} feature list generation`);
           const featureResult = await generateFeatureList(workflowInputText, vision, client);
-          console.log(`🧩 Feature List (model: ${featureResult.model}, retried: ${featureResult.retried}):`);
-          console.log(featureResult.featureList);
+          const topLevelFeatureLines = featureResult.featureList
+            .split('\n')
+            .filter((line) => line.trim().startsWith('- '))
+            .length;
+          dualAiLog(
+            `🧩 Feature List generated (model: ${featureResult.model}, retried: ${featureResult.retried}, ` +
+            `${topLevelFeatureLines} lines, ${featureResult.featureList.length} chars)`
+          );
 
           // Feature Expansion Engine (modular, parallel to monolithic PRD — testing phase)
           try {
-            console.log('🏗️ Feature Expansion Engine (iterative): Starting modular expansion...');
+            dualAiLog('🏗️ Feature Expansion Engine (iterative): Starting modular expansion...');
+            throwIfCancelled(`iteration ${i} feature expansion`);
             expansionResult = await expandAllFeatures(workflowInputText, vision, featureResult.featureList, client);
-            console.log(`🏗️ Feature Expansion complete: ${expansionResult.expandedFeatures.length} features, ${expansionResult.totalTokens} tokens`);
+            dualAiLog(`🏗️ Feature Expansion complete: ${expansionResult.expandedFeatures.length} features, ${expansionResult.totalTokens} tokens`);
             onProgress?.({ type: 'features_expanded', count: expansionResult.expandedFeatures.length, tokensUsed: expansionResult.totalTokens });
 
             // FEATURE FREEZE: Activate freeze after first successful compilation
@@ -633,12 +680,12 @@ Your task:
                 featuresFrozen = true;
                 freezeActivated = true;
                 diagnostics.freezeSeedSource = 'compiledExpansion';
-                console.log('🧊 FEATURE CATALOGUE FROZEN – First compilation detected');
-                console.log('   ' + compiledCount + ' feature(s) in compiled state');
+                dualAiLog('🧊 FEATURE CATALOGUE FROZEN – First compilation detected');
+                dualAiLog('   ' + compiledCount + ' feature(s) in compiled state');
                 if (freezeBaselineStructure?.features.length) {
-                  console.log('   Baseline catalogue size: ' + freezeBaselineStructure.features.length);
+                  dualAiLog('   Baseline catalogue size: ' + freezeBaselineStructure.features.length);
                 }
-                console.log('   Full regeneration will be blocked from next iteration');
+                dualAiLog('   Full regeneration will be blocked from next iteration');
               }
             }
 
@@ -646,24 +693,24 @@ Your task:
             if (expansionResult.expandedFeatures.length > 0 && firstIterationStructure) {
               try {
                 iterativeEnrichedStructure = mergeExpansionIntoStructure(firstIterationStructure, expansionResult.expandedFeatures);
-                console.log(`📦 Iterative structure enriched: ${iterativeEnrichedStructure.features.length} features with structured fields`);
+                dualAiLog(`📦 Iterative structure enriched: ${iterativeEnrichedStructure.features.length} features with structured fields`);
               } catch (mergeError: any) {
-                console.warn('⚠️ Iterative structure merge failed (non-blocking):', mergeError.message);
+                dualAiWarn('⚠️ Iterative structure merge failed (non-blocking):', mergeError.message);
               }
             }
           } catch (expansionError: any) {
-            console.warn('⚠️ Feature Expansion Engine failed (non-blocking):', expansionError.message);
+            dualAiWarn('⚠️ Feature Expansion Engine failed (non-blocking):', expansionError.message);
           }
         } catch (error: any) {
-          console.warn('⚠️ Feature Identification Layer failed (non-blocking):', error.message);
+          dualAiWarn('⚠️ Feature Identification Layer failed (non-blocking):', error.message);
         }
       }
 
       let structuredDeltaResult = this.extractStructuredFeatureDeltaWithStatus(genResult.content);
       if (featuresFrozen && i >= 2 && !structuredDeltaResult.valid) {
         blockedRegenerationAttempts++;
-        console.warn('🚫 STRICT DELTA JSON REQUIRED (iteration >= 2, freeze active)');
-        console.warn(`   Invalid or missing Feature Delta JSON: ${structuredDeltaResult.error || 'not found'}`);
+        dualAiWarn('🚫 STRICT DELTA JSON REQUIRED (iteration >= 2, freeze active)');
+        dualAiWarn(`   Invalid or missing Feature Delta JSON: ${structuredDeltaResult.error || 'not found'}`);
         const prevIteration = iterations[iterations.length - 1];
         if (prevIteration) {
           genResult = {
@@ -683,6 +730,7 @@ Your task:
       let questions = this.extractQuestionsFromIterativeOutput(genResult.content);
       const requiredQuestions = i >= 2 ? 2 : (i < iterationCount ? 3 : 0);
       if (requiredQuestions > 0 && questions.length < requiredQuestions) {
+        throwIfCancelled(`iteration ${i} clarifying questions`);
         const fallbackQuestions = await this.generateClarifyingQuestions(
           provisionalCleanPRD,
           client,
@@ -691,27 +739,28 @@ Your task:
         );
         questions = this.mergeQuestions(questions, fallbackQuestions);
         if (fallbackQuestions.length > 0) {
-          console.log(`🧭 Synthesized ${fallbackQuestions.length} fallback clarifying question(s)`);
+          dualAiLog(`🧭 Synthesized ${fallbackQuestions.length} fallback clarifying question(s)`);
         }
       }
       if (requiredQuestions > 0 && questions.length < requiredQuestions) {
         const deterministicFallback = this.getDeterministicFallbackQuestions(requiredQuestions);
         questions = this.mergeQuestions(questions, deterministicFallback);
-        console.log(`🧩 Added deterministic fallback questions to meet minimum (${requiredQuestions})`);
+        dualAiLog(`🧩 Added deterministic fallback questions to meet minimum (${requiredQuestions})`);
       }
       if (requiredQuestions > 0 && questions.length > 5) {
         questions = questions.slice(0, 5);
       }
-      console.log(`📋 Extracted ${questions.length} questions`);
+      dualAiLog(`📋 Extracted ${questions.length} questions`);
       
       // Step 2: AI #2 (Answerer) - Answers with best practices
-      console.log(`🧠 AI #2: Answering questions with best practices...`);
+      dualAiLog(`🧠 AI #2: Answering questions with best practices...`);
       
       const explicitQuestionBlock = questions.length > 0
         ? questions.map((q, idx) => `${idx + 1}. ${q}`).join('\n')
         : '1. Identify the top unresolved product scope risk.\n2. Identify the top unresolved UX risk.\n3. Identify the top unresolved data/operational risk.';
       const answererPrompt = `The following PRD is being developed:\n\n${genResult.content}\n\nQuestions to answer explicitly:\n${explicitQuestionBlock}\n\nAnswer ALL questions with best practices. Also identify and resolve any Open Points, Gaps, or unresolved areas in the PRD. Your answers will be incorporated directly into the next PRD revision.`;
-      
+
+      throwIfCancelled(`iteration ${i} answerer call`);
       let answerResult = await client.callWithFallback(
         'reviewer',  // Using reviewer model for answerer role
         BEST_PRACTICE_ANSWERER_PROMPT + langInstruction,
@@ -720,11 +769,12 @@ Your task:
       );
       
       modelsUsed.add(answerResult.model);
-      console.log(`✅ Answered with ${answerResult.usage.completion_tokens} tokens using ${answerResult.model}`);
+      dualAiLog(`✅ Answered with ${answerResult.usage.completion_tokens} tokens using ${answerResult.model}`);
       let answererOutputTruncated = this.looksLikeTruncatedOutput(answerResult.content);
       if (answererOutputTruncated) {
-        console.warn(`⚠️ Iteration ${i}: answerer output looks truncated, retrying once with higher token budget...`);
+        dualAiWarn(`⚠️ Iteration ${i}: answerer output looks truncated, retrying once with higher token budget...`);
         const retryPrompt = `${answererPrompt}\n\nIMPORTANT: Return a complete final response. Do not end mid-sentence or mid-list.`;
+        throwIfCancelled(`iteration ${i} answerer retry`);
         const retryResult = await client.callWithFallback(
           'reviewer',
           BEST_PRACTICE_ANSWERER_PROMPT + langInstruction,
@@ -737,9 +787,9 @@ Your task:
         if (shouldUseRetry) {
           answerResult = retryResult;
           answererOutputTruncated = retryTruncated;
-          console.log(`✅ Iteration ${i}: using retried answerer output (${retryResult.model})`);
+          dualAiLog(`✅ Iteration ${i}: using retried answerer output (${retryResult.model})`);
         } else {
-          console.warn(`⚠️ Iteration ${i}: retry still appears truncated, keeping original output`);
+          dualAiWarn(`⚠️ Iteration ${i}: retry still appears truncated, keeping original output`);
         }
       }
       
@@ -752,14 +802,14 @@ Your task:
       const rollbackFrozenIteration = (reason: string): boolean => {
         const prevIteration = iterations[iterations.length - 1];
         if (!prevIteration) {
-          console.warn(`⚠️ Iteration ${i}: ${reason}, but no previous iteration to roll back to.`);
+          dualAiWarn(`⚠️ Iteration ${i}: ${reason}, but no previous iteration to roll back to.`);
           return false;
         }
 
         blockedRegenerationAttempts++;
         currentPRD = prevIteration.mergedPRD;
-        console.warn(`🚫 Iteration ${i}: ${reason}`);
-        console.warn('   Rolled back to previous merged PRD and continuing with next iteration');
+        dualAiWarn(`🚫 Iteration ${i}: ${reason}`);
+        dualAiWarn('   Rolled back to previous merged PRD and continuing with next iteration');
         return true;
       };
 
@@ -770,7 +820,7 @@ Your task:
         try {
           newStructureForCheck = parsePRDToStructure(cleanPRD);
         } catch (freezeParseError: any) {
-          console.warn(`❌ Iteration ${i}: Freeze validation parse failed: ${freezeParseError.message}`);
+          dualAiWarn(`❌ Iteration ${i}: Freeze validation parse failed: ${freezeParseError.message}`);
           if (rollbackFrozenIteration('freeze validation parse failure')) {
             continue;
           }
@@ -788,18 +838,18 @@ Your task:
         const lostFeature = previousIds.some(id => !newIds.includes(id));
 
         if (lostFeature) {
-          console.warn('❌ FEATURE LOSS DETECTED WHILE FROZEN');
-          console.warn('   Baseline features: ' + previousIds.join(', '));
-          console.warn('   New features: ' + newIds.join(', '));
+          dualAiWarn('❌ FEATURE LOSS DETECTED WHILE FROZEN');
+          dualAiWarn('   Baseline features: ' + previousIds.join(', '));
+          dualAiWarn('   New features: ' + newIds.join(', '));
           if (rollbackFrozenIteration('feature loss detected while frozen')) {
             continue;
           }
         }
 
         if (newStructureForCheck.features.length < freezeBaselineStructure.features.length) {
-          console.warn('❌ FEATURE COUNT DECREASED WHILE FROZEN');
-          console.warn('   Baseline: ' + freezeBaselineStructure.features.length + ' features');
-          console.warn('   New: ' + newStructureForCheck.features.length + ' features');
+          dualAiWarn('❌ FEATURE COUNT DECREASED WHILE FROZEN');
+          dualAiWarn('   Baseline: ' + freezeBaselineStructure.features.length + ' features');
+          dualAiWarn('   New: ' + newStructureForCheck.features.length + ' features');
           if (rollbackFrozenIteration('feature count decreased while frozen')) {
             continue;
           }
@@ -820,7 +870,7 @@ Your task:
             features: freezeBaselineStructure.features.map(f => ({ ...f })),
           };
           forceReassembleFromStructure = true;
-          console.log(`🔐 Iteration ${i}: Feature write-lock active (direct F-XX rewrites ignored)`);
+          dualAiLog(`🔐 Iteration ${i}: Feature write-lock active (direct F-XX rewrites ignored)`);
         }
 
         const scaffoldResult = this.ensureRequiredSections(currentStructure, {
@@ -831,7 +881,7 @@ Your task:
         currentStructure = scaffoldResult.structure;
         if (scaffoldResult.addedSections.length > 0) {
           forceReassembleFromStructure = true;
-          console.log(`🧱 Iteration ${i}: Section scaffold added (${scaffoldResult.addedSections.join(', ')})`);
+          dualAiLog(`🧱 Iteration ${i}: Section scaffold added (${scaffoldResult.addedSections.join(', ')})`);
         }
 
         if (previousStructure) {
@@ -843,13 +893,13 @@ Your task:
           }
 
           if (!featureWriteLockActive && diff.removedFeatures.length > 0) {
-            console.log(`🔧 Iteration ${i}: Restoring ${diff.removedFeatures.length} lost feature(s)...`);
+            dualAiLog(`🔧 Iteration ${i}: Restoring ${diff.removedFeatures.length} lost feature(s)...`);
             currentStructure = restoreRemovedFeatures(previousStructure, currentStructure, diff.removedFeatures);
             preservedPRD = assembleStructureToMarkdown(currentStructure);
             forceReassembleFromStructure = true;
             allPreservationActions.set(i, [...diff.removedFeatures]);
             diagnostics.featurePreservations += diff.removedFeatures.length;
-            console.log(`✅ Iteration ${i}: Feature preservation complete, PRD reassembled`);
+            dualAiLog(`✅ Iteration ${i}: Feature preservation complete, PRD reassembled`);
           }
 
           if (!featureWriteLockActive) {
@@ -864,10 +914,10 @@ Your task:
               diagnostics.autoRecoveredFeatures = (diagnostics.autoRecoveredFeatures || 0) + integrityResult.restorations.length;
               diagnostics.featureQualityRegressions = (diagnostics.featureQualityRegressions || 0) +
                 integrityResult.restorations.filter(r => r.qualityRegression).length;
-              console.log(`🛡️ Iteration ${i}: Feature integrity enforced, ${integrityResult.restorations.length} feature(s) restored`);
+              dualAiLog(`🛡️ Iteration ${i}: Feature integrity enforced, ${integrityResult.restorations.length} feature(s) restored`);
             }
             } catch (integrityError: any) {
-              console.warn(`⚠️ Feature integrity check failed for iteration ${i} (non-blocking):`, integrityError.message);
+              dualAiWarn(`⚠️ Feature integrity check failed for iteration ${i} (non-blocking):`, integrityError.message);
             }
           }
         } else {
@@ -878,7 +928,7 @@ Your task:
         if (featuresFrozen && freezeBaselineStructure) {
           const freezeDiff = compareStructures(freezeBaselineStructure, currentStructure);
           if (!featureWriteLockActive && freezeDiff.removedFeatures.length > 0) {
-            console.log(`🔒 Freeze baseline restore: ${freezeDiff.removedFeatures.length} feature(s)`);
+            dualAiLog(`🔒 Freeze baseline restore: ${freezeDiff.removedFeatures.length} feature(s)`);
             currentStructure = restoreRemovedFeatures(freezeBaselineStructure, currentStructure, freezeDiff.removedFeatures);
             preservedPRD = assembleStructureToMarkdown(currentStructure);
             forceReassembleFromStructure = true;
@@ -902,11 +952,12 @@ Your task:
               diagnostics.autoRecoveredFeatures = (diagnostics.autoRecoveredFeatures || 0) + freezeIntegrity.restorations.length;
               diagnostics.featureQualityRegressions = (diagnostics.featureQualityRegressions || 0) +
                 freezeIntegrity.restorations.filter(r => r.qualityRegression).length;
-              console.log(`🛡️ Freeze baseline integrity enforced, ${freezeIntegrity.restorations.length} feature(s) restored`);
+              dualAiLog(`🛡️ Freeze baseline integrity enforced, ${freezeIntegrity.restorations.length} feature(s) restored`);
             }
           }
 
           // Delta compiler: process only truly new features, block duplicates.
+          throwIfCancelled(`iteration ${i} feature delta compile`);
           const deltaResult = await this.compileFeatureDelta({
             currentStructure,
             freezeBaseline: freezeBaselineStructure,
@@ -919,12 +970,12 @@ Your task:
           currentStructure = deltaResult.structure;
           freezeBaselineStructure = deltaResult.freezeBaseline;
           if (deltaResult.addedFeatureIds.length > 0) {
-            console.log(`🆕 Iteration ${i}: New feature delta compiled (${deltaResult.addedFeatureIds.join(', ')})`);
+            dualAiLog(`🆕 Iteration ${i}: New feature delta compiled (${deltaResult.addedFeatureIds.join(', ')})`);
             preservedPRD = assembleStructureToMarkdown(currentStructure);
             forceReassembleFromStructure = true;
           }
           if (deltaResult.droppedDuplicates.length > 0) {
-            console.log(`🧹 Iteration ${i}: Dropped duplicate feature candidates (${deltaResult.droppedDuplicates.join(', ')})`);
+            dualAiLog(`🧹 Iteration ${i}: Dropped duplicate feature candidates (${deltaResult.droppedDuplicates.join(', ')})`);
             preservedPRD = assembleStructureToMarkdown(currentStructure);
             forceReassembleFromStructure = true;
           }
@@ -936,7 +987,7 @@ Your task:
 
         candidateStructure = currentStructure;
       } catch (preserveError: any) {
-        console.warn(`⚠️ Feature preservation failed for iteration ${i} (non-blocking, using cleanPRD):`, preserveError.message);
+        dualAiWarn(`⚠️ Feature preservation failed for iteration ${i} (non-blocking, using cleanPRD):`, preserveError.message);
         preservedPRD = cleanPRD;
       }
 
@@ -945,7 +996,7 @@ Your task:
         try {
           candidateStructure = parsePRDToStructure(preservedPRD);
         } catch (parseGateError: any) {
-          console.warn(`⚠️ Iteration ${i}: Gate parse failed: ${parseGateError.message}`);
+          dualAiWarn(`⚠️ Iteration ${i}: Gate parse failed: ${parseGateError.message}`);
         }
       }
 
@@ -958,9 +1009,9 @@ Your task:
       });
 
       if (!gateResult.accepted) {
-        console.warn(`🚫 Iteration ${i}: Rejected by acceptance gates`);
+        dualAiWarn(`🚫 Iteration ${i}: Rejected by acceptance gates`);
         for (const reason of gateResult.reasons) {
-          console.warn(`   - ${reason}`);
+          dualAiWarn(`   - ${reason}`);
         }
 
         const prevIteration = iterations[iterations.length - 1];
@@ -998,11 +1049,13 @@ Your task:
     
     // Optional: Final Review with AI #3
     if (useFinalReview) {
-      console.log('\n🎯 AI #3: Final review and polish...');
+      throwIfCancelled('final review start');
+      dualAiLog('\n🎯 AI #3: Final review and polish...');
       onProgress?.({ type: 'final_review_start' });
 
       const finalReviewerPrompt = `Review the following PRD at the highest level:\n\n${currentPRD}`;
 
+      throwIfCancelled('final reviewer call');
       const reviewResult = await client.callWithFallback(
         'reviewer',
         FINAL_REVIEWER_PROMPT + langInstruction,
@@ -1011,7 +1064,7 @@ Your task:
       );
       
       modelsUsed.add(reviewResult.model);
-      console.log(`✅ Final review complete with ${reviewResult.usage.completion_tokens} tokens`);
+      dualAiLog(`✅ Final review complete with ${reviewResult.usage.completion_tokens} tokens`);
       onProgress?.({ type: 'final_review_done', tokensUsed: reviewResult.usage.total_tokens });
 
       finalReview = {
@@ -1035,7 +1088,7 @@ Your task:
             featureName: f.name,
             content: f.rawContent,
             model: 'merged',
-            usage: {},
+            usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
             retried: false,
             valid: true,
             compiled: true,
@@ -1064,15 +1117,15 @@ Your task:
         iterations[iterations.length - 1].mergedPRD = currentPRD;
       }
       if (finalScaffold.addedSections.length > 0) {
-        console.log(`🧱 Final scaffold added (${finalScaffold.addedSections.join(', ')})`);
+        dualAiLog(`🧱 Final scaffold added (${finalScaffold.addedSections.join(', ')})`);
       } else {
-        console.log('🧱 Final canonical assembly complete');
+        dualAiLog('🧱 Final canonical assembly complete');
       }
       if (nfrHardening.globalCategoryAdds > 0 || nfrHardening.featureCriteriaAdds > 0) {
-        console.log(`🛡️ NFR hardening: +${nfrHardening.globalCategoryAdds} global categories, +${nfrHardening.featureCriteriaAdds} feature criteria`);
+        dualAiLog(`🛡️ NFR hardening: +${nfrHardening.globalCategoryAdds} global categories, +${nfrHardening.featureCriteriaAdds} feature criteria`);
       }
     } catch (finalScaffoldError: any) {
-      console.warn(`⚠️ Final scaffold hardening failed (non-blocking): ${finalScaffoldError.message}`);
+      dualAiWarn(`⚠️ Final scaffold hardening failed (non-blocking): ${finalScaffoldError.message}`);
     }
     
     // Build iteration log document (separate from clean PRD)
@@ -1082,7 +1135,7 @@ Your task:
     const totalTokens = iterations.reduce((sum, iter) => sum + iter.tokensUsed, 0) +
       (finalReview?.usage.total_tokens || 0);
     
-    console.log(`\n✅ Iterative workflow complete! Total tokens: ${totalTokens}`);
+    dualAiLog(`\n✅ Iterative workflow complete! Total tokens: ${totalTokens}`);
 
     // Structured PRD representation - use hardened structure if available, else parse
     try {
@@ -1096,7 +1149,7 @@ Your task:
         ? Number((structured.features.reduce((sum, f) => sum + countFeatureCompleteness(f), 0) / structured.features.length).toFixed(2))
         : 0;
     } catch (parseError: any) {
-      console.warn('⚠️ PRD structure parsing failed (non-blocking):', parseError.message);
+      dualAiWarn('⚠️ PRD structure parsing failed (non-blocking):', parseError.message);
     }
 
     // FEATURE FREEZE: Set final diagnostic values
@@ -1104,12 +1157,12 @@ Your task:
     diagnostics.blockedRegenerationAttempts = blockedRegenerationAttempts;
 
     // FEATURE FREEZE: Final summary logging
-    console.log('\n📊 Feature Freeze Engine Summary:');
-    console.log('   Freeze Active: ' + featuresFrozen);
-    console.log('   Blocked Attempts: ' + blockedRegenerationAttempts);
-    console.log('   Final Feature Count: ' + (previousStructure?.features.length || 0));
-    console.log('   Avg Feature Completeness: ' + (diagnostics.avgFeatureCompleteness || 0));
-    console.log('   Quality Regressions Recovered: ' + (diagnostics.featureQualityRegressions || 0));
+    dualAiLog('\n📊 Feature Freeze Engine Summary:');
+    dualAiLog('   Freeze Active: ' + featuresFrozen);
+    dualAiLog('   Blocked Attempts: ' + blockedRegenerationAttempts);
+    dualAiLog('   Final Feature Count: ' + (previousStructure?.features.length || 0));
+    dualAiLog('   Avg Feature Completeness: ' + (diagnostics.avgFeatureCompleteness || 0));
+    dualAiLog('   Quality Regressions Recovered: ' + (diagnostics.featureQualityRegressions || 0));
 
     currentPRD = this.sanitizeFinalMarkdown(currentPRD);
     if (iterations.length > 0) {
@@ -1125,9 +1178,9 @@ Your task:
     diagnostics.finalValidationErrors = validation.errors.length;
     diagnostics.finalSanitizerApplied = validation.sanitizerApplied;
     if (validation.errors.length > 0) {
-      console.warn('⚠️ Final output consistency issues detected:');
+      dualAiWarn('⚠️ Final output consistency issues detected:');
       for (const err of validation.errors) {
-        console.warn(`   - ${err}`);
+        dualAiWarn(`   - ${err}`);
       }
       if (process.env.HARD_FINAL_QUALITY_GATE === 'true') {
         throw new Error(`Final quality gate failed: ${validation.errors.slice(0, 5).join(' | ')}`);
@@ -1138,7 +1191,8 @@ Your task:
     // long or stuck post-processing in unstable environments.
     const fastFinalizeEnabled = process.env.ITERATIVE_FAST_FINALIZE !== 'false';
     if (fastFinalizeEnabled) {
-      console.log('⚡ Iterative fast finalize enabled (skipping deep post-processing)');
+      dualAiLog('⚡ Iterative fast finalize enabled (skipping deep post-processing)');
+      throwIfCancelled('fast finalize');
       onProgress?.({ type: 'complete', totalTokens });
       return {
         finalContent: currentPRD,
@@ -1168,9 +1222,9 @@ Your task:
     diagnostics.finalValidationErrors = postCanonicalValidation.errors.length;
     diagnostics.finalSanitizerApplied = postCanonicalValidation.sanitizerApplied;
     if (postCanonicalValidation.errors.length > 0) {
-      console.warn('⚠️ Final output consistency issues detected:');
+      dualAiWarn('⚠️ Final output consistency issues detected:');
       for (const err of postCanonicalValidation.errors) {
-        console.warn(`   - ${err}`);
+        dualAiWarn(`   - ${err}`);
       }
     }
     diagnostics.artifactWriteConsistency = true;
@@ -1178,6 +1232,7 @@ Your task:
     const shouldWriteArtifacts = process.env.WRITE_ITERATIVE_ARTIFACTS === 'true';
     if (shouldWriteArtifacts) {
       try {
+        throwIfCancelled('artifact writing');
         const artifactWriteResult = await this.writeIterativeArtifacts({
           finalContent: canonicalMergedPRD,
           mergedPRD: canonicalMergedPRD,
@@ -1191,22 +1246,23 @@ Your task:
         diagnostics.artifactWriteConsistency = artifactWriteResult.ok;
         diagnostics.artifactWriteIssues = artifactWriteResult.issues.length;
         if (!artifactWriteResult.ok) {
-          console.warn('⚠️ Service-level artifact write consistency issues detected:');
+          dualAiWarn('⚠️ Service-level artifact write consistency issues detected:');
           for (const issue of artifactWriteResult.issues) {
-            console.warn(`   - ${issue}`);
+            dualAiWarn(`   - ${issue}`);
           }
         } else {
-          console.log(`🗂️ Service artifacts updated: ${artifactWriteResult.files.join(', ')}`);
+          dualAiLog(`🗂️ Service artifacts updated: ${artifactWriteResult.files.join(', ')}`);
         }
       } catch (artifactError: any) {
         diagnostics.artifactWriteConsistency = false;
         diagnostics.artifactWriteIssues = 1;
-        console.warn(`⚠️ Service artifact write failed: ${artifactError.message}`);
+        dualAiWarn(`⚠️ Service artifact write failed: ${artifactError.message}`);
       }
     } else {
-      console.log('🗂️ Service artifact write skipped (WRITE_ITERATIVE_ARTIFACTS != true)');
+      dualAiLog('🗂️ Service artifact write skipped (WRITE_ITERATIVE_ARTIFACTS != true)');
     }
 
+    throwIfCancelled('completion');
     onProgress?.({ type: 'complete', totalTokens });
     return {
       finalContent: canonicalMergedPRD,
@@ -1426,7 +1482,7 @@ Your task:
       }
       return this.mergeQuestions([], parsed).slice(0, Math.max(3, minCount));
     } catch (error: any) {
-      console.warn(`⚠️ Fallback question synthesis failed: ${error.message}`);
+      dualAiWarn(`⚠️ Fallback question synthesis failed: ${error.message}`);
       return [];
     }
   }
@@ -1836,7 +1892,7 @@ Your task:
         );
         compiledRaw = expansion.content || candidate.rawContent;
       } catch (deltaCompileError: any) {
-        console.warn(`⚠️ Delta compile failed for ${candidate.id} (${candidate.name}): ${deltaCompileError.message}`);
+        dualAiWarn(`⚠️ Delta compile failed for ${candidate.id} (${candidate.name}): ${deltaCompileError.message}`);
         compiledRaw = [
           `Feature ID: ${resolvedId}`,
           `Feature Name: ${candidate.name}`,
@@ -2505,7 +2561,7 @@ Your task:
       normalized = next;
       safetyCounter++;
       if (safetyCounter > 1000) {
-        console.warn('⚠️ normalizeInlineHeadings safety break triggered');
+        dualAiWarn('⚠️ normalizeInlineHeadings safety break triggered');
         break;
       }
     }
@@ -2794,7 +2850,7 @@ Return JSON only.`;
       const json = JSON.stringify(normalized, null, 2);
       return `## Feature Delta (JSON)\n\`\`\`json\n${json}\n\`\`\``;
     } catch (error: any) {
-      console.warn(`⚠️ Delta-only extraction failed: ${error.message}`);
+      dualAiWarn(`⚠️ Delta-only extraction failed: ${error.message}`);
       return null;
     }
   }
@@ -2863,7 +2919,7 @@ Return JSON only.`;
       };
       return { found: true, valid: true, delta };
     } catch (error: any) {
-      console.warn(`⚠️ Structured feature delta parse failed: ${error.message}`);
+      dualAiWarn(`⚠️ Structured feature delta parse failed: ${error.message}`);
       return { found: true, valid: false, delta: empty, error: error.message };
     }
   }
@@ -2972,7 +3028,7 @@ Return JSON only.`;
           const resolvedReviewerModel = activeTierModels.reviewerModel || prefs.reviewerModel || tierDefaults.reviewer;
           const resolvedFallbackModel = activeTierModels.fallbackModel || prefs.fallbackModel;
 
-          console.log(`🤖 User AI preferences loaded:`, {
+          dualAiLog(`🤖 User AI preferences loaded:`, {
             tier,
             tierGenerator: activeTierModels.generatorModel || '(not set)',
             tierReviewer: activeTierModels.reviewerModel || '(not set)',
@@ -3030,3 +3086,4 @@ export function getDualAiService(): DualAiService {
   }
   return dualAiService;
 }
+

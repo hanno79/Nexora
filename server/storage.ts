@@ -27,6 +27,9 @@ import { eq, and, desc, sql } from "drizzle-orm";
 import type { PRDStructure } from "./prdStructure";
 import { assembleStructureToMarkdown } from "./prdAssembler";
 import { parsePRDToStructure } from "./prdParser";
+import { shouldCreatePrdVersionSnapshot } from "./prdVersioning";
+import { buildPrdVersionSnapshot, getNextPrdVersionNumber } from "./prdVersioningUtils";
+import { normalizeEmail, normalizeOptionalEmail } from "./emailUtils";
 
 export interface IStorage {
   // User operations (required for Replit Auth)
@@ -37,6 +40,7 @@ export interface IStorage {
   
   // PRD operations
   getPrds(userId: string, limit?: number, offset?: number): Promise<{ data: Prd[]; total: number }>;
+  getDashboardStats(userId: string): Promise<{ totalPrds: number; inProgress: number; completed: number; exportedToLinear: number; exportedToDart: number }>;
   getPrd(id: string): Promise<Prd | undefined>;
   createPrd(prd: InsertPrd): Promise<Prd>;
   updatePrd(id: string, data: Partial<InsertPrd>): Promise<Prd>;
@@ -57,6 +61,7 @@ export interface IStorage {
   getSharedPrds(userId: string): Promise<SharedPrd[]>;
   getPrdShares(prdId: string): Promise<SharedPrd[]>;
   createSharedPrd(share: InsertSharedPrd): Promise<SharedPrd>;
+  updateSharedPrdPermission(id: string, permission: string): Promise<SharedPrd>;
   
   // Comment operations
   getComments(prdId: string, limit?: number, offset?: number): Promise<Comment[]>;
@@ -80,18 +85,32 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.email, email));
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail) {
+      return undefined;
+    }
+
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(sql`lower(${users.email}) = ${normalizedEmail}`);
     return user;
   }
 
   async upsertUser(userData: UpsertUser): Promise<User> {
+    const normalizedEmail = normalizeOptionalEmail(userData.email);
+    const normalizedUserData: UpsertUser = {
+      ...userData,
+      ...(normalizedEmail !== undefined ? { email: normalizedEmail } : {}),
+    };
+
     const [user] = await db
       .insert(users)
-      .values(userData)
+      .values(normalizedUserData)
       .onConflictDoUpdate({
         target: users.id,
         set: {
-          ...userData,
+          ...normalizedUserData,
           updatedAt: new Date(),
         },
       })
@@ -126,6 +145,27 @@ export class DatabaseStorage implements IStorage {
     return { data, total: Number(count) };
   }
 
+  async getDashboardStats(userId: string) {
+    const [result] = await db
+      .select({
+        totalPrds: sql<number>`count(*)`,
+        inProgress: sql<number>`count(*) filter (where ${prds.status} = 'in-progress')`,
+        completed: sql<number>`count(*) filter (where ${prds.status} = 'completed')`,
+        exportedToLinear: sql<number>`count(*) filter (where ${prds.linearIssueId} is not null)`,
+        exportedToDart: sql<number>`count(*) filter (where ${prds.dartDocId} is not null)`,
+      })
+      .from(prds)
+      .where(eq(prds.userId, userId));
+
+    return {
+      totalPrds: Number(result.totalPrds),
+      inProgress: Number(result.inProgress),
+      completed: Number(result.completed),
+      exportedToLinear: Number(result.exportedToLinear),
+      exportedToDart: Number(result.exportedToDart),
+    };
+  }
+
   async getPrd(id: string): Promise<Prd | undefined> {
     const [prd] = await db.select().from(prds).where(eq(prds.id, id));
     return prd;
@@ -140,6 +180,9 @@ export class DatabaseStorage implements IStorage {
     return await db.transaction(async (tx: any) => {
       // Get current PRD before update to create version snapshot
       const [currentPrd] = await tx.select().from(prds).where(eq(prds.id, id));
+      const shouldCreateSnapshot = currentPrd
+        ? shouldCreatePrdVersionSnapshot(currentPrd as Prd, data)
+        : false;
 
       // Update the PRD
       const [prd] = await tx
@@ -148,25 +191,16 @@ export class DatabaseStorage implements IStorage {
         .where(eq(prds.id, id))
         .returning();
 
-      // Auto-create version snapshot (atomic with the update)
-      if (currentPrd) {
+      // Auto-create version snapshot only for content-relevant changes (atomic with the update)
+      if (currentPrd && shouldCreateSnapshot) {
         const [{ count }] = await tx
           .select({ count: sql<number>`count(*)` })
           .from(prdVersions)
           .where(eq(prdVersions.prdId, id));
 
-        const versionNumber = `v${(Number(count) || 0) + 1}`;
-
-        await tx.insert(prdVersions).values({
-          prdId: id,
-          versionNumber,
-          title: currentPrd.title,
-          description: currentPrd.description,
-          content: currentPrd.content,
-          structuredContent: (currentPrd as any).structuredContent || null,
-          status: currentPrd.status,
-          createdBy: currentPrd.userId,
-        });
+        const versionNumber = getNextPrdVersionNumber(Number(count) || 0);
+        const snapshot = buildPrdVersionSnapshot(currentPrd as any, versionNumber, currentPrd.userId);
+        await tx.insert(prdVersions).values(snapshot);
       }
 
       return prd;
@@ -249,6 +283,15 @@ export class DatabaseStorage implements IStorage {
 
   async createSharedPrd(shareData: InsertSharedPrd): Promise<SharedPrd> {
     const [share] = await db.insert(sharedPrds).values(shareData).returning();
+    return share;
+  }
+
+  async updateSharedPrdPermission(id: string, permission: string): Promise<SharedPrd> {
+    const [share] = await db
+      .update(sharedPrds)
+      .set({ permission })
+      .where(eq(sharedPrds.id, id))
+      .returning();
     return share;
   }
 

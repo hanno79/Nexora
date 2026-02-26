@@ -16,6 +16,7 @@ import type { Prd } from "@shared/schema";
 import { formatDistance } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
+import { getLoginPath } from "@/lib/authRoutes";
 import { useTranslation } from "@/lib/i18n";
 
 interface DashboardStats {
@@ -28,6 +29,7 @@ interface DashboardStats {
 
 export default function Dashboard() {
   const [, navigate] = useLocation();
+  const loginPath = getLoginPath();
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -55,15 +57,15 @@ export default function Dashboard() {
   useEffect(() => {
     if (error && isUnauthorizedError(error as Error)) {
       toast({
-        title: "Unauthorized",
-        description: "You are logged out. Logging in again...",
+        title: t.auth.unauthorized,
+        description: t.auth.loggedOut,
         variant: "destructive",
       });
       setTimeout(() => {
-        window.location.href = "/api/login";
+        window.location.href = loginPath;
       }, 500);
     }
-  }, [error, toast]);
+  }, [error, loginPath, toast]);
 
   const filteredPrds = prds?.filter((prd) => {
     const matchesStatus = statusFilter === "all" || prd.status === statusFilter;
@@ -76,7 +78,7 @@ export default function Dashboard() {
     return (
       <div className="min-h-screen bg-background">
         <TopBar onSearchChange={setSearchQuery} searchValue={searchQuery} />
-        <QueryError message="Failed to load PRDs." onRetry={() => refetch()} />
+        <QueryError message={t.errors.loadFailed} onRetry={() => refetch()} />
       </div>
     );
   }

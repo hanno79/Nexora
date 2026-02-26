@@ -1,4 +1,5 @@
 import type { OpenRouterClient } from '../../openrouter';
+import type { TokenUsage } from "@shared/schema";
 
 const FEATURE_IDENTIFICATION_PROMPT = `You are part of the Nexora Requirements Compiler.
 
@@ -91,7 +92,7 @@ export async function generateFeatureList(
   userInput: string,
   vision: string,
   client: OpenRouterClient
-): Promise<{ featureList: string; model: string; usage: any; retried: boolean }> {
+): Promise<{ featureList: string; model: string; usage: TokenUsage; retried: boolean }> {
   const systemPrompt = buildPrompt(userInput, vision);
   const userPrompt = `Based on the system idea and vision provided, identify all atomic features. Output ONLY the feature list in the strict format specified.`;
 

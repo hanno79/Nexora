@@ -1,7 +1,6 @@
-# bcvbx
+# PRD Run Analysis: Bug & Idea Tracker
 
-xcbxcb
-
+Diese Datei dokumentiert den zuletzt erzeugten PRD-Output des Requirements-Compilers inklusive Struktur, Features und Qualitaetsbeobachtungen.
 ---
 
 ## System Vision
@@ -53,10 +52,10 @@ Anwendung ist verfügbar, notwendige Datenquellen sind erreichbar, Nutzerkontext
 
 **5. Main Flow**
 
-1. 1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-2. 2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-3. 3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-4. 4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
 
 **6. Alternate Flows**
 
@@ -76,9 +75,9 @@ UI stellt den Status transparent dar und bietet klare Rückmeldungen für Erfolg
 
 **10. Acceptance Criteria**
 
-1. 1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-2. 2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-3. 3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
 4. NFR: Funktion erfuellt definierte Performance-, Sicherheits- und Accessibility-Basisanforderungen ohne Laufzeitfehler.
 
 ### F-02: Edit Entry
@@ -101,10 +100,10 @@ Anwendung ist verfügbar, notwendige Datenquellen sind erreichbar, Nutzerkontext
 
 **5. Main Flow**
 
-1. 1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-2. 2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-3. 3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-4. 4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
 
 **6. Alternate Flows**
 
@@ -124,9 +123,9 @@ UI stellt den Status transparent dar und bietet klare Rückmeldungen für Erfolg
 
 **10. Acceptance Criteria**
 
-1. 1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-2. 2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-3. 3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
 4. NFR: Funktion erfuellt definierte Performance-, Sicherheits- und Accessibility-Basisanforderungen ohne Laufzeitfehler.
 
 ### F-03: Delete Entry
@@ -149,10 +148,10 @@ Anwendung ist verfügbar, notwendige Datenquellen sind erreichbar, Nutzerkontext
 
 **5. Main Flow**
 
-1. 1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-2. 2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-3. 3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-4. 4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
 
 **6. Alternate Flows**
 
@@ -172,9 +171,9 @@ UI stellt den Status transparent dar und bietet klare Rückmeldungen für Erfolg
 
 **10. Acceptance Criteria**
 
-1. 1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-2. 2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-3. 3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
 4. NFR: Funktion erfuellt definierte Performance-, Sicherheits- und Accessibility-Basisanforderungen ohne Laufzeitfehler.
 
 ### F-04: View Entry List
@@ -197,10 +196,10 @@ Anwendung ist verfügbar, notwendige Datenquellen sind erreichbar, Nutzerkontext
 
 **5. Main Flow**
 
-1. 1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-2. 2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-3. 3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-4. 4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
 
 **6. Alternate Flows**
 
@@ -220,9 +219,9 @@ UI stellt den Status transparent dar und bietet klare Rückmeldungen für Erfolg
 
 **10. Acceptance Criteria**
 
-1. 1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-2. 2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-3. 3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
 4. NFR: Funktion erfuellt definierte Performance-, Sicherheits- und Accessibility-Basisanforderungen ohne Laufzeitfehler.
 
 ### F-05: Filter by Status
@@ -245,10 +244,10 @@ Anwendung ist verfügbar, notwendige Datenquellen sind erreichbar, Nutzerkontext
 
 **5. Main Flow**
 
-1. 1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-2. 2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-3. 3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-4. 4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
 
 **6. Alternate Flows**
 
@@ -268,9 +267,9 @@ UI stellt den Status transparent dar und bietet klare Rückmeldungen für Erfolg
 
 **10. Acceptance Criteria**
 
-1. 1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-2. 2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-3. 3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
 4. NFR: Funktion erfuellt definierte Performance-, Sicherheits- und Accessibility-Basisanforderungen ohne Laufzeitfehler.
 
 ### F-06: Search Entries
@@ -293,10 +292,10 @@ Anwendung ist verfügbar, notwendige Datenquellen sind erreichbar, Nutzerkontext
 
 **5. Main Flow**
 
-1. 1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-2. 2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-3. 3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-4. 4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
 
 **6. Alternate Flows**
 
@@ -316,9 +315,9 @@ UI stellt den Status transparent dar und bietet klare Rückmeldungen für Erfolg
 
 **10. Acceptance Criteria**
 
-1. 1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-2. 2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-3. 3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
 4. NFR: Funktion erfuellt definierte Performance-, Sicherheits- und Accessibility-Basisanforderungen ohne Laufzeitfehler.
 
 ### F-07: Update Status
@@ -341,10 +340,10 @@ Anwendung ist verfügbar, notwendige Datenquellen sind erreichbar, Nutzerkontext
 
 **5. Main Flow**
 
-1. 1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-2. 2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-3. 3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-4. 4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
 
 **6. Alternate Flows**
 
@@ -364,9 +363,9 @@ UI stellt den Status transparent dar und bietet klare Rückmeldungen für Erfolg
 
 **10. Acceptance Criteria**
 
-1. 1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-2. 2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-3. 3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
 4. NFR: Funktion erfuellt definierte Performance-, Sicherheits- und Accessibility-Basisanforderungen ohne Laufzeitfehler.
 
 ### F-08: Persist to SQLite
@@ -389,10 +388,10 @@ Anwendung ist verfügbar, notwendige Datenquellen sind erreichbar, Nutzerkontext
 
 **5. Main Flow**
 
-1. 1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-2. 2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-3. 3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-4. 4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
 
 **6. Alternate Flows**
 
@@ -412,9 +411,9 @@ UI stellt den Status transparent dar und bietet klare Rückmeldungen für Erfolg
 
 **10. Acceptance Criteria**
 
-1. 1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-2. 2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-3. 3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
 4. NFR: Funktion erfuellt definierte Performance-, Sicherheits- und Accessibility-Basisanforderungen ohne Laufzeitfehler.
 
 ### F-09: Load from SQLite
@@ -437,10 +436,10 @@ Anwendung ist verfügbar, notwendige Datenquellen sind erreichbar, Nutzerkontext
 
 **5. Main Flow**
 
-1. 1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-2. 2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-3. 3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-4. 4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
 
 **6. Alternate Flows**
 
@@ -460,9 +459,9 @@ UI stellt den Status transparent dar und bietet klare Rückmeldungen für Erfolg
 
 **10. Acceptance Criteria**
 
-1. 1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-2. 2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-3. 3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
 4. NFR: Funktion erfuellt definierte Performance-, Sicherheits- und Accessibility-Basisanforderungen ohne Laufzeitfehler.
 
 ### F-10: Glassmorphism Card
@@ -485,10 +484,10 @@ Anwendung ist verfügbar, notwendige Datenquellen sind erreichbar, Nutzerkontext
 
 **5. Main Flow**
 
-1. 1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-2. 2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-3. 3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-4. 4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
 
 **6. Alternate Flows**
 
@@ -508,9 +507,9 @@ UI stellt den Status transparent dar und bietet klare Rückmeldungen für Erfolg
 
 **10. Acceptance Criteria**
 
-1. 1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-2. 2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-3. 3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
 4. NFR: Funktion erfuellt definierte Performance-, Sicherheits- und Accessibility-Basisanforderungen ohne Laufzeitfehler.
 
 ### F-11: Hover and Shadow Effects
@@ -533,10 +532,10 @@ Anwendung ist verfügbar, notwendige Datenquellen sind erreichbar, Nutzerkontext
 
 **5. Main Flow**
 
-1. 1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-2. 2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-3. 3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-4. 4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
 
 **6. Alternate Flows**
 
@@ -556,9 +555,9 @@ UI stellt den Status transparent dar und bietet klare Rückmeldungen für Erfolg
 
 **10. Acceptance Criteria**
 
-1. 1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-2. 2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-3. 3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
 4. NFR: Funktion erfuellt definierte Performance-, Sicherheits- und Accessibility-Basisanforderungen ohne Laufzeitfehler.
 
 ### F-12: Frost Glass Input
@@ -581,10 +580,10 @@ Anwendung ist verfügbar, notwendige Datenquellen sind erreichbar, Nutzerkontext
 
 **5. Main Flow**
 
-1. 1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-2. 2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-3. 3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-4. 4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
 
 **6. Alternate Flows**
 
@@ -604,9 +603,9 @@ UI stellt den Status transparent dar und bietet klare Rückmeldungen für Erfolg
 
 **10. Acceptance Criteria**
 
-1. 1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-2. 2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-3. 3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
 4. NFR: Funktion erfuellt definierte Performance-, Sicherheits- und Accessibility-Basisanforderungen ohne Laufzeitfehler.
 
 ### F-13: Required Field Validation
@@ -629,10 +628,10 @@ Anwendung ist verfügbar, notwendige Datenquellen sind erreichbar, Nutzerkontext
 
 **5. Main Flow**
 
-1. 1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-2. 2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-3. 3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
-4. 4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+1. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+2. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+3. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
+4. System verarbeitet den Schritt deterministisch und aktualisiert den Zustand konsistent.
 
 **6. Alternate Flows**
 
@@ -652,9 +651,9 @@ UI stellt den Status transparent dar und bietet klare Rückmeldungen für Erfolg
 
 **10. Acceptance Criteria**
 
-1. 1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-2. 2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
-3. 3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+1. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+2. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
+3. Funktion ist für Endnutzer reproduzierbar testbar und liefert deterministisches Ergebnis.
 4. NFR: Funktion erfuellt definierte Performance-, Sicherheits- und Accessibility-Basisanforderungen ohne Laufzeitfehler.
 
 ### F-14: Responsive Layout

@@ -8,6 +8,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card } from "@/components/ui/card";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useTranslation } from "@/lib/i18n";
+import { useMutationErrorHandler } from "@/hooks/useMutationErrorHandler";
 import { formatDistance } from "date-fns";
 
 interface Comment {
@@ -30,6 +32,8 @@ interface CommentsPanelProps {
 export function CommentsPanel({ prdId }: CommentsPanelProps) {
   const [newComment, setNewComment] = useState("");
   const { toast } = useToast();
+  const { t } = useTranslation();
+  const onMutationError = useMutationErrorHandler();
 
   const { data: comments = [], isLoading } = useQuery<Comment[]>({
     queryKey: [`/api/prds/${prdId}/comments`],
@@ -46,17 +50,11 @@ export function CommentsPanel({ prdId }: CommentsPanelProps) {
       queryClient.invalidateQueries({ queryKey: [`/api/prds/${prdId}/comments`] });
       setNewComment("");
       toast({
-        title: "Success",
-        description: "Comment added successfully",
+        title: t.common.success,
+        description: t.comments.addSuccess,
       });
     },
-    onError: () => {
-      toast({
-        title: "Error",
-        description: "Failed to add comment",
-        variant: "destructive",
-      });
-    },
+    onError: onMutationError,
   });
 
   const handleSubmit = () => {
@@ -78,7 +76,7 @@ export function CommentsPanel({ prdId }: CommentsPanelProps) {
       <div className="p-4 border-b">
         <div className="flex items-center gap-2">
           <MessageSquare className="w-5 h-5 text-primary" />
-          <h3 className="font-semibold">Comments</h3>
+          <h3 className="font-semibold">{t.comments.title}</h3>
           <span className="text-sm text-muted-foreground">
             ({comments.length})
           </span>
@@ -89,11 +87,11 @@ export function CommentsPanel({ prdId }: CommentsPanelProps) {
       <ScrollArea className="flex-1 p-4">
         {isLoading ? (
           <div className="text-center text-sm text-muted-foreground py-8">
-            Loading comments...
+            {t.comments.loading}
           </div>
         ) : comments.length === 0 ? (
           <div className="text-center text-sm text-muted-foreground py-8">
-            No comments yet. Be the first to comment!
+            {t.comments.noComments}
           </div>
         ) : (
           <div className="space-y-4">
@@ -132,9 +130,10 @@ export function CommentsPanel({ prdId }: CommentsPanelProps) {
       <div className="p-4 border-t bg-background">
         <div className="space-y-2">
           <Textarea
-            placeholder="Add a comment..."
+            placeholder={t.comments.placeholder}
             value={newComment}
             onChange={(e) => setNewComment(e.target.value)}
+            maxLength={2000}
             className="resize-none min-h-[80px]"
             disabled={createCommentMutation.isPending}
             data-testid="input-comment"
@@ -146,7 +145,7 @@ export function CommentsPanel({ prdId }: CommentsPanelProps) {
             data-testid="button-add-comment"
           >
             <Send className="w-4 h-4 mr-2" />
-            {createCommentMutation.isPending ? "Sending..." : "Add Comment"}
+            {createCommentMutation.isPending ? t.comments.sending : t.comments.addComment}
           </Button>
         </div>
       </div>

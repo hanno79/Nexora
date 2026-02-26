@@ -15,6 +15,8 @@ import { Badge } from "@/components/ui/badge";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/lib/i18n";
+import { useMutationErrorHandler } from "@/hooks/useMutationErrorHandler";
+import { shouldToggleReviewerFromRowClick } from "@/lib/reviewerSelection";
 import { formatDistance } from "date-fns";
 
 interface ApprovalDialogProps {
@@ -45,6 +47,7 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
   const [selectedReviewers, setSelectedReviewers] = useState<string[]>([]);
   const { toast } = useToast();
   const { t } = useTranslation();
+  const onMutationError = useMutationErrorHandler();
 
   const { data: approval, isLoading: approvalLoading } = useQuery<Approval | null>({
     queryKey: [`/api/prds/${prdId}/approval`],
@@ -52,7 +55,7 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
   });
 
   const { data: users = [] } = useQuery<UserInfo[]>({
-    queryKey: ["/api/users"],
+    queryKey: [`/api/prds/${prdId}/collaborators`],
     enabled: open,
   });
 
@@ -73,13 +76,7 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
       });
       onOpenChange(false);
     },
-    onError: (error: any) => {
-      toast({
-        title: t.common.error,
-        description: error.message || t.approval.failedRequest,
-        variant: "destructive",
-      });
-    },
+    onError: onMutationError,
   });
 
   const respondMutation = useMutation({
@@ -99,13 +96,7 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
       });
       onOpenChange(false);
     },
-    onError: (error: any) => {
-      toast({
-        title: t.common.error,
-        description: error.message || t.approval.failedResponse,
-        variant: "destructive",
-      });
-    },
+    onError: onMutationError,
   });
 
   const toggleReviewer = (userId: string) => {
@@ -270,12 +261,18 @@ export function ApprovalDialog({ prdId, open, onOpenChange }: ApprovalDialogProp
                     <div
                       key={user.id}
                       className="flex items-center gap-3 p-2 hover-elevate rounded-md cursor-pointer"
-                      onClick={() => toggleReviewer(user.id)}
+                      onClick={(event) => {
+                        if (!shouldToggleReviewerFromRowClick(event.target)) {
+                          return;
+                        }
+                        toggleReviewer(user.id);
+                      }}
                       data-testid={`reviewer-option-${user.id}`}
                     >
                       <Checkbox
                         checked={selectedReviewers.includes(user.id)}
                         onCheckedChange={() => toggleReviewer(user.id)}
+                        onClick={(event) => event.stopPropagation()}
                         data-testid={`checkbox-reviewer-${user.id}`}
                       />
                       <Avatar className="w-8 h-8">

@@ -1,6 +1,8 @@
 // Dual-AI System Prompts based on HRP-17 Specification
 // ALL PROMPTS IN ENGLISH for international SaaS platform
 
+import type { TokenUsage } from "@shared/schema";
+
 /**
  * Get language instruction to prepend to system prompts
  * This ensures AI responds in the user's preferred language
@@ -506,7 +508,7 @@ interface DualAiRequest {
 interface GeneratorResponse {
   content: string;
   model: string;
-  usage: any;
+  usage: TokenUsage;
   tier: string;
 }
 
@@ -515,7 +517,7 @@ interface ReviewerResponse {
   questions: string[];
   suggestions?: string[];
   model: string;
-  usage: any;
+  usage: TokenUsage;
   tier: string;
 }
 
@@ -576,7 +578,7 @@ interface IterativeResponse {
   finalReview?: {
     content: string;
     model: string;
-    usage: any;
+    usage: TokenUsage;
     tier: string;
   };
   totalTokens: number;

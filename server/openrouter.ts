@@ -1,6 +1,8 @@
 // OpenRouter API Client for Dual-AI System
 // Based on HRP-17 Specification
 
+import type { TokenUsage } from "@shared/schema";
+
 interface ModelTier {
   generator: string;
   reviewer: string;
@@ -102,7 +104,7 @@ class OpenRouterClient {
     maxTokens: number = 6000,
     temperature: number = 0.7,
     responseFormat?: { type: 'json_object' }
-  ): Promise<{ content: string; usage: any; model: string }> {
+  ): Promise<{ content: string; usage: TokenUsage; model: string }> {
     if (!this.apiKey) {
       throw new Error('OpenRouter API key not configured');
     }
@@ -223,7 +225,7 @@ class OpenRouterClient {
     maxTokens: number = 4000,
     responseFormat?: { type: 'json_object' },
     temperature?: number
-  ): Promise<{ content: string; usage: any; model: string; tier: string; usedFallback: boolean }> {
+  ): Promise<{ content: string; usage: TokenUsage; model: string; tier: string; usedFallback: boolean }> {
     const errors: string[] = [];
 
     // Build deduplicated ordered list:

@@ -2,10 +2,25 @@ import { db } from "./db";
 import { aiUsage, type InsertAiUsage } from "@shared/schema";
 import { eq, desc, gte, and, count, sum, sql } from "drizzle-orm";
 import { fetchOpenRouterModels } from "./openrouter";
+import { logger } from "./logger";
+
+// Hardcoded fallback pricing (per token) for common models when OpenRouter API is unavailable.
+// Prices in USD per token (prompt / completion). Updated as of 2025-05.
+const FALLBACK_PRICING: Record<string, { prompt: number; completion: number }> = {
+  "anthropic/claude-sonnet-4": { prompt: 3e-6, completion: 15e-6 },
+  "anthropic/claude-haiku-4": { prompt: 0.8e-6, completion: 4e-6 },
+  "anthropic/claude-3.5-sonnet": { prompt: 3e-6, completion: 15e-6 },
+  "google/gemini-2.5-flash": { prompt: 0.15e-6, completion: 0.6e-6 },
+  "google/gemini-2.0-flash-exp:free": { prompt: 0, completion: 0 },
+  "openai/gpt-4o": { prompt: 2.5e-6, completion: 10e-6 },
+  "openai/gpt-4o-mini": { prompt: 0.15e-6, completion: 0.6e-6 },
+  "deepseek/deepseek-r1-0528:free": { prompt: 0, completion: 0 },
+  "meta-llama/llama-3.3-70b-instruct:free": { prompt: 0, completion: 0 },
+};
 
 /**
- * Look up per-token pricing for a model from OpenRouter's cached model list.
- * Returns { prompt: 0, completion: 0 } when pricing is unavailable.
+ * Ermittelt die Token-Preise eines Modells aus der gecachten OpenRouter-Modellliste.
+ * Falls die API nicht verfügbar ist, wird eine hardcodierte Preisliste als Fallback genutzt.
  */
 async function getModelPricing(modelId: string): Promise<{ prompt: number; completion: number }> {
   try {
@@ -18,14 +33,15 @@ async function getModelPricing(modelId: string): Promise<{ prompt: number; compl
       };
     }
   } catch {
-    // Cache miss or API error — fall back to zero cost
+    // API unavailable — fall through to hardcoded pricing
   }
-  return { prompt: 0, completion: 0 };
+  return FALLBACK_PRICING[modelId] || { prompt: 0, completion: 0 };
 }
 
 /**
- * Logs AI usage to the database for cost tracking and analytics.
- * Cost is calculated from the model's actual OpenRouter pricing.
+ * Protokolliert die KI-Nutzung in der Datenbank für Kostenverfolgung und Auswertung.
+ * Die Kosten werden über getModelPricing anhand der OpenRouter-Preise berechnet;
+ * bei nicht verfügbaren Preisen greift der Fallback { prompt: 0, completion: 0 }.
  */
 export async function logAiUsage(
   userId: string,
@@ -59,9 +75,13 @@ export async function logAiUsage(
 
     await db.insert(aiUsage).values(usageData);
 
-    console.log(`[AI Usage] ${modelType}: ${model} (${tier}) — ${inputTokens}in/${outputTokens}out — $${totalCost.toFixed(6)}`);
+    logger.info('AI usage logged', {
+      modelType, model, tier,
+      inputTokens, outputTokens,
+      cost: totalCost.toFixed(6),
+    });
   } catch (error) {
-    console.error('[AI Usage] Failed to log usage:', error);
+    logger.error('Failed to log AI usage', { error: (error as Error).message });
   }
 }
 
@@ -161,7 +181,7 @@ export async function getUserAiUsageStats(userId: string, since?: string) {
       recentCalls,
     };
   } catch (error) {
-    console.error('[AI Usage] Failed to get stats:', error);
+    logger.error('Failed to get AI usage stats', { error: (error as Error).message });
     return null;
   }
 }

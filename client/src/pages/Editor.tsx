@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useRoute } from "wouter";
 import ReactMarkdown from "react-markdown";
@@ -65,9 +65,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { PRDS_LIST_QUERY_KEY, getPrdDetailQueryKey } from "@/lib/prdQueryKeys";
 import { useToast } from "@/hooks/use-toast";
-import { isUnauthorizedError } from "@/lib/authUtils";
 import { useTranslation } from "@/lib/i18n";
+import { useMutationErrorHandler } from "@/hooks/useMutationErrorHandler";
 import type { Prd } from "@shared/schema";
 import { formatDistance } from "date-fns";
 
@@ -76,7 +77,9 @@ export default function Editor() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const { t } = useTranslation();
+  const onMutationError = useMutationErrorHandler();
   const prdId = params?.id;
+  const prdDetailQueryKey = useMemo(() => getPrdDetailQueryKey(prdId), [prdId]);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -109,7 +112,7 @@ export default function Editor() {
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
 
   const { data: prd, isLoading } = useQuery<Prd>({
-    queryKey: ["/api/prds", prdId],
+    queryKey: prdDetailQueryKey,
     enabled: !!prdId,
   });
 
@@ -148,44 +151,27 @@ export default function Editor() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/prds"] });
+      queryClient.invalidateQueries({ queryKey: prdDetailQueryKey });
+      queryClient.invalidateQueries({ queryKey: PRDS_LIST_QUERY_KEY });
       toast({
-        title: "Success",
-        description: "PRD saved successfully",
+        title: t.common.success,
+        description: t.editor.saved,
       });
     },
-    onError: (error: Error) => {
-      if (isUnauthorizedError(error)) {
-        toast({
-          title: "Unauthorized",
-          description: "You are logged out. Logging in again...",
-          variant: "destructive",
-        });
-        setTimeout(() => {
-          window.location.href = "/api/login";
-        }, 500);
-        return;
-      }
-      toast({
-        title: "Error",
-        description: error.message || "Failed to save PRD",
-        variant: "destructive",
-      });
-    },
+    onError: onMutationError,
   });
 
   // WebSocket for real-time updates
   useWebSocket(prdId, useCallback((event) => {
     if (event.type === 'prd:updated') {
-      queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId] });
+      queryClient.invalidateQueries({ queryKey: prdDetailQueryKey });
     } else if (event.type === 'comment:added') {
       queryClient.invalidateQueries({ queryKey: [`/api/prds/${prdId}/comments`] });
     } else if (event.type === 'approval:updated') {
-      queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId] });
+      queryClient.invalidateQueries({ queryKey: prdDetailQueryKey });
       queryClient.invalidateQueries({ queryKey: [`/api/prds/${prdId}/approval`] });
     }
-  }, [prdId]));
+  }, [prdId, prdDetailQueryKey]));
 
   const deleteMutation = useMutation({
     mutationFn: async () => {
@@ -193,39 +179,22 @@ export default function Editor() {
     },
     onSuccess: () => {
       // Invalidate both list and detail caches to prevent stale data
-      queryClient.invalidateQueries({ queryKey: ["/api/prds"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId] });
+      queryClient.invalidateQueries({ queryKey: PRDS_LIST_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: prdDetailQueryKey });
       toast({
         title: t.editor.deleteSuccess,
         description: t.editor.deleteSuccessDescription,
       });
       navigate("/");
     },
-    onError: (error: Error) => {
-      if (isUnauthorizedError(error)) {
-        toast({
-          title: "Unauthorized",
-          description: "You are logged out. Logging in again...",
-          variant: "destructive",
-        });
-        setTimeout(() => {
-          window.location.href = "/api/login";
-        }, 500);
-        return;
-      }
-      toast({
-        title: "Error",
-        description: error.message || t.editor.deleteFailed,
-        variant: "destructive",
-      });
-    },
+    onError: onMutationError,
   });
 
   const handleDualAiContentGenerated = (newContent: string, response: any) => {
     if (!newContent || !newContent.trim()) {
       toast({
-        title: "Error",
-        description: "Generated content is empty. Existing content was kept.",
+        title: t.common.error,
+        description: t.editor.emptyContentError,
         variant: "destructive",
       });
       return;
@@ -269,8 +238,8 @@ export default function Editor() {
     }
     
     apiRequest("PATCH", `/api/prds/${prdId}`, patchData).then(() => {
-      queryClient.invalidateQueries({ queryKey: ["/api/prds", prdId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/prds"] });
+      queryClient.invalidateQueries({ queryKey: prdDetailQueryKey });
+      queryClient.invalidateQueries({ queryKey: PRDS_LIST_QUERY_KEY });
       
       // Handle toast message for both simple and iterative workflows
       let toastDescription = '';
@@ -290,13 +259,13 @@ export default function Editor() {
       }
       
       toast({
-        title: "Success",
+        title: t.common.success,
         description: toastDescription,
       });
     }).catch((error) => {
       toast({
-        title: "Error",
-        description: error.message || "Failed to save generated content",
+        title: t.common.error,
+        description: error.message || t.editor.saveFailed,
         variant: "destructive",
       });
       console.error('Failed to save Dual-AI content:', error);
@@ -372,28 +341,11 @@ export default function Editor() {
                          format.toUpperCase();
       
       toast({
-        title: "Success",
-        description: `Exported as ${formatName}`,
+        title: t.common.success,
+        description: t.editor.exportSuccess.replace("{format}", formatName),
       });
     },
-    onError: (error: Error) => {
-      if (isUnauthorizedError(error)) {
-        toast({
-          title: "Unauthorized",
-          description: "You are logged out. Logging in again...",
-          variant: "destructive",
-        });
-        setTimeout(() => {
-          window.location.href = "/api/login";
-        }, 500);
-        return;
-      }
-      toast({
-        title: "Export Failed",
-        description: error.message || "Failed to export PRD",
-        variant: "destructive",
-      });
-    },
+    onError: onMutationError,
   });
 
   // Keyboard shortcuts (must be after exportMutation declaration)
@@ -429,32 +381,15 @@ export default function Editor() {
     },
     onSuccess: () => {
       // Invalidate PRD queries to refresh the UI with updated linearIssueId/linearIssueUrl
-      queryClient.invalidateQueries({ queryKey: ["/api/prds"] });
-      queryClient.invalidateQueries({ queryKey: [`/api/prds/${prdId}`] });
+      queryClient.invalidateQueries({ queryKey: PRDS_LIST_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: prdDetailQueryKey });
       
       toast({
-        title: "Success",
-        description: "Exported to Linear successfully",
+        title: t.common.success,
+        description: t.editor.linearExportSuccess,
       });
     },
-    onError: (error: Error) => {
-      if (isUnauthorizedError(error)) {
-        toast({
-          title: "Unauthorized",
-          description: "You are logged out. Logging in again...",
-          variant: "destructive",
-        });
-        setTimeout(() => {
-          window.location.href = "/api/login";
-        }, 500);
-        return;
-      }
-      toast({
-        title: "Linear Export Failed",
-        description: error.message || "Failed to export to Linear",
-        variant: "destructive",
-      });
-    },
+    onError: onMutationError,
   });
 
   // Dart Export is now handled by DartExportDialog component
@@ -508,7 +443,7 @@ export default function Editor() {
                 className="hidden sm:inline-flex"
               >
                 <Share2 className="w-4 h-4 mr-2" />
-                Share
+                {t.editor.share}
               </Button>
               <Button
                 variant="outline"
@@ -528,7 +463,7 @@ export default function Editor() {
                 className="hidden md:inline-flex"
               >
                 <CheckCircle2 className="w-4 h-4 mr-2" />
-                Request Approval
+                {t.editor.approval}
               </Button>
               <Button
                 variant="outline"
@@ -548,7 +483,7 @@ export default function Editor() {
                 className="hidden lg:inline-flex"
               >
                 <Sparkles className="w-4 h-4 mr-2" />
-                Dual-AI Assist
+                {t.editor.dualAiAssist}
               </Button>
               <Button
                 variant="outline"
@@ -564,29 +499,29 @@ export default function Editor() {
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm" data-testid="button-export" className="hidden sm:inline-flex">
                     <Download className="w-4 h-4 mr-2" />
-                    Export
+                    {t.editor.export}
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onClick={() => exportMutation.mutate("pdf")} data-testid="menu-export-pdf">
                     <FileDown className="w-4 h-4 mr-2" />
-                    PDF
+                    {t.editor.exportFormats.pdf}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => exportMutation.mutate("word")} data-testid="menu-export-word">
                     <FileDown className="w-4 h-4 mr-2" />
-                    Word (.docx)
+                    {t.editor.exportFormats.word}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => exportMutation.mutate("markdown")} data-testid="menu-export-markdown">
                     <FileDown className="w-4 h-4 mr-2" />
-                    Markdown
+                    {t.editor.exportFormats.markdown}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => exportMutation.mutate("claudemd")} data-testid="menu-export-claudemd">
                     <FileDown className="w-4 h-4 mr-2" />
-                    CLAUDE.md (AI Guidelines)
+                    {t.editor.exportFormats.claudemd}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => linearExportMutation.mutate()} data-testid="menu-export-linear">
                     <Send className="w-4 h-4 mr-2" />
-                    Export to Linear
+                    {t.editor.linearExport}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setShowDartExportDialog(true)} data-testid="menu-export-dart">
                     <Send className="w-4 h-4 mr-2" />
@@ -604,23 +539,23 @@ export default function Editor() {
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onClick={() => exportMutation.mutate("pdf")} data-testid="menu-export-pdf-mobile">
                     <FileDown className="w-4 h-4 mr-2" />
-                    PDF
+                    {t.editor.exportFormats.pdf}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => exportMutation.mutate("word")} data-testid="menu-export-word-mobile">
                     <FileDown className="w-4 h-4 mr-2" />
-                    Word (.docx)
+                    {t.editor.exportFormats.word}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => exportMutation.mutate("markdown")} data-testid="menu-export-markdown-mobile">
                     <FileDown className="w-4 h-4 mr-2" />
-                    Markdown
+                    {t.editor.exportFormats.markdown}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => exportMutation.mutate("claudemd")} data-testid="menu-export-claudemd-mobile">
                     <FileDown className="w-4 h-4 mr-2" />
-                    CLAUDE.md (AI Guidelines)
+                    {t.editor.exportFormats.claudemd}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => linearExportMutation.mutate()} data-testid="menu-export-linear-mobile">
                     <Send className="w-4 h-4 mr-2" />
-                    Export to Linear
+                    {t.editor.linearExport}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setShowDartExportDialog(true)} data-testid="menu-export-dart-mobile">
                     <Send className="w-4 h-4 mr-2" />
@@ -638,7 +573,7 @@ export default function Editor() {
                 title="Save (Ctrl+S)"
               >
                 <Save className="w-4 h-4 mr-2" />
-                {saveMutation.isPending ? "Saving..." : "Save"}
+                {saveMutation.isPending ? t.editor.saving : t.common.save}
               </Button>
               <Button
                 size="icon"
@@ -711,9 +646,10 @@ export default function Editor() {
               <div>
                 <Input
                   type="text"
-                  placeholder="Untitled PRD"
+                  placeholder={t.editor.untitledPlaceholder}
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
+                  maxLength={200}
                   className="text-2xl sm:text-3xl font-semibold border-0 px-0 focus-visible:ring-0 placeholder:text-muted-foreground/50"
                   data-testid="input-title"
                 />
@@ -722,7 +658,7 @@ export default function Editor() {
               {/* Description */}
               <div>
                 <Textarea
-                  placeholder="Add a brief description..."
+                  placeholder={t.editor.descriptionPlaceholder}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   className="resize-none border-0 px-0 focus-visible:ring-0 placeholder:text-muted-foreground/50"
@@ -733,18 +669,18 @@ export default function Editor() {
 
               {/* Status */}
               <div className="flex items-center gap-3 sm:gap-4">
-                <label className="text-sm font-medium">Status:</label>
+                <label className="text-sm font-medium">{t.editor.statusLabel}</label>
                 <Select value={status} onValueChange={setStatus}>
                   <SelectTrigger className="w-36 sm:w-40" data-testid="select-status">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="draft">Draft</SelectItem>
-                    <SelectItem value="in-progress">In Progress</SelectItem>
-                    <SelectItem value="review">Review</SelectItem>
-                    <SelectItem value="pending-approval">Pending Approval</SelectItem>
-                    <SelectItem value="approved">Approved</SelectItem>
-                    <SelectItem value="completed">Completed</SelectItem>
+                    <SelectItem value="draft">{t.prd.status.draft}</SelectItem>
+                    <SelectItem value="in-progress">{t.prd.status.inProgress}</SelectItem>
+                    <SelectItem value="review">{t.prd.status.review}</SelectItem>
+                    <SelectItem value="pending-approval">{t.prd.status.pendingApproval}</SelectItem>
+                    <SelectItem value="approved">{t.prd.status.approved}</SelectItem>
+                    <SelectItem value="completed">{t.prd.status.completed}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -760,7 +696,7 @@ export default function Editor() {
                       data-testid="tab-prd-content"
                     >
                       <FileText className="w-4 h-4 mr-1.5" />
-                      PRD
+                      {t.editor.tabs.prd}
                     </Button>
                     {iterationLog && (
                       <Button
@@ -770,7 +706,7 @@ export default function Editor() {
                         data-testid="tab-iteration-log"
                       >
                         <ScrollText className="w-4 h-4 mr-1.5" />
-                        Iteration Protocol
+                        {t.editor.tabs.iterationProtocol}
                       </Button>
                     )}
                     {compilerDiagnostics && (
@@ -785,7 +721,7 @@ export default function Editor() {
                         ) : (
                           <ScrollText className="w-4 h-4 mr-1.5" />
                         )}
-                        Diagnostics
+                        {t.editor.tabs.diagnostics}
                       </Button>
                     )}
                     <Button
@@ -795,7 +731,7 @@ export default function Editor() {
                       data-testid="tab-structure"
                     >
                       <BarChart3 className="w-4 h-4 mr-1.5" />
-                      Structure
+                      {t.editor.tabs.structure}
                     </Button>
                   </div>
                 )}
@@ -811,7 +747,7 @@ export default function Editor() {
                         data-testid="button-preview-mode"
                       >
                         <Eye className="w-3 h-3" />
-                        Preview
+                        {t.editor.preview}
                       </Button>
                       <Button
                         variant={isEditing ? "default" : "ghost"}
@@ -821,12 +757,12 @@ export default function Editor() {
                         data-testid="button-edit-mode"
                       >
                         <Pencil className="w-3 h-3" />
-                        Edit
+                        {t.editor.editMode}
                       </Button>
                     </div>
                     {isEditing ? (
                       <Textarea
-                        placeholder="Start writing your PRD content here..."
+                        placeholder={t.editor.contentPlaceholder}
                         value={content}
                         onChange={(e) => setContent(e.target.value)}
                         className="min-h-[400px] sm:min-h-[500px] font-mono text-xs sm:text-sm resize-none"
@@ -836,14 +772,18 @@ export default function Editor() {
                       <div
                         className="min-h-[400px] sm:min-h-[500px] rounded-md border border-input bg-background px-4 py-4 prose prose-sm dark:prose-invert max-w-none overflow-auto"
                         data-testid="div-content-preview"
-                        onClick={() => setIsEditing(true)}
+                        onClick={(event) => {
+                          const target = event.target as HTMLElement | null;
+                          if (target?.closest("a")) return;
+                          setIsEditing(true);
+                        }}
                       >
                         {content ? (
                           <ReactMarkdown remarkPlugins={[remarkGfm]}>
                             {content}
                           </ReactMarkdown>
                         ) : (
-                          <p className="text-muted-foreground italic">Start writing your PRD content here...</p>
+                          <p className="text-muted-foreground italic">{t.editor.contentPlaceholder}</p>
                         )}
                       </div>
                     )}
@@ -863,9 +803,9 @@ export default function Editor() {
                     data-testid="compiler-diagnostics-panel"
                   >
                     <div className="flex items-center gap-2 mb-4">
-                      <h3 className="text-sm font-semibold">Compiler Diagnostics</h3>
+                      <h3 className="text-sm font-semibold">{t.editor.diagnostics.title}</h3>
                       {compilerDiagnostics.structuredFeatureCount === compilerDiagnostics.totalFeatureCount && compilerDiagnostics.totalFeatureCount > 0 && (
-                        <span className="text-xs text-green-600 dark:text-green-400 font-medium">Full Coverage</span>
+                        <span className="text-xs text-green-600 dark:text-green-400 font-medium">{t.editor.diagnostics.fullCoverage}</span>
                       )}
                     </div>
                     <div className="space-y-2 font-mono text-sm">
@@ -933,7 +873,7 @@ export default function Editor() {
                       <>
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
-                            <h3 className="text-sm font-semibold">Structure Analysis</h3>
+                            <h3 className="text-sm font-semibold">{t.editor.structure.title}</h3>
                             <Badge variant={structureData.completeness?.completeFeatures === structureData.completeness?.featureCount ? "default" : "secondary"}>
                               {structureData.completeness?.completeFeatures ?? 0}/{structureData.completeness?.featureCount ?? 0}
                             </Badge>
@@ -944,15 +884,15 @@ export default function Editor() {
                             onClick={() => {
                               apiRequest("POST", `/api/prds/${prdId}/reparse`).then(() => {
                                 refetchStructure();
-                                toast({ title: "Structure refreshed", description: "PRD was re-parsed from markdown." });
+                                toast({ title: t.common.success, description: t.editor.structure.refresh });
                               }).catch(() => {
-                                toast({ title: "Refresh failed", variant: "destructive" });
+                                toast({ title: t.common.error, variant: "destructive" });
                               });
                             }}
                             data-testid="btn-refresh-structure"
                           >
                             <RefreshCw className="w-3.5 h-3.5 mr-1" />
-                            Refresh
+                            {t.editor.structure.refresh}
                           </Button>
                         </div>
                         <Progress value={(structureData.completeness?.averageCompleteness ?? 0) * 100} className="h-2" />
@@ -993,8 +933,8 @@ export default function Editor() {
                     ) : (
                       <div className="flex flex-col items-center justify-center h-40 text-muted-foreground text-sm gap-2">
                         <BarChart3 className="w-8 h-8 opacity-40" />
-                        <p>No structured content available yet.</p>
-                        <p className="text-xs">Generate a PRD with the AI compiler to see structure analysis.</p>
+                        <p>{t.editor.structure.noContent}</p>
+                        <p className="text-xs">{t.editor.structure.generateHint}</p>
                       </div>
                     )}
                   </div>
@@ -1010,10 +950,10 @@ export default function Editor() {
             <Tabs defaultValue="comments" className="h-full flex flex-col">
               <TabsList className="w-full rounded-none border-b">
                 <TabsTrigger value="comments" className="flex-1" data-testid="tab-comments">
-                  Comments
+                  {t.editor.comments}
                 </TabsTrigger>
                 <TabsTrigger value="versions" className="flex-1" data-testid="tab-versions">
-                  Versions
+                  {t.editor.versions}
                 </TabsTrigger>
               </TabsList>
               <TabsContent value="comments" className="flex-1 overflow-hidden mt-0">
@@ -1066,10 +1006,10 @@ export default function Editor() {
                   <Tabs value={mobileSheetTab} onValueChange={(v) => setMobileSheetTab(v as "comments" | "versions")} className="w-full">
                     <TabsList className="w-full">
                       <TabsTrigger value="comments" className="flex-1" data-testid="mobile-tab-comments">
-                        Comments
+                        {t.editor.comments}
                       </TabsTrigger>
                       <TabsTrigger value="versions" className="flex-1" data-testid="mobile-tab-versions">
-                        Versions
+                        {t.editor.versions}
                       </TabsTrigger>
                     </TabsList>
                   </Tabs>
