@@ -4,8 +4,32 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+
+# Secrets / Environment
 .env
 .env.*
 !.env.example
+
+# Test and QA artifacts
 playwright-report/
 test-results/
+e2e/screenshots/
+
+# Local migration / duplicate workspace leftovers
+Nexora/
+_migration_backup_*/
+
+# Generated stress/gui artifacts
+stresstest_runs/
+stresstest-results.md
+gui-audit-results.md
+
+# Temporary run outputs
+.tmp_*.json
+.tmp_*.md
+
+# Local tool caches / machine-specific
+.claude/settings.local.json
+
+# Local downloaded binary bundle
+rollup-rollup-win32-x64-msvc-*.tgz
