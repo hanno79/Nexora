@@ -30,6 +30,7 @@ import type { PRDStructure, FeatureSpec } from './prdStructure';
 import { mergeExpansionIntoStructure } from './prdStructureMerger';
 import { finalizeWithCompilerGates } from './prdCompilerFinalizer';
 import { compilePrdDocument } from './prdCompiler';
+import { resolvePrdWorkflowMode } from './prdWorkflowMode';
 import { db } from './db';
 import { users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
@@ -133,16 +134,29 @@ export class DualAiService {
       throw new Error('review-only mode requires existingContent');
     }
 
+    const modeResolution = mode === 'review-only'
+      ? null
+      : resolvePrdWorkflowMode({
+        requestedMode: mode === 'improve' ? 'improve' : 'generate',
+        existingContent: existingContent || '',
+      });
+    const effectiveMode: 'generate' | 'improve' | 'review-only' = mode === 'review-only'
+      ? 'review-only'
+      : (modeResolution?.mode || 'generate');
+    if (mode !== 'review-only' && modeResolution?.downgradedFromImprove) {
+      dualAiLog('ℹ️ Improve mode downgraded to generate: existing baseline has no feature catalogue.');
+    }
+
     let generatorResponse: GeneratorResponse;
     let reviewerResponse: ReviewerResponse;
     let improvedVersion: GeneratorResponse | undefined;
 
     // Step 1: Generate initial PRD (skip if review-only)
-    if (mode !== 'review-only') {
+    if (effectiveMode !== 'review-only') {
       dualAiLog('🤖 Step 1: Generating PRD with AI Generator...');
       
       let generatorPrompt: string;
-      if (existingContent) {
+      if (effectiveMode === 'improve' && existingContent) {
         // IMPROVEMENT MODE: Explicitly instruct to preserve and build upon existing content
         generatorPrompt = `IMPORTANT: You are IMPROVING an existing PRD. Do NOT start from scratch!
 
@@ -192,7 +206,7 @@ Create an improved version that incorporates the new requirements while keeping 
     // Feature Identification Layer (runs after vision generation, before review)
     // Keep improve-mode deterministic and cheaper by skipping expansive feature discovery.
     let enrichedStructure: PRDStructure | undefined;
-    const shouldRunFeatureExpansion = mode !== 'review-only' && !existingContent;
+    const shouldRunFeatureExpansion = effectiveMode === 'generate';
     if (shouldRunFeatureExpansion) {
       try {
         dualAiLog('🧩 Feature Identification Layer: Extracting atomic features...');
@@ -266,7 +280,7 @@ Create an improved version that incorporates the new requirements while keeping 
     dualAiLog(`✅ Review complete with ${reviewResult.usage.completion_tokens} tokens using ${reviewResult.model}`);
 
     // Step 3: Improve based on review (always run in improve mode, regardless of question extraction)
-    if (mode === 'improve') {
+    if (effectiveMode === 'improve') {
       dualAiLog('🔧 Step 3: Improving PRD based on review feedback...');
       
       const improvementPrompt = `ORIGINAL PRD:\n${generatorResponse.content}\n\nREVIEW FEEDBACK:\n${reviewContent}\n\nVerbessere das PRD und adressiere die kritischen Fragen.`;
@@ -291,7 +305,7 @@ Create an improved version that incorporates the new requirements while keeping 
     // Apply cleanup to strip any LLM preamble/meta-commentary from final output
     const rawFinalContent = improvedVersion?.content || generatorResponse.content;
     const cleanedFinalContent = this.extractCleanPRD(rawFinalContent);
-    const compileMode: 'improve' | 'generate' = existingContent ? 'improve' : 'generate';
+    const compileMode: 'improve' | 'generate' = effectiveMode === 'improve' ? 'improve' : 'generate';
     const repairSystemPrompt = (compileMode === 'improve'
       ? IMPROVEMENT_SYSTEM_PROMPT
       : GENERATOR_SYSTEM_PROMPT) + langInstruction;
@@ -412,7 +426,15 @@ Create an improved version that incorporates the new requirements while keeping 
     const langInstruction = getLanguageInstruction(resolvedLanguage);
 
     // Use explicit mode from client - no heuristics needed
-    const isImprovement = mode === 'improve';
+    const modeResolution = resolvePrdWorkflowMode({
+      requestedMode: mode === 'improve' ? 'improve' : 'generate',
+      existingContent,
+    });
+    const effectiveMode: 'improve' | 'generate' = modeResolution.mode;
+    const isImprovement = effectiveMode === 'improve';
+    if (modeResolution.downgradedFromImprove) {
+      dualAiLog('ℹ️ Iterative improve mode downgraded to generate: existing baseline has no feature catalogue.');
+    }
     const trimmedContent = existingContent?.trim() || '';
 
     dualAiLog(`🎯 Iterative run models: generator=${client.getPreferredModel('generator') || '(tier default)'}, reviewer=${client.getPreferredModel('reviewer') || '(tier default)'}, fallback=${client.getPreferredModel('fallback') || '(none)'}`);
@@ -435,7 +457,7 @@ Create an improved version that incorporates the new requirements while keeping 
       iterationCount,
       existingContent,
       additionalRequirements,
-      mode,
+      mode: effectiveMode,
       isImprovement,
       workflowInputText,
       resolvedLanguage,

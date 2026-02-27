@@ -21,6 +21,7 @@ import { eq } from 'drizzle-orm';
 import { GuidedSessionStore } from './guidedSessionStore';
 import { logger } from './logger';
 import { finalizeWithCompilerGates } from './prdCompilerFinalizer';
+import { resolvePrdWorkflowMode } from './prdWorkflowMode';
 
 interface ConversationContext {
   projectIdea: string;
@@ -60,14 +61,18 @@ export class GuidedAiService {
       `${projectIdea || ''}\n${normalizedExistingContent}`
     );
     const langInstruction = getLanguageInstruction(resolvedLanguage);
-    const workflowMode: 'generate' | 'improve' = (options?.mode === 'improve' || normalizedExistingContent.length > 0)
-      ? 'improve'
-      : 'generate';
+    const modeResolution = resolvePrdWorkflowMode({
+      requestedMode: options?.mode === 'improve' ? 'improve' : 'generate',
+      existingContent: normalizedExistingContent,
+    });
+    const workflowMode: 'generate' | 'improve' = modeResolution.mode;
     
     logger.debug('Guided workflow started', {
       projectIdeaLength: projectIdea.length,
       workflowMode,
       hasExistingContent: normalizedExistingContent.length > 0,
+      baselineFeatureCount: modeResolution.assessment.featureCount,
+      downgradedFromImprove: modeResolution.downgradedFromImprove,
     });
 
     // Step 1: Analyze project idea or improvement request and create initial feature overview
@@ -371,8 +376,11 @@ Generate a complete, professional PRD that incorporates all gathered requirement
       `${projectIdea || ''}\n${normalizedExistingContent}`
     );
     const langInstruction = getLanguageInstruction(resolvedLanguage);
-    const isImproveWorkflow = (options?.mode === 'improve' || normalizedExistingContent.length > 0) &&
-      normalizedExistingContent.length > 0;
+    const modeResolution = resolvePrdWorkflowMode({
+      requestedMode: options?.mode === 'improve' ? 'improve' : 'generate',
+      existingContent: normalizedExistingContent,
+    });
+    const isImproveWorkflow = modeResolution.mode === 'improve';
 
     logger.debug('Guided workflow skipped directly to finalize');
 
