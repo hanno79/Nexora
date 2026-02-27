@@ -1,11 +1,13 @@
 // Guided AI Service - User-involved PRD Generation Workflow
 import { getOpenRouterClient } from './openrouter';
+import { MODEL_TIERS, getDefaultFallbackModelForTier, sanitizeConfiguredModel } from './openrouter';
 import {
   FEATURE_ANALYSIS_PROMPT,
   USER_QUESTION_PROMPT,
   FEATURE_REFINEMENT_PROMPT,
   GENERATE_FOLLOWUP_QUESTIONS_PROMPT,
   FINAL_PRD_GENERATION_PROMPT,
+  FINAL_PRD_REFINEMENT_PROMPT,
   type GuidedQuestion,
   type GuidedStartResponse,
   type GuidedAnswerInput,
@@ -18,12 +20,21 @@ import { users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
 import { GuidedSessionStore } from './guidedSessionStore';
 import { logger } from './logger';
+import { finalizeWithCompilerGates } from './prdCompilerFinalizer';
 
 interface ConversationContext {
   projectIdea: string;
   featureOverview: string;
   answers: { questionId: string; question: string; answer: string }[];
   roundNumber: number;
+  workflowMode: 'generate' | 'improve';
+  existingContent?: string;
+}
+
+interface GuidedGenerationResult {
+  content: string;
+  totalTokens: number;
+  modelsUsed: string[];
 }
 
 const SESSION_NOT_AVAILABLE_MESSAGE = 'Session not found or expired. Please start a new guided workflow.';
@@ -33,21 +44,50 @@ export class GuidedAiService {
 
   async startGuidedWorkflow(
     projectIdea: string,
-    userId: string
+    userId: string,
+    options?: {
+      existingContent?: string;
+      mode?: 'improve' | 'generate';
+    }
   ): Promise<GuidedStartResponse & { sessionId: string }> {
     const authenticatedUserId = this.requireAuthenticatedUserId(userId);
     const { client, contentLanguage } = await this.createClientWithUserPreferences(authenticatedUserId);
-    const langInstruction = getLanguageInstruction(contentLanguage);
+    const normalizedExistingContent = typeof options?.existingContent === 'string'
+      ? options.existingContent.trim()
+      : '';
+    const resolvedLanguage = this.resolveContentLanguage(
+      contentLanguage,
+      `${projectIdea || ''}\n${normalizedExistingContent}`
+    );
+    const langInstruction = getLanguageInstruction(resolvedLanguage);
+    const workflowMode: 'generate' | 'improve' = (options?.mode === 'improve' || normalizedExistingContent.length > 0)
+      ? 'improve'
+      : 'generate';
     
-    logger.debug('Guided workflow started', { projectIdeaLength: projectIdea.length });
+    logger.debug('Guided workflow started', {
+      projectIdeaLength: projectIdea.length,
+      workflowMode,
+      hasExistingContent: normalizedExistingContent.length > 0,
+    });
 
-    // Step 1: Analyze the project idea and create initial feature overview
-    logger.debug('Guided workflow analyzing project idea');
+    // Step 1: Analyze project idea or improvement request and create initial feature overview
+    logger.debug('Guided workflow analyzing input');
+    const analysisInput = workflowMode === 'improve'
+      ? `You are refining an existing PRD.
+
+CHANGE REQUEST:
+${projectIdea}
+
+EXISTING PRD BASELINE:
+${normalizedExistingContent}
+
+Analyze what should be preserved and what should be improved. Focus on concrete user-facing refinements and missing sections.`
+      : `Analyze this project idea:\n\n${projectIdea}`;
     
     const analysisResult = await client.callWithFallback(
       'generator',
       FEATURE_ANALYSIS_PROMPT + langInstruction,
-      `Analyze this project idea:\n\n${projectIdea}`,
+      analysisInput,
       3000
     );
 
@@ -58,11 +98,14 @@ export class GuidedAiService {
 
     // Step 2: Generate initial questions for the user
     logger.debug('Guided workflow generating clarifying questions');
+    const questionContext = workflowMode === 'improve'
+      ? `Based on this analysis of an EXISTING PRD and requested refinements, generate 3-5 clarifying questions with multiple choice answers.\n\nAnalysis:\n${featureOverview}\n\nChange request: ${projectIdea}\n\nExisting PRD:\n${normalizedExistingContent}`
+      : `Based on this project analysis, generate 3-5 clarifying questions with multiple choice answers:\n\n${featureOverview}\n\nOriginal idea: ${projectIdea}`;
     
     const questionsResult = await client.callWithFallback(
       'reviewer',
       USER_QUESTION_PROMPT + langInstruction,
-      `Based on this project analysis, generate 3-5 clarifying questions with multiple choice answers:\n\n${featureOverview}\n\nOriginal idea: ${projectIdea}`,
+      questionContext,
       2500
     );
 
@@ -80,6 +123,8 @@ export class GuidedAiService {
       featureOverview,
       answers: [],
       roundNumber: 1,
+      workflowMode,
+      existingContent: normalizedExistingContent || undefined,
     });
 
     return {
@@ -100,7 +145,11 @@ export class GuidedAiService {
     const context = this.getSessionContextOrThrow(sessionId, authenticatedUserId);
 
     const { client, contentLanguage } = await this.createClientWithUserPreferences(authenticatedUserId);
-    const langInstruction = getLanguageInstruction(contentLanguage);
+    const resolvedLanguage = this.resolveContentLanguage(
+      contentLanguage,
+      `${context.projectIdea || ''}\n${context.featureOverview || ''}`
+    );
+    const langInstruction = getLanguageInstruction(resolvedLanguage);
 
     logger.debug('Guided workflow processing answers', { answerCount: answers.length });
 
@@ -142,11 +191,35 @@ export class GuidedAiService {
 
     // Refine the plan based on answers
     logger.debug('Guided workflow refining product vision');
+    const refinementInput = context.workflowMode === 'improve'
+      ? `Existing PRD baseline:
+${context.existingContent || '(no baseline provided)'}
+
+Change request:
+${context.projectIdea}
+
+Current refined overview:
+${context.featureOverview}
+
+User's answers:
+${formattedAnswers}
+
+Refine the plan as an incremental improvement to the existing PRD. Preserve existing valid content and target the requested changes.`
+      : `Original project idea:
+${context.projectIdea}
+
+Current feature overview:
+${context.featureOverview}
+
+User's answers:
+${formattedAnswers}
+
+Refine the product vision and features based on these answers.`;
     
     const refinementResult = await client.callWithFallback(
       'generator',
       FEATURE_REFINEMENT_PROMPT + langInstruction,
-      `Original project idea:\n${context.projectIdea}\n\nCurrent feature overview:\n${context.featureOverview}\n\nUser's answers:\n${formattedAnswers}\n\nRefine the product vision and features based on these answers.`,
+      refinementInput,
       4000
     );
 
@@ -209,20 +282,41 @@ export class GuidedAiService {
     const context = this.consumeSessionContextOrThrow(sessionId, authenticatedUserId);
 
     const { client, contentLanguage } = await this.createClientWithUserPreferences(authenticatedUserId);
-    const langInstruction = getLanguageInstruction(contentLanguage);
+    const resolvedLanguage = this.resolveContentLanguage(
+      contentLanguage,
+      `${context.projectIdea || ''}\n${context.featureOverview || ''}\n${context.existingContent || ''}`
+    );
+    const langInstruction = getLanguageInstruction(resolvedLanguage);
 
     logger.debug('Guided workflow generating final PRD');
 
     // Compile all context for final PRD generation
-    const allAnswers = context.answers.map(a => 
+    const allAnswers = context.answers.map(a =>
       `- ${a.questionId}: ${a.answer}`
     ).join('\n');
 
     try {
-      const prdResult = await client.callWithFallback(
-        'generator',
-        FINAL_PRD_GENERATION_PROMPT + langInstruction,
-        `Create a complete PRD based on:
+      const isImproveWorkflow = context.workflowMode === 'improve' && !!context.existingContent?.trim();
+      const systemPrompt = isImproveWorkflow
+        ? FINAL_PRD_REFINEMENT_PROMPT + langInstruction
+        : FINAL_PRD_GENERATION_PROMPT + langInstruction;
+      const userPrompt = isImproveWorkflow
+        ? `Refine the existing PRD by incorporating the requested improvements and guided decisions.
+
+EXISTING PRD (PRESERVE AND IMPROVE):
+${context.existingContent}
+
+CHANGE REQUEST:
+${context.projectIdea}
+
+REFINED FEATURE OVERVIEW:
+${context.featureOverview}
+
+USER DECISIONS & PREFERENCES:
+${allAnswers || 'No specific user preferences collected.'}
+
+Return the complete improved PRD.`
+        : `Create a complete PRD based on:
 
 ORIGINAL PROJECT IDEA:
 ${context.projectIdea}
@@ -233,18 +327,25 @@ ${context.featureOverview}
 USER DECISIONS & PREFERENCES:
 ${allAnswers || 'No specific user preferences collected.'}
 
-Generate a complete, professional PRD that incorporates all gathered requirements.`,
-        8000
-      );
+Generate a complete, professional PRD that incorporates all gathered requirements.`;
 
-      logger.debug('Guided workflow final PRD generated', {
-        completionTokens: prdResult.usage.completion_tokens,
+      const compiled = await this.generateWithCompilerGates({
+        client,
+        systemPrompt,
+        userPrompt,
+        mode: isImproveWorkflow ? 'improve' : 'generate',
+        existingContent: isImproveWorkflow ? context.existingContent : undefined,
+        contentLanguage: resolvedLanguage,
+      });
+
+      logger.debug('Guided workflow final PRD compiled', {
+        totalTokens: compiled.totalTokens,
       });
 
       return {
-        prdContent: prdResult.content,
-        tokensUsed: prdResult.usage.total_tokens,
-        modelsUsed: [prdResult.model],
+        prdContent: compiled.content,
+        tokensUsed: compiled.totalTokens,
+        modelsUsed: compiled.modelsUsed,
       };
     } catch (error) {
       // Restore session context on failure so users can retry finalize.
@@ -255,26 +356,61 @@ Generate a complete, professional PRD that incorporates all gathered requirement
 
   async skipToFinalize(
     projectIdea: string,
-    userId?: string
+    userId?: string,
+    options?: {
+      existingContent?: string;
+      mode?: 'improve' | 'generate';
+    }
   ): Promise<GuidedFinalizeResponse> {
     const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
-    const langInstruction = getLanguageInstruction(contentLanguage);
+    const normalizedExistingContent = typeof options?.existingContent === 'string'
+      ? options.existingContent.trim()
+      : '';
+    const resolvedLanguage = this.resolveContentLanguage(
+      contentLanguage,
+      `${projectIdea || ''}\n${normalizedExistingContent}`
+    );
+    const langInstruction = getLanguageInstruction(resolvedLanguage);
+    const isImproveWorkflow = (options?.mode === 'improve' || normalizedExistingContent.length > 0) &&
+      normalizedExistingContent.length > 0;
 
     logger.debug('Guided workflow skipped directly to finalize');
 
     // First do a quick feature analysis
+    const analysisInput = isImproveWorkflow
+      ? `Analyze the existing PRD and the requested refinements.
+
+CHANGE REQUEST:
+${projectIdea}
+
+EXISTING PRD:
+${normalizedExistingContent}`
+      : `Analyze this project idea:\n\n${projectIdea}`;
     const analysisResult = await client.callWithFallback(
       'generator',
       FEATURE_ANALYSIS_PROMPT + langInstruction,
-      `Analyze this project idea:\n\n${projectIdea}`,
+      analysisInput,
       3000
     );
 
     // Then generate the full PRD
-    const prdResult = await client.callWithFallback(
-      'generator',
-      FINAL_PRD_GENERATION_PROMPT + langInstruction,
-      `Create a complete PRD based on:
+    const finalSystemPrompt = isImproveWorkflow
+      ? FINAL_PRD_REFINEMENT_PROMPT + langInstruction
+      : FINAL_PRD_GENERATION_PROMPT + langInstruction;
+    const finalUserPrompt = isImproveWorkflow
+      ? `Refine the existing PRD based on the requested changes.
+
+EXISTING PRD:
+${normalizedExistingContent}
+
+CHANGE REQUEST:
+${projectIdea}
+
+FEATURE ANALYSIS:
+${analysisResult.content}
+
+Return the complete improved PRD.`
+      : `Create a complete PRD based on:
 
 PROJECT IDEA:
 ${projectIdea}
@@ -282,19 +418,97 @@ ${projectIdea}
 FEATURE ANALYSIS:
 ${analysisResult.content}
 
-Generate a complete, professional PRD.`,
-      8000
-    );
+Generate a complete, professional PRD.`;
+    const compiled = await this.generateWithCompilerGates({
+      client,
+      systemPrompt: finalSystemPrompt,
+      userPrompt: finalUserPrompt,
+      mode: isImproveWorkflow ? 'improve' : 'generate',
+      existingContent: isImproveWorkflow ? normalizedExistingContent : undefined,
+      contentLanguage: resolvedLanguage,
+    });
 
     logger.debug('Guided direct finalize complete', {
-      totalTokens: prdResult.usage.total_tokens,
+      totalTokens: analysisResult.usage.total_tokens + compiled.totalTokens,
     });
 
     return {
-      prdContent: prdResult.content,
-      tokensUsed: analysisResult.usage.total_tokens + prdResult.usage.total_tokens,
-      modelsUsed: [analysisResult.model, prdResult.model],
+      prdContent: compiled.content,
+      tokensUsed: analysisResult.usage.total_tokens + compiled.totalTokens,
+      modelsUsed: [analysisResult.model, ...compiled.modelsUsed],
     };
+  }
+
+  private async generateWithCompilerGates(params: {
+    client: ReturnType<typeof getOpenRouterClient>;
+    systemPrompt: string;
+    userPrompt: string;
+    mode: 'generate' | 'improve';
+    existingContent?: string;
+    contentLanguage?: string | null;
+  }): Promise<GuidedGenerationResult> {
+    const { client, systemPrompt, userPrompt, mode, existingContent, contentLanguage } = params;
+    const language = this.resolveContentLanguage(contentLanguage, `${userPrompt}\n${existingContent || ''}`);
+    const modelsUsed = new Set<string>();
+    let totalTokens = 0;
+
+    const generationResult = await client.callWithFallback(
+      'generator',
+      systemPrompt,
+      userPrompt,
+      10000
+    );
+    modelsUsed.add(generationResult.model);
+    totalTokens += generationResult.usage.total_tokens;
+    const finalized = await finalizeWithCompilerGates({
+      initialResult: {
+        content: generationResult.content,
+        model: generationResult.model,
+        usage: generationResult.usage,
+        finishReason: generationResult.finishReason,
+      },
+      mode,
+      existingContent,
+      language,
+      originalRequest: userPrompt,
+      maxRepairPasses: 2,
+      repairGenerator: async (repairPrompt) => {
+        logger.warn('Guided compiler quality gate failed; starting repair pass');
+        const repairResult = await client.callWithFallback(
+          'generator',
+          systemPrompt,
+          repairPrompt,
+          12000
+        );
+        return {
+          content: repairResult.content,
+          model: repairResult.model,
+          usage: repairResult.usage,
+          finishReason: repairResult.finishReason,
+        };
+      },
+    });
+
+    for (const attempt of finalized.repairAttempts) {
+      modelsUsed.add(attempt.model);
+      totalTokens += attempt.usage.total_tokens;
+    }
+
+    return {
+      content: finalized.content,
+      totalTokens,
+      modelsUsed: Array.from(modelsUsed),
+    };
+  }
+
+  private resolveContentLanguage(contentLanguage: string | null | undefined, text: string): 'de' | 'en' {
+    if (contentLanguage === 'de') return 'de';
+    if (contentLanguage === 'en') return 'en';
+
+    const sample = (text || '').toLowerCase();
+    if (/[äöüß]/i.test(sample)) return 'de';
+    if (/\b(und|oder|mit|fuer|für|bitte|erstelle|anforderung|nutzer)\b/i.test(sample)) return 'de';
+    return 'en';
   }
 
   private parseQuestionsResponse(content: string): { preliminaryPlan?: string; questions: GuidedQuestion[] } {
@@ -442,18 +656,25 @@ Generate a complete, professional PRD.`,
         
         if (userPrefs[0].aiPreferences) {
           const prefs = userPrefs[0].aiPreferences as any;
-          if (prefs.generatorModel) {
-            client.setPreferredModel('generator', prefs.generatorModel);
-          }
-          if (prefs.reviewerModel) {
-            client.setPreferredModel('reviewer', prefs.reviewerModel);
-          }
-          if (prefs.fallbackModel) {
-            client.setPreferredModel('fallback', prefs.fallbackModel);
-          }
-          if (prefs.tier) {
-            client.setPreferredTier(prefs.tier);
-          }
+          const tier = prefs.tier || 'production';
+          const tierKey = (tier in MODEL_TIERS ? tier : 'production') as keyof typeof MODEL_TIERS;
+          const tierDefaults = MODEL_TIERS[tierKey] || MODEL_TIERS.production;
+          const activeTierModels = prefs.tierModels?.[tier] || {};
+
+          const resolvedGeneratorModel =
+            sanitizeConfiguredModel(activeTierModels.generatorModel || prefs.generatorModel) ||
+            tierDefaults.generator;
+          const resolvedReviewerModel =
+            sanitizeConfiguredModel(activeTierModels.reviewerModel || prefs.reviewerModel) ||
+            tierDefaults.reviewer;
+          const resolvedFallbackModel =
+            sanitizeConfiguredModel(activeTierModels.fallbackModel || prefs.fallbackModel) ||
+            getDefaultFallbackModelForTier(tierKey);
+
+          client.setPreferredModel('generator', resolvedGeneratorModel);
+          client.setPreferredModel('reviewer', resolvedReviewerModel);
+          client.setPreferredModel('fallback', resolvedFallbackModel);
+          client.setPreferredTier(tierKey);
         }
       }
     }

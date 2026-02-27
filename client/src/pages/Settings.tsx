@@ -37,7 +37,7 @@ export default function Settings() {
   const [defaultContentLanguage, setDefaultContentLanguage] = useState("auto");
   const [generatorModel, setGeneratorModel] = useState("google/gemini-2.5-flash");
   const [reviewerModel, setReviewerModel] = useState("anthropic/claude-sonnet-4");
-  const [fallbackModel, setFallbackModel] = useState("deepseek/deepseek-r1-0528:free");
+  const [fallbackModel, setFallbackModel] = useState("anthropic/claude-sonnet-4");
   const [aiTier, setAiTier] = useState<"development" | "production" | "premium">("production");
   const [modelFilter, setModelFilter] = useState<'all' | 'free' | 'paid'>('all');
   const [modelSearch, setModelSearch] = useState('');
@@ -119,7 +119,7 @@ export default function Settings() {
       setSavedTierModels(tm);
       setGeneratorModel(aiPreferences.generatorModel || "google/gemini-2.5-flash");
       setReviewerModel(aiPreferences.reviewerModel || "anthropic/claude-sonnet-4");
-      setFallbackModel(aiPreferences.fallbackModel || "deepseek/deepseek-r1-0528:free");
+      setFallbackModel(aiPreferences.fallbackModel || "anthropic/claude-sonnet-4");
       setAiTier(aiPreferences.tier || "production");
       setTierDefaults(aiPreferences.tierDefaults || {});
       setIterativeMode(aiPreferences.iterativeMode || false);
@@ -132,7 +132,7 @@ export default function Settings() {
       lastSavedModelKeyRef.current = JSON.stringify({
         generatorModel: aiPreferences.generatorModel || "google/gemini-2.5-flash",
         reviewerModel: aiPreferences.reviewerModel || "anthropic/claude-sonnet-4",
-        fallbackModel: aiPreferences.fallbackModel || "deepseek/deepseek-r1-0528:free",
+        fallbackModel: aiPreferences.fallbackModel || "anthropic/claude-sonnet-4",
         aiTier: aiPreferences.tier || "production",
       });
       aiPrefsLoadedRef.current = true;
@@ -142,8 +142,10 @@ export default function Settings() {
   // Auto-save AI model settings with debounce
   const aiModelSettingsKey = JSON.stringify({ generatorModel, reviewerModel, fallbackModel, aiTier });
   const debouncedModelSettings = useDebounce(aiModelSettingsKey, 1500);
+  const blockedModelIds = new Set(['deepseek/deepseek-r1-0528:free']);
 
   const filteredModels = (openRouterData?.models || []).filter(m => {
+    if (blockedModelIds.has(m.id)) return false;
     const matchesFilter = modelFilter === 'all' || 
       (modelFilter === 'free' && m.isFree) || 
       (modelFilter === 'paid' && !m.isFree);
@@ -155,8 +157,8 @@ export default function Settings() {
 
   const tierFallbackDefaults: Record<string, string> = {
     development: "meta-llama/llama-3.3-70b-instruct:free",
-    production: "deepseek/deepseek-r1-0528:free",
-    premium: "deepseek/deepseek-r1-0528:free",
+    production: "anthropic/claude-sonnet-4",
+    premium: "anthropic/claude-sonnet-4",
   };
 
   const handleTierChange = (value: "development" | "production" | "premium") => {
@@ -177,7 +179,7 @@ export default function Settings() {
       const systemDefaults = openRouterData?.tierDefaults?.[value];
       if (systemDefaults?.generator) setGeneratorModel(systemDefaults.generator);
       if (systemDefaults?.reviewer) setReviewerModel(systemDefaults.reviewer);
-      setFallbackModel(tierFallbackDefaults[value] || "deepseek/deepseek-r1-0528:free");
+      setFallbackModel(tierFallbackDefaults[value] || "anthropic/claude-sonnet-4");
     }
   };
 

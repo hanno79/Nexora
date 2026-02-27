@@ -43,6 +43,9 @@ import { collectCollaboratorIds, mapCollaboratorUsers } from "./collaborators";
 import { validateApprovalReviewers } from "./approvalReviewers";
 import { canShareWithUser, planShareAction } from "./sharePolicy";
 import { logger } from "./logger";
+import { isIterativeClientDisconnected } from "./iterativeRequestGuard";
+import { splitTokenCount } from "./tokenMath";
+import { MODEL_TIERS, getDefaultFallbackModelForTier, sanitizeConfiguredModel } from "./openrouter";
 import {
   updateUserSchema,
   createTemplateSchema,
@@ -176,16 +179,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const stored = (user[0]?.aiPreferences as any) || {};
     const tier = stored.tier || 'production';
-    const tierModels = stored.tierModels || {};
+    const tierKey = (tier in MODEL_TIERS ? tier : 'production') as keyof typeof MODEL_TIERS;
+    const tierDefaults = MODEL_TIERS[tierKey] || MODEL_TIERS.production;
+    const rawTierModels = (stored.tierModels || {}) as Record<string, {
+      generatorModel?: string;
+      reviewerModel?: string;
+      fallbackModel?: string;
+    }>;
+    const tierModels = Object.fromEntries(
+      Object.entries(rawTierModels).map(([tierName, modelSet]) => {
+        const typedTier = (tierName in MODEL_TIERS ? tierName : 'production') as keyof typeof MODEL_TIERS;
+        const defaults = MODEL_TIERS[typedTier] || MODEL_TIERS.production;
+        return [
+          tierName,
+          {
+            ...(modelSet || {}),
+            generatorModel: sanitizeConfiguredModel(modelSet?.generatorModel) || defaults.generator,
+            reviewerModel: sanitizeConfiguredModel(modelSet?.reviewerModel) || defaults.reviewer,
+            fallbackModel: sanitizeConfiguredModel(modelSet?.fallbackModel) || getDefaultFallbackModelForTier(typedTier),
+          },
+        ];
+      })
+    );
     const activeTierModels = tierModels[tier] || {};
+
+    const resolvedGeneratorModel =
+      sanitizeConfiguredModel(activeTierModels.generatorModel || stored.generatorModel) ||
+      tierDefaults.generator;
+    const resolvedReviewerModel =
+      sanitizeConfiguredModel(activeTierModels.reviewerModel || stored.reviewerModel) ||
+      tierDefaults.reviewer;
+    const resolvedFallbackModel =
+      sanitizeConfiguredModel(activeTierModels.fallbackModel || stored.fallbackModel) ||
+      getDefaultFallbackModelForTier(tierKey);
 
     const preferences = {
       ...stored,
       tier,
       tierModels,
-      generatorModel: activeTierModels.generatorModel || stored.generatorModel || 'google/gemini-2.5-flash',
-      reviewerModel: activeTierModels.reviewerModel || stored.reviewerModel || 'anthropic/claude-sonnet-4',
-      fallbackModel: activeTierModels.fallbackModel || stored.fallbackModel || 'deepseek/deepseek-r1-0528:free',
+      generatorModel: resolvedGeneratorModel,
+      reviewerModel: resolvedReviewerModel,
+      fallbackModel: resolvedFallbackModel,
       iterativeTimeoutMinutes: stored.iterativeTimeoutMinutes || 30,
     };
 
@@ -203,17 +237,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const existingTierModels = existingPrefs.tierModels || {};
 
     const activeTier = preferences.tier || existingPrefs.tier || 'production';
+    const activeTierKey = (activeTier in MODEL_TIERS ? activeTier : 'production') as keyof typeof MODEL_TIERS;
+    const activeTierDefaults = MODEL_TIERS[activeTierKey] || MODEL_TIERS.production;
+
+    const normalizeIncomingModel = (value: string | undefined, replacement: string): string | undefined => {
+      if (!value) return undefined;
+      return sanitizeConfiguredModel(value) || replacement;
+    };
+
+    const incomingTierModels = (preferences.tierModels || {}) as Record<string, {
+      generatorModel?: string;
+      reviewerModel?: string;
+      fallbackModel?: string;
+    } | undefined>;
+    const sanitizedIncomingTierModels = Object.fromEntries(
+      Object.entries(incomingTierModels).map(([tierName, modelSet]) => {
+        const typedTier = (tierName in MODEL_TIERS ? tierName : 'production') as keyof typeof MODEL_TIERS;
+        const tierDefaults = MODEL_TIERS[typedTier] || MODEL_TIERS.production;
+        return [
+          tierName,
+          {
+            ...(modelSet || {}),
+            generatorModel: normalizeIncomingModel(modelSet?.generatorModel, tierDefaults.generator) ?? modelSet?.generatorModel,
+            reviewerModel: normalizeIncomingModel(modelSet?.reviewerModel, tierDefaults.reviewer) ?? modelSet?.reviewerModel,
+            fallbackModel: normalizeIncomingModel(modelSet?.fallbackModel, getDefaultFallbackModelForTier(typedTier)) ?? modelSet?.fallbackModel,
+          },
+        ];
+      })
+    );
+
     // Only override the active tier's models when fields are explicitly provided.
     // Without this guard, a PATCH with just {"tier":"development"} would overwrite
     // the development tier models with undefined → {}, losing the configuration.
     const tierUpdate: Record<string, string> = {};
-    if (preferences.generatorModel) tierUpdate.generatorModel = preferences.generatorModel;
-    if (preferences.reviewerModel) tierUpdate.reviewerModel = preferences.reviewerModel;
-    if (preferences.fallbackModel) tierUpdate.fallbackModel = preferences.fallbackModel;
+    if (preferences.generatorModel) {
+      tierUpdate.generatorModel = normalizeIncomingModel(preferences.generatorModel, activeTierDefaults.generator)!;
+    }
+    if (preferences.reviewerModel) {
+      tierUpdate.reviewerModel = normalizeIncomingModel(preferences.reviewerModel, activeTierDefaults.reviewer)!;
+    }
+    if (preferences.fallbackModel) {
+      tierUpdate.fallbackModel = normalizeIncomingModel(preferences.fallbackModel, getDefaultFallbackModelForTier(activeTierKey))!;
+    }
 
     const updatedTierModels = {
       ...existingTierModels,
-      ...preferences.tierModels,
+      ...sanitizedIncomingTierModels,
       [activeTier]: {
         ...(existingTierModels[activeTier] || {}),
         ...tierUpdate,
@@ -223,6 +292,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const merged = {
       ...existingPrefs,
       ...preferences,
+      ...(preferences.generatorModel ? { generatorModel: tierUpdate.generatorModel } : {}),
+      ...(preferences.reviewerModel ? { reviewerModel: tierUpdate.reviewerModel } : {}),
+      ...(preferences.fallbackModel ? { fallbackModel: tierUpdate.fallbackModel } : {}),
       tierModels: updatedTierModels,
     };
 
@@ -743,7 +815,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
 
   // OpenRouter models list endpoint
-  const { isOpenRouterConfigured, getOpenRouterConfigError, fetchOpenRouterModels, MODEL_TIERS } = await import('./openrouter');
+  const { isOpenRouterConfigured, getOpenRouterConfigError, fetchOpenRouterModels } = await import('./openrouter');
   
   app.get('/api/openrouter/models', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
     if (!isOpenRouterConfigured()) {
@@ -873,9 +945,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const authReq = req as unknown as AuthenticatedRequest;
     let useSSE = false;
     let sseClosed = false;
+    let sseCompleted = false;
     let cleanupSseListeners = () => {};
     const isRequestClosed = () =>
-      sseClosed || req.aborted || req.destroyed || res.writableEnded || res.destroyed;
+      isIterativeClientDisconnected({
+        sseClosed,
+        reqAborted: req.aborted,
+        reqDestroyed: req.destroyed,
+        resWritableEnded: res.writableEnded,
+        resDestroyed: res.destroyed,
+      });
     const safeEndSse = () => {
       if (useSSE && !res.writableEnded && !res.destroyed) {
         try { res.end(); } catch {}
@@ -900,7 +979,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return;
       }
 
-      logger.debug("Iterative request received", {
+      logger.info("Iterative request received", {
         hasPrdId: !!editablePrdId,
         mode: mode || "legacy",
       });
@@ -951,10 +1030,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const service = getDualAiService();
       useSSE = req.headers.accept?.includes('text/event-stream') ?? false;
+      logger.info("Iterative execution started", {
+        hasPrdId: !!editablePrdId,
+        mode: finalMode,
+        iterationCount: iterations,
+        useFinalReview: !!useFinalReview,
+        hasExistingContent: hasExistingContent || hasLegacyContent,
+        hasAdditionalRequirements: !!hasAdditionalReqs,
+        useSSE,
+      });
 
       const handleSseDisconnect = () => {
         if (sseClosed) return;
         sseClosed = true;
+        if (!sseCompleted) {
+          logger.warn("Iterative SSE client disconnected", { hasPrdId: !!editablePrdId });
+        }
         cleanupSseListeners();
         safeEndSse();
       };
@@ -972,10 +1063,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         : undefined;
 
       if (useSSE) {
-        req.on('close', handleSseDisconnect);
+        // Important: req 'close' can fire once request body is fully read.
+        // Use response close + request aborted as real client-disconnect signals.
+        res.on('close', handleSseDisconnect);
         req.on('aborted', handleSseDisconnect);
         cleanupSseListeners = () => {
-          req.off('close', handleSseDisconnect);
+          res.off('close', handleSseDisconnect);
           req.off('aborted', handleSseDisconnect);
         };
 
@@ -1001,7 +1094,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         logger.debug("Iterative request closed before response", { hasPrdId: !!editablePrdId });
         return;
       }
-      logger.debug("Iterative service completed", {
+      logger.info("Iterative service completed", {
         hasPrdId: !!editablePrdId,
         finalContentLength: (result.finalContent || "").length,
         iterationCount: result.iterations?.length || 0,
@@ -1050,11 +1143,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!isRequestClosed()) {
           res.write(`event: result\ndata: ${JSON.stringify(slimResult)}\n\n`);
         }
+        sseCompleted = true;
         safeEndSse();
       } else {
         res.json(slimResult);
       }
-      logger.debug("Iterative response sent", { hasPrdId: !!editablePrdId });
+      logger.info("Iterative response sent", { hasPrdId: !!editablePrdId });
 
       // Persist iterative results server-side in background so long-running
       // workflows are not lost even if the client disconnects.
@@ -1073,7 +1167,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               structuredContent: result.structuredContent || null,
               structuredAt: result.structuredContent ? new Date() : undefined,
             } as any);
-            logger.debug("Iterative autosave completed", {
+            logger.info("Iterative autosave completed", {
               prdId: editablePrdId,
               contentLength: contentToPersist.length,
               hasStructure: !!result.structuredContent,
@@ -1088,6 +1182,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       (async () => {
         try {
           for (const iteration of result.iterations) {
+            const splitTokens = splitTokenCount(iteration.tokensUsed);
             await logAiUsage(
               userId,
               'generator',
@@ -1095,8 +1190,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               'development',
               {
                 prompt_tokens: 0,
-                completion_tokens: iteration.tokensUsed / 2,
-                total_tokens: iteration.tokensUsed / 2
+                completion_tokens: splitTokens.first,
+                total_tokens: splitTokens.first
               },
               editablePrdId || undefined
             );
@@ -1108,8 +1203,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               'development',
               {
                 prompt_tokens: 0,
-                completion_tokens: iteration.tokensUsed / 2,
-                total_tokens: iteration.tokensUsed / 2
+                completion_tokens: splitTokens.second,
+                total_tokens: splitTokens.second
               },
               editablePrdId || undefined
             );
@@ -1133,7 +1228,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     } catch (error: any) {
       if (error?.name === 'AbortError' || error?.code === 'ERR_CLIENT_DISCONNECT' || isRequestClosed()) {
-        logger.debug("Iterative request aborted by client");
+        logger.warn("Iterative request aborted by client");
         return;
       }
 
@@ -1164,15 +1259,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
 
-    const { projectIdea } = req.body;
+    const { projectIdea, existingContent, mode } = req.body;
     const userId = req.user.claims.sub;
+    const normalizedIdea = typeof projectIdea === 'string' ? projectIdea.trim() : '';
+    const normalizedExistingContent = typeof existingContent === 'string' ? existingContent.trim() : '';
+    const hasExistingContent = normalizedExistingContent.length > 0;
 
-    if (!projectIdea || projectIdea.trim().length < 10) {
+    if (!hasExistingContent && normalizedIdea.length < 10) {
       return res.status(400).json({ message: "Please provide a project idea (at least 10 characters)" });
     }
 
+    if (hasExistingContent && normalizedIdea.length < 3) {
+      return res.status(400).json({ message: "Please provide a refinement request (at least 3 characters)" });
+    }
+
     const service = getGuidedAiService();
-    const result = await service.startGuidedWorkflow(projectIdea, userId);
+    const result = await service.startGuidedWorkflow(normalizedIdea, userId, {
+      existingContent: hasExistingContent ? normalizedExistingContent : undefined,
+      mode: mode === 'improve' ? 'improve' : 'generate',
+    });
 
     res.json(result);
   }));
@@ -1247,15 +1352,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
 
-    const { projectIdea, prdId } = req.body;
+    const { projectIdea, existingContent, mode, prdId } = req.body;
     const userId = req.user.claims.sub;
+    const normalizedIdea = typeof projectIdea === 'string' ? projectIdea.trim() : '';
+    const normalizedExistingContent = typeof existingContent === 'string' ? existingContent.trim() : '';
+    const hasExistingContent = normalizedExistingContent.length > 0;
 
-    if (!projectIdea || projectIdea.trim().length < 10) {
+    if (!hasExistingContent && normalizedIdea.length < 10) {
       return res.status(400).json({ message: "Please provide a project idea (at least 10 characters)" });
     }
 
+    if (hasExistingContent && normalizedIdea.length < 3) {
+      return res.status(400).json({ message: "Please provide a refinement request (at least 3 characters)" });
+    }
+
     const service = getGuidedAiService();
-    const result = await service.skipToFinalize(projectIdea, userId);
+    const result = await service.skipToFinalize(normalizedIdea, userId, {
+      existingContent: hasExistingContent ? normalizedExistingContent : undefined,
+      mode: mode === 'improve' ? 'improve' : 'generate',
+    });
 
     // Log AI usage
     if (result.modelsUsed.length > 0) {

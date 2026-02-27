@@ -15,10 +15,31 @@ interface ModelConfig {
   premium: ModelTier;
 }
 
+const DEPRECATED_MODEL_IDS = new Set<string>([
+  'deepseek/deepseek-r1-0528:free',
+]);
+
+const DEFAULT_FALLBACK_MODEL_BY_TIER: Record<keyof ModelConfig, string> = {
+  development: 'meta-llama/llama-3.3-70b-instruct:free',
+  production: 'anthropic/claude-sonnet-4',
+  premium: 'anthropic/claude-sonnet-4',
+};
+
+export function sanitizeConfiguredModel(model: string | null | undefined): string | undefined {
+  const normalized = (model || '').trim();
+  if (!normalized) return undefined;
+  if (DEPRECATED_MODEL_IDS.has(normalized)) return undefined;
+  return normalized;
+}
+
+export function getDefaultFallbackModelForTier(tier: keyof ModelConfig): string {
+  return DEFAULT_FALLBACK_MODEL_BY_TIER[tier] || DEFAULT_FALLBACK_MODEL_BY_TIER.production;
+}
+
 // Model configuration with currently available models (verified Feb 2026)
 const MODEL_TIERS: ModelConfig = {
   development: {
-    generator: "deepseek/deepseek-r1-0528:free",
+    generator: "meta-llama/llama-3.3-70b-instruct:free",
     reviewer: "meta-llama/llama-3.3-70b-instruct:free",
     cost: "$0/Million Tokens"
   },
@@ -67,6 +88,7 @@ class OpenRouterClient {
   private baseUrl = 'https://openrouter.ai/api/v1';
   private tier: keyof ModelConfig;
   private preferredModels: { generator?: string; reviewer?: string; fallback?: string } = {};
+  private modelCooldowns = new Map<string, { until: number; reason: string }>();
 
   constructor(apiKey?: string, tier: keyof ModelConfig = 'production') {
     this.apiKey = apiKey || process.env.OPENROUTER_API_KEY || '';
@@ -97,6 +119,40 @@ class OpenRouterClient {
     this.tier = tier;
   }
 
+  private getActiveCooldown(model: string): { until: number; reason: string } | null {
+    const entry = this.modelCooldowns.get(model);
+    if (!entry) return null;
+    if (Date.now() >= entry.until) {
+      this.modelCooldowns.delete(model);
+      return null;
+    }
+    return entry;
+  }
+
+  private applyFailureCooldown(model: string, errorMessage: string): void {
+    const message = (errorMessage || '').toLowerCase();
+    let cooldownMs = 0;
+    let reason = '';
+
+    if (message.includes('no longer available')) {
+      cooldownMs = 24 * 60 * 60 * 1000;
+      reason = 'model unavailable on provider';
+    } else if (message.includes('returned an empty response')) {
+      cooldownMs = 10 * 60 * 1000;
+      reason = 'repeated empty response';
+    } else if (message.includes('timed out')) {
+      cooldownMs = 5 * 60 * 1000;
+      reason = 'request timeout';
+    } else if (message.includes('rate limit exceeded')) {
+      cooldownMs = 2 * 60 * 1000;
+      reason = 'rate limited';
+    }
+
+    if (cooldownMs > 0) {
+      this.modelCooldowns.set(model, { until: Date.now() + cooldownMs, reason });
+    }
+  }
+
   async callModel(
     modelType: 'generator' | 'reviewer',
     systemPrompt: string,
@@ -104,7 +160,7 @@ class OpenRouterClient {
     maxTokens: number = 6000,
     temperature: number = 0.7,
     responseFormat?: { type: 'json_object' }
-  ): Promise<{ content: string; usage: TokenUsage; model: string }> {
+  ): Promise<{ content: string; usage: TokenUsage; model: string; finishReason?: string }> {
     if (!this.apiKey) {
       throw new Error('OpenRouter API key not configured');
     }
@@ -199,7 +255,8 @@ class OpenRouterClient {
       return {
         content: data.choices[0].message.content,
         usage: data.usage,
-        model: data.model
+        model: data.model,
+        finishReason: data.choices[0]?.finish_reason,
       };
     } catch (error: any) {
       clearTimeout(timeout);
@@ -225,7 +282,7 @@ class OpenRouterClient {
     maxTokens: number = 4000,
     responseFormat?: { type: 'json_object' },
     temperature?: number
-  ): Promise<{ content: string; usage: TokenUsage; model: string; tier: string; usedFallback: boolean }> {
+  ): Promise<{ content: string; usage: TokenUsage; model: string; tier: string; usedFallback: boolean; finishReason?: string }> {
     const errors: string[] = [];
 
     // Build deduplicated ordered list:
@@ -237,10 +294,17 @@ class OpenRouterClient {
     const modelsToTry: Array<{ model: string; isPrimary: boolean }> = [];
 
     const addIfNew = (model: string | undefined, isPrimary: boolean) => {
-      if (model && !seen.has(model)) {
-        seen.add(model);
-        modelsToTry.push({ model, isPrimary });
+      const sanitized = sanitizeConfiguredModel(model);
+      if (!sanitized || seen.has(sanitized)) return;
+
+      const activeCooldown = this.getActiveCooldown(sanitized);
+      if (activeCooldown) {
+        console.warn(`Skipping ${sanitized} due to cooldown: ${activeCooldown.reason}`);
+        return;
       }
+
+      seen.add(sanitized);
+      modelsToTry.push({ model: sanitized, isPrimary });
     };
 
     const primary = this.preferredModels[modelType];
@@ -261,6 +325,18 @@ class OpenRouterClient {
       addIfNew(crossRoleTierDefault, false);
     }
 
+    if (modelsToTry.length === 0) {
+      const emergency = sanitizeConfiguredModel(roleDefault);
+      if (emergency && !seen.has(emergency)) {
+        seen.add(emergency);
+        modelsToTry.push({ model: emergency, isPrimary: false });
+      }
+    }
+
+    if (modelsToTry.length === 0) {
+      throw new Error('No usable AI models are configured after filtering unavailable/deprecated entries. Please update AI settings.');
+    }
+
     for (let i = 0; i < modelsToTry.length; i++) {
       const { model: attemptModel, isPrimary } = modelsToTry[i];
 
@@ -272,6 +348,7 @@ class OpenRouterClient {
 
         try {
           const result = await this.callModel(modelType, systemPrompt, userPrompt, maxTokens, temperature ?? 0.7, responseFormat);
+          this.modelCooldowns.delete(attemptModel);
           const usedFallback = !isPrimary;
           if (usedFallback) {
             console.log(`⚠️ Fallback used: ${attemptModel} instead of ${primary || 'none'}`);
@@ -281,6 +358,7 @@ class OpenRouterClient {
           this.preferredModels[modelType] = savedPreferred;
         }
       } catch (error: any) {
+        this.applyFailureCooldown(attemptModel, error.message || '');
         errors.push(`${attemptModel}: ${error.message}`);
         console.warn(`${attemptModel} failed, trying next model...`, error.message);
       }
@@ -394,5 +472,10 @@ if (!isOpenRouterConfigured()) {
   console.warn('   Get your free API key at: https://openrouter.ai/keys');
 }
 
-export { OpenRouterClient, MODEL_TIERS };
+export {
+  OpenRouterClient,
+  MODEL_TIERS,
+  DEPRECATED_MODEL_IDS,
+  DEFAULT_FALLBACK_MODEL_BY_TIER,
+};
 export type { ModelTier, ModelConfig };
