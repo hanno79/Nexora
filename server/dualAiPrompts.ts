@@ -9,15 +9,15 @@ import type { TokenUsage } from "@shared/schema";
  */
 export function getLanguageInstruction(language: string | null | undefined): string {
   if (!language || language === 'auto') {
-    return '\n\n**LANGUAGE INSTRUCTION**: Respond in the same language as the input content. If the input is in German, respond in German. If in English, respond in English.';
+    return '\n\n**LANGUAGE INSTRUCTION**: Use the same language as the user-provided content for explanatory body text. Preserve all required heading labels exactly as specified by the prompt and do not translate fixed template headings.';
   }
   
   if (language === 'de') {
-    return '\n\n**LANGUAGE INSTRUCTION**: Du MUSST auf DEUTSCH antworten. Alle Inhalte, Überschriften, Beschreibungen und Texte müssen in deutscher Sprache verfasst sein. Technische Fachbegriffe können auf Englisch bleiben, aber alle Erklärungen und Beschreibungen müssen auf Deutsch sein.';
+    return '\n\n**LANGUAGE INSTRUCTION**: Du MUSST alle erklaerenden Inhalte auf DEUTSCH schreiben. Behalte vorgegebene Abschnittstitel und feste Template-Headinglabels exakt in der vom Prompt geforderten Form (nicht uebersetzen).';
   }
   
   if (language === 'en') {
-    return '\n\n**LANGUAGE INSTRUCTION**: You MUST respond in ENGLISH. All content, headings, descriptions, and text must be written in English.';
+    return '\n\n**LANGUAGE INSTRUCTION**: You MUST write all explanatory body text in ENGLISH. Preserve required section headings exactly as specified in the prompt and do not translate fixed template heading labels.';
   }
   
   // Fallback for other languages

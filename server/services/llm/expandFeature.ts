@@ -1,5 +1,8 @@
 import type { OpenRouterClient } from '../../openrouter';
 import type { TokenUsage } from "@shared/schema";
+import { enforceStructure } from './repairSection';
+
+type SupportedContentLanguage = 'de' | 'en';
 
 const FEATURE_EXPANSION_PROMPT = `You are part of the Nexora Requirements Compiler.
 
@@ -65,19 +68,55 @@ CRITICAL RULES
 
 Only output the full expanded feature.`;
 
+function resolveFeatureExpansionLanguage(
+  language: string | null | undefined,
+  userInput: string,
+  vision: string
+): SupportedContentLanguage {
+  if (language === 'de') return 'de';
+  if (language === 'en') return 'en';
+
+  const sample = `${userInput || ''}\n${vision || ''}`.toLowerCase();
+  if (/[äöüß]/i.test(sample)) return 'de';
+  if (/\b(und|oder|mit|fuer|für|bitte|erstelle|beschreibung|anforderung|nutzer)\b/i.test(sample)) {
+    return 'de';
+  }
+  return 'en';
+}
+
+function buildLanguageInstruction(language: SupportedContentLanguage): string {
+  if (language === 'de') {
+    return [
+      'LANGUAGE INSTRUCTION:',
+      '- Keep the numbered section labels exactly as defined in English (Purpose, Actors, Trigger, ...).',
+      '- Write all descriptive body text in German.',
+      '- Avoid mixed-language prose inside section bodies.',
+    ].join('\n');
+  }
+
+  return [
+    'LANGUAGE INSTRUCTION:',
+    '- Keep the numbered section labels exactly as defined in English (Purpose, Actors, Trigger, ...).',
+    '- Write all descriptive body text in English.',
+    '- Avoid mixed-language prose inside section bodies.',
+  ].join('\n');
+}
+
 function buildPrompt(
   userInput: string,
   vision: string,
   featureId: string,
   featureName: string,
-  shortDescription: string
+  shortDescription: string,
+  language: SupportedContentLanguage
 ): string {
   return FEATURE_EXPANSION_PROMPT
     .replaceAll('${userInput}', userInput)
     .replaceAll('${vision}', vision)
     .replaceAll('${featureId}', featureId)
     .replaceAll('${featureName}', featureName)
-    .replaceAll('${shortDescription}', shortDescription);
+    .replaceAll('${shortDescription}', shortDescription)
+    + `\n\n${buildLanguageInstruction(language)}`;
 }
 
 const REQUIRED_SECTIONS = [
@@ -128,49 +167,81 @@ export interface ExpandedFeature {
 function buildDeterministicFeatureFallback(
   featureId: string,
   featureName: string,
-  shortDescription: string
+  shortDescription: string,
+  language: SupportedContentLanguage
 ): string {
   const safeDesc = shortDescription?.trim() || featureName;
+  const isGerman = language === 'de';
   return [
     `Feature ID: ${featureId}`,
     `Feature Name: ${featureName}`,
     ``,
     `1. Purpose`,
-    `${safeDesc} is implemented as a deterministic, testable capability with clear boundaries.`,
+    isGerman
+      ? `${safeDesc} wird als deterministische, testbare Funktion mit klaren Grenzen umgesetzt.`
+      : `${safeDesc} is implemented as a deterministic, testable capability with clear boundaries.`,
     ``,
     `2. Actors`,
-    `- Primary: End user`,
-    `- Secondary: System service handling the request`,
+    isGerman ? `- Primaer: Endnutzer` : `- Primary: End user`,
+    isGerman ? `- Sekundaer: Systemservice zur Verarbeitung der Anfrage` : `- Secondary: System service handling the request`,
     ``,
     `3. Trigger`,
-    `User initiates the related action through the UI or API endpoint.`,
+    isGerman
+      ? `Der Benutzer startet die zugehoerige Aktion ueber die UI oder einen API-Endpunkt.`
+      : `User initiates the related action through the UI or API endpoint.`,
     ``,
     `4. Preconditions`,
-    `- Application is running and dependencies are available.`,
-    `- Required inputs are present and validated before execution.`,
+    isGerman
+      ? `- Anwendung laeuft und alle Abhaengigkeiten sind verfuegbar.`
+      : `- Application is running and dependencies are available.`,
+    isGerman
+      ? `- Erforderliche Eingaben sind vorhanden und vor Ausfuehrung validiert.`
+      : `- Required inputs are present and validated before execution.`,
     ``,
     `5. Main Flow`,
-    `1. System receives and validates the request for ${featureName}.`,
-    `2. System executes the core logic deterministically and updates state.`,
-    `3. System returns a success response and refreshes relevant UI state.`,
+    isGerman
+      ? `1. Das System empfängt und validiert die Anfrage fuer ${featureName}.`
+      : `1. System receives and validates the request for ${featureName}.`,
+    isGerman
+      ? `2. Das System fuehrt die Kernlogik deterministisch aus und aktualisiert den Zustand.`
+      : `2. System executes the core logic deterministically and updates state.`,
+    isGerman
+      ? `3. Das System liefert eine Erfolgsmeldung und aktualisiert die relevante UI-Ansicht.`
+      : `3. System returns a success response and refreshes relevant UI state.`,
     ``,
     `6. Alternate Flows`,
-    `- Validation fails: system returns a clear error and performs no write.`,
-    `- Execution fails: system logs reason and returns recoverable error response.`,
+    isGerman
+      ? `- Validierung fehlgeschlagen: Das System liefert einen klaren Fehler und fuehrt keinen Schreibzugriff aus.`
+      : `- Validation fails: system returns a clear error and performs no write.`,
+    isGerman
+      ? `- Ausfuehrung fehlgeschlagen: Das System protokolliert die Ursache und liefert einen wiederholbaren Fehlerpfad.`
+      : `- Execution fails: system logs reason and returns recoverable error response.`,
     ``,
     `7. Postconditions`,
-    `The feature state is consistent, observable, and ready for subsequent operations.`,
+    isGerman
+      ? `Der Feature-Zustand ist konsistent, beobachtbar und fuer Folgeoperationen bereit.`
+      : `The feature state is consistent, observable, and ready for subsequent operations.`,
     ``,
     `8. Data Impact`,
-    `Only required entities are read/updated; no out-of-scope data mutation is performed.`,
+    isGerman
+      ? `Es werden nur erforderliche Entitaeten gelesen/aktualisiert; keine ausserhalb des Scopes liegenden Datenaenderungen.`
+      : `Only required entities are read/updated; no out-of-scope data mutation is performed.`,
     ``,
     `9. UI Impact`,
-    `UI shows success/error feedback and reflects the updated feature state.`,
+    isGerman
+      ? `Die UI zeigt Erfolgs-/Fehlerrueckmeldungen und spiegelt den aktualisierten Feature-Zustand wider.`
+      : `UI shows success/error feedback and reflects the updated feature state.`,
     ``,
     `10. Acceptance Criteria`,
-    `- The feature can be executed end-to-end without ambiguous behavior.`,
-    `- Validation and error paths are handled explicitly and testably.`,
-    `- Resulting state is consistent and visible in UI/API responses.`,
+    isGerman
+      ? `- Das Feature kann Ende-zu-Ende ohne mehrdeutiges Verhalten ausgefuehrt werden.`
+      : `- The feature can be executed end-to-end without ambiguous behavior.`,
+    isGerman
+      ? `- Validierungs- und Fehlerpfade sind explizit und testbar umgesetzt.`
+      : `- Validation and error paths are handled explicitly and testably.`,
+    isGerman
+      ? `- Der resultierende Zustand ist konsistent und in UI/API-Antworten sichtbar.`
+      : `- Resulting state is consistent and visible in UI/API responses.`,
   ].join('\n');
 }
 
@@ -180,10 +251,14 @@ export async function expandFeature(
   featureId: string,
   featureName: string,
   shortDescription: string,
-  client: OpenRouterClient
+  client: OpenRouterClient,
+  language?: string | null
 ): Promise<ExpandedFeature> {
-  const systemPrompt = buildPrompt(userInput, vision, featureId, featureName, shortDescription);
-  const userPrompt = `Expand feature ${featureId} "${featureName}" into a full implementation-ready specification. Output ONLY the expanded feature following the exact structure specified.`;
+  const resolvedLanguage = resolveFeatureExpansionLanguage(language, userInput, vision);
+  const systemPrompt = buildPrompt(userInput, vision, featureId, featureName, shortDescription, resolvedLanguage);
+  const userPrompt = resolvedLanguage === 'de'
+    ? `Expand feature ${featureId} "${featureName}" into a full implementation-ready specification. Output ONLY the expanded feature following the exact structure specified. Keep section labels in English, but write all section body text in German.`
+    : `Expand feature ${featureId} "${featureName}" into a full implementation-ready specification. Output ONLY the expanded feature following the exact structure specified. Keep section labels in English and write all section body text in English.`;
 
   let retried = false;
 
@@ -213,6 +288,25 @@ export async function expandFeature(
       };
     }
 
+    // Deterministic pre-repair: recover minor structure issues without an extra model call.
+    const locallyRepaired = enforceStructure(result.content);
+    if (locallyRepaired !== result.content) {
+      const repairedValidation = validateExpandedFeature(locallyRepaired);
+      if (repairedValidation.valid) {
+        console.log(`  🛠️ ${featureId} normalized via local structure repair (attempt ${attempt})`);
+        return {
+          featureId,
+          featureName,
+          content: locallyRepaired,
+          model: `${result.model}:local-structure-repair`,
+          usage: result.usage,
+          retried: attempt > 1,
+          valid: true,
+          compiled: true,
+        };
+      }
+    }
+
     console.warn(`  ⚠️ ${featureId} validation failed — missing: ${validation.missing.join(', ')}`);
 
     if (attempt === 1) {
@@ -220,7 +314,7 @@ export async function expandFeature(
       retried = true;
     } else {
       console.warn(`  ⚠️ ${featureId} validation failed after retry — using deterministic fallback`);
-      const fallback = buildDeterministicFeatureFallback(featureId, featureName, shortDescription);
+      const fallback = buildDeterministicFeatureFallback(featureId, featureName, shortDescription, resolvedLanguage);
       return {
         featureId,
         featureName,
@@ -249,12 +343,15 @@ export function parseFeatureList(featureListText: string): ParsedFeature[] {
   let match: RegExpExecArray | null;
 
   while ((match = pattern.exec(featureListText)) !== null) {
-    const num = match[1];
+    const num = Number.parseInt(match[1], 10);
+    if (!Number.isFinite(num) || num <= 0) {
+      continue;
+    }
     const name = match[2].trim();
     const desc = match[3]?.trim() || name;
 
     features.push({
-      featureId: `F-${num.padStart(2, '0')}`,
+      featureId: `F-${String(num).padStart(2, '0')}`,
       featureName: name,
       shortDescription: desc,
     });
@@ -273,7 +370,8 @@ export async function expandAllFeatures(
   userInput: string,
   vision: string,
   featureListText: string,
-  client: OpenRouterClient
+  client: OpenRouterClient,
+  language?: string | null
 ): Promise<FeatureExpansionResult> {
   const parsedFeatures = parseFeatureList(featureListText);
 
@@ -296,7 +394,8 @@ export async function expandAllFeatures(
         feature.featureId,
         feature.featureName,
         feature.shortDescription,
-        client
+        client,
+        language
       );
 
       expandedFeatures.push(expanded);

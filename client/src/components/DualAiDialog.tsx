@@ -11,37 +11,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
 import { GuidedAiDialog } from './GuidedAiDialog';
 import { useTranslation } from "@/lib/i18n";
-
-function isScaffoldOnly(content: string): boolean {
-  if (!content || content.trim().length === 0) return true;
-
-  const lines = content.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  if (lines.length === 0) return true;
-
-  const nonHeadingLines = lines.filter(l => !l.startsWith('#'));
-  if (nonHeadingLines.length === 0) return true;
-
-  const scaffoldPhrases = [
-    'brief description', 'what we aim', 'as a [user]', 'i want [goal]',
-    'how we measure', 'key milestones', 'functional and non-functional',
-    'high-level overview', 'long-term vision', 'strategic alignment',
-    'what\'s included', 'breakdown of individual', 'team and technical',
-    'kpis and success', 'phased delivery', 'technical problem',
-    'technical approach', 'system design', 'detailed technical',
-    'how we\'ll validate', 'scalability and optimization', 'deployment strategy',
-    'what we\'re launching', 'who we\'re building', 'unique value',
-    'complete feature list', 'marketing and launch', 'launch kpis',
-    'launch schedule', 'potential issues and solutions',
-    'default section content', 'section content placeholder',
-  ];
-
-  const substantiveLines = nonHeadingLines.filter(line => {
-    const lower = line.toLowerCase();
-    return !scaffoldPhrases.some(phrase => lower.includes(phrase));
-  });
-
-  return substantiveLines.length === 0;
-}
+import { readSSEStream } from "@/lib/sseReader";
 
 interface DualAiDialogProps {
   open: boolean;
@@ -59,7 +29,7 @@ export function DualAiDialog({
   onContentGenerated
 }: DualAiDialogProps) {
   const { t } = useTranslation();
-  const hasRealContent = !isScaffoldOnly(currentContent);
+  const hasRealContent = currentContent.trim().length > 0;
   const [userInput, setUserInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -215,7 +185,17 @@ export function DualAiDialog({
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
-    const timeout = setTimeout(() => controller.abort(), iterativeTimeoutMinutes * 60 * 1000);
+    const adaptiveTimeoutMinutes = Math.max(
+      iterativeTimeoutMinutes,
+      (iterationCount * 15) + 10 + (useFinalReview ? 10 : 0)
+    );
+    const inactivityTimeoutMs = adaptiveTimeoutMinutes * 60 * 1000;
+    let inactivityTimeout: ReturnType<typeof setTimeout> | null = null;
+    const resetInactivityTimeout = () => {
+      if (inactivityTimeout) clearTimeout(inactivityTimeout);
+      inactivityTimeout = setTimeout(() => controller.abort(), inactivityTimeoutMs);
+    };
+    resetInactivityTimeout();
 
     try {
       const response = await fetch('/api/ai/generate-iterative', {
@@ -235,8 +215,13 @@ export function DualAiDialog({
         credentials: 'include',
         signal: controller.signal,
       });
+      resetInactivityTimeout();
 
       if (!response.ok) {
+        if (inactivityTimeout) {
+          clearTimeout(inactivityTimeout);
+          inactivityTimeout = null;
+        }
         const errorText = await response.text();
         let msg = t.errors.generateFailed;
         try { msg = JSON.parse(errorText).message || msg; } catch {}
@@ -248,6 +233,7 @@ export function DualAiDialog({
       if (contentType.includes('text/event-stream') && response.body) {
         // SSE-Ereignisse als Stream verarbeiten
         const data = await readSSEStream(response.body, (event) => {
+          resetInactivityTimeout();
           switch (event.type) {
             case 'iteration_start':
               setCurrentIteration(event.iteration);
@@ -281,7 +267,7 @@ export function DualAiDialog({
               setTotalTokensSoFar(event.totalTokens || 0);
               break;
           }
-        });
+        }, t.errors.generateFailed);
 
         if (!data) throw new Error('SSE stream ended without result');
         const finalContent = data.finalContent || data.mergedPRD || '';
@@ -314,63 +300,16 @@ export function DualAiDialog({
         resetState();
       }, 2000);
     } finally {
-      clearTimeout(timeout);
+      if (inactivityTimeout) {
+        clearTimeout(inactivityTimeout);
+        inactivityTimeout = null;
+      }
       abortControllerRef.current = null;
       if (elapsedTimerRef.current) {
         clearInterval(elapsedTimerRef.current);
         elapsedTimerRef.current = null;
       }
     }
-  };
-
-  /** Reads an SSE stream, calling onEvent for progress events. Returns the final result payload. */
-  const readSSEStream = async (
-    body: ReadableStream<Uint8Array>,
-    onEvent: (event: any) => void
-  ): Promise<any | null> => {
-    const reader = body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let result: any = null;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      // Vollständige SSE-Nachrichten verarbeiten (getrennt durch doppelten Zeilenumbruch)
-      const parts = buffer.split('\n\n');
-      buffer = parts.pop() || '';
-
-      for (const part of parts) {
-        const lines = part.split('\n');
-        let eventType = '';
-        let data = '';
-        for (const line of lines) {
-          if (line.startsWith('event: ')) eventType = line.slice(7).trim();
-          else if (line.startsWith('data: ')) data += line.slice(6);
-          else if (line.startsWith('data:')) data += line.slice(5);
-        }
-        if (!data) continue;
-        let isErrorEvent = false;
-        try {
-          const parsed = JSON.parse(data);
-          if (eventType === 'result') {
-            result = parsed;
-          } else if (eventType === 'error') {
-            isErrorEvent = true;
-            throw new Error(parsed.message || t.errors.generateFailed);
-          } else {
-            onEvent(parsed);
-          }
-        } catch (e: any) {
-          if (isErrorEvent) throw e;
-          if (e.message?.includes('Server error')) throw e;
-          console.warn('SSE parse error:', e);
-        }
-      }
-    }
-    return result;
   };
 
   const resetState = () => {
@@ -679,6 +618,8 @@ export function DualAiDialog({
           resetState();
         }}
         initialProjectIdea={userInput}
+        existingContent={hasRealContent ? currentContent : undefined}
+        prdId={prdId}
       />
     </Dialog>
   );

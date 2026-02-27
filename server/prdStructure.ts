@@ -51,5 +51,8 @@ export interface PRDStructure {
   errorHandling?: string;
   deployment?: string;
   definitionOfDone?: string;
+  outOfScope?: string;
+  timelineMilestones?: string;
+  successCriteria?: string;
   otherSections: Record<string, string>;
 }

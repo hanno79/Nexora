@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -28,6 +28,8 @@ interface GuidedAiDialogProps {
   onOpenChange: (open: boolean) => void;
   onContentGenerated: (content: string, response: any) => void;
   initialProjectIdea?: string;
+  existingContent?: string;
+  prdId?: string;
 }
 
 type Step = 'input' | 'analyzing' | 'questions' | 'processing' | 'finalizing' | 'done';
@@ -43,7 +45,9 @@ export function GuidedAiDialog({
   open,
   onOpenChange,
   onContentGenerated,
-  initialProjectIdea = ''
+  initialProjectIdea = '',
+  existingContent,
+  prdId,
 }: GuidedAiDialogProps) {
   const { t } = useTranslation();
   const [projectIdea, setProjectIdea] = useState(initialProjectIdea);
@@ -58,6 +62,12 @@ export function GuidedAiDialog({
   const [error, setError] = useState('');
   const [refinedPlan, setRefinedPlan] = useState('');
   const [modelsUsed, setModelsUsed] = useState<string[]>([]);
+  const hasExistingContent = typeof existingContent === 'string' && existingContent.trim().length > 0;
+  const minimumIdeaLength = hasExistingContent ? 3 : 10;
+  const effectiveProjectIdea = (projectIdea.trim().length > 0 ? projectIdea : initialProjectIdea).trim();
+  const minLengthError = hasExistingContent
+    ? t.guidedAi.minLengthErrorExistingContent
+    : t.guidedAi.minLengthError;
 
   const createAbortSignal = (): AbortSignal => {
     const controller = new AbortController();
@@ -83,12 +93,7 @@ export function GuidedAiDialog({
     setHasAutoStarted(false);
   };
 
-  const handleStartWithIdea = async (idea: string) => {
-    if (idea.trim().length < 10) {
-      setError(t.guidedAi.minLengthError);
-      return;
-    }
-
+  const executeStart = async (idea: string) => {
     setStep('analyzing');
     setError('');
 
@@ -97,7 +102,11 @@ export function GuidedAiDialog({
       const response = await fetch('/api/ai/guided-start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectIdea: idea.trim() }),
+        body: JSON.stringify({
+          projectIdea: idea.trim(),
+          existingContent: hasExistingContent ? existingContent : undefined,
+          mode: hasExistingContent ? 'improve' : 'generate',
+        }),
         signal,
       });
 
@@ -124,9 +133,17 @@ export function GuidedAiDialog({
     }
   };
 
+  const handleStartWithIdea = useCallback(async (idea: string) => {
+    if (idea.trim().length < minimumIdeaLength) {
+      setError(minLengthError);
+      return;
+    }
+    await executeStart(idea);
+  }, [minimumIdeaLength, minLengthError, hasExistingContent, existingContent]);
+
   // Sync project idea and auto-start when dialog opens with initial value
   useEffect(() => {
-    if (open && initialProjectIdea && initialProjectIdea.trim().length >= 10) {
+    if (open && initialProjectIdea && initialProjectIdea.trim().length >= minimumIdeaLength) {
       setProjectIdea(initialProjectIdea);
       // Auto-start if we have a valid initial idea and haven't started yet
       if (!hasAutoStarted && step === 'input') {
@@ -137,47 +154,14 @@ export function GuidedAiDialog({
     if (!open) {
       setHasAutoStarted(false);
     }
-  }, [open, initialProjectIdea, hasAutoStarted, step, handleStartWithIdea]);
+  }, [open, initialProjectIdea, hasAutoStarted, step, minimumIdeaLength, handleStartWithIdea]);
 
   const handleStart = async () => {
-    if (projectIdea.trim().length < 10) {
-      setError(t.guidedAi.minLengthError);
+    if (effectiveProjectIdea.length < minimumIdeaLength) {
+      setError(minLengthError);
       return;
     }
-
-    setStep('analyzing');
-    setError('');
-
-    try {
-      const signal = createAbortSignal();
-      const response = await fetch('/api/ai/guided-start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectIdea: projectIdea.trim() }),
-        signal,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || 'Failed to start guided workflow');
-      }
-
-      const data = await response.json();
-      setSessionId(data.sessionId);
-      setFeatureOverview(data.featureOverview);
-      setQuestions(data.questions || []);
-
-      if (data.questions && data.questions.length > 0) {
-        setStep('questions');
-      } else {
-        await handleFinalize(data.sessionId);
-      }
-    } catch (err: any) {
-      if (err?.name === 'AbortError') return;
-      console.error('Error starting guided workflow:', err);
-      setError(err.message || 'Failed to analyze project idea');
-      setStep('input');
-    }
+    await executeStart(effectiveProjectIdea);
   };
 
   const handleSkipQuestions = async () => {
@@ -259,7 +243,7 @@ export function GuidedAiDialog({
       const response = await fetch('/api/ai/guided-finalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: sid }),
+        body: JSON.stringify({ sessionId: sid, prdId }),
         signal,
       });
 
@@ -291,8 +275,8 @@ export function GuidedAiDialog({
   };
 
   const handleSkipAll = async () => {
-    if (projectIdea.trim().length < 10) {
-      setError(t.guidedAi.minLengthError);
+    if (effectiveProjectIdea.length < minimumIdeaLength) {
+      setError(minLengthError);
       return;
     }
 
@@ -304,7 +288,12 @@ export function GuidedAiDialog({
       const response = await fetch('/api/ai/guided-skip', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectIdea: projectIdea.trim() }),
+        body: JSON.stringify({
+          projectIdea: effectiveProjectIdea,
+          existingContent: hasExistingContent ? existingContent : undefined,
+          mode: hasExistingContent ? 'improve' : 'generate',
+          prdId,
+        }),
         signal,
       });
 
@@ -571,7 +560,7 @@ export function GuidedAiDialog({
               <Button
                 variant="outline"
                 onClick={handleSkipAll}
-                disabled={projectIdea.trim().length < 10}
+                disabled={effectiveProjectIdea.length < minimumIdeaLength}
                 data-testid="button-skip-all"
               >
                 <SkipForward className="w-4 h-4 mr-1 sm:mr-2" />
@@ -580,7 +569,7 @@ export function GuidedAiDialog({
               </Button>
               <Button
                 onClick={handleStart}
-                disabled={projectIdea.trim().length < 10}
+                disabled={effectiveProjectIdea.length < minimumIdeaLength}
                 data-testid="button-start-guided"
               >
                 <ArrowRight className="w-4 h-4 mr-1 sm:mr-2" />

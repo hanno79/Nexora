@@ -188,50 +188,34 @@ CRITICAL RULES:
 - Define the system as the sum of independent, implementable features
 - Keep technical sections minimal unless specifically requested
 - Avoid vague language like "for example", "etc.", "optional", or "could"
+- Use ONLY canonical top-level headings listed below
+- Do NOT output numbered top-level headings (e.g. "## 5. Target Users")
+- Do NOT output wrapper sections like "## Part A/B/C/D"
+- If you need extra context such as user personas or UI guidelines, place them as subheadings under the canonical sections
 
 REQUIRED SECTIONS:
 
-## Part A — System Context
+## System Vision
+[Concise high-level purpose and intended outcome. Include subsections for Executive Summary, Problem Statement, and key user context.]
 
-## 1. System Vision
-[Concise high-level purpose and intended outcome — no implementation details]
+## System Boundaries
+[Scope, operating model, runtime boundaries, and integrations. Include target users/personas as subsection(s) if needed.]
 
-## 2. Executive Summary
-[Problem, Solution, Target User, Key Value Proposition - 3-4 paragraphs]
+## Domain Model
+[Core entities, relationships, and constraints in product language.]
 
-## 3. Problem Statement
-[What problem are we solving? Who has this problem? What's the impact?]
+## Global Business Rules
+[Cross-feature invariants and product rules.]
 
-## 4. Goals & Success Metrics
-[SMART goals with user-observable metrics]
-
-## 5. Target Users
-[2-3 user personas with their pain points and goals]
-
-## 6. System Boundaries & Operating Model
-- Deployment type (web app, mobile, desktop, API)
-- Runtime environment (browser, server, hybrid)
-- Online/offline capability
-- Single-user or multi-user
-- Persistence strategy (database, local storage, cloud sync)
-- External integrations (if any)
-
-## Part B — Feature Specifications (CORE OF THE DOCUMENT)
-
-## 7. User Stories
-[5-10 user stories in "As a... I want... So that..." format]
-
-## 8. Functional Feature Catalogue (MANDATORY)
-
+## Functional Feature Catalogue (MANDATORY)
 This is the MOST IMPORTANT section. The system is defined as the sum of these features.
 Each feature must be described independently so it can be implemented as its own task.
 
-### Must-Have Features
-For EACH feature, use this template:
+Include user stories as intro/context inside this section when relevant.
 
+For EACH feature, use this template:
 **Feature ID: F-XX**
 **Feature Name: [Name]**
-
 1. **Purpose** — What capability this feature provides
 2. **Actors** — Who can trigger it
 3. **Trigger** — How the feature is initiated
@@ -243,30 +227,26 @@ For EACH feature, use this template:
 9. **UI Impact** — Interface changes caused by the feature
 10. **Acceptance Criteria** — Testable observable conditions
 
-### Nice-to-Have Features
-[Same F-XX format, 3-5 features]
+## Non-Functional Requirements
+[Performance, accessibility, security, and UX/UI guidelines in user-observable terms.]
 
-### Future Considerations
-[Brief list of features for later versions — no full spec needed]
+## Error Handling & Recovery
+[Failure handling, recovery behavior, and fallback expectations.]
 
-## Part C — Design & Technical Context
+## Deployment & Infrastructure
+[Runtime environment and operational/deployment context.]
 
-## 9. User Interface Guidelines
-[Key screens, interaction patterns, accessibility requirements]
+## Definition of Done
+[Clear release readiness criteria.]
 
-## 10. Non-Functional Requirements
-[Performance expectations, accessibility, security considerations - in user terms]
+## Out of Scope
+[What this version does NOT include.]
 
-## Part D — Planning
+## Timeline & Milestones
+[Realistic phases with user-testable deliverables.]
 
-## 11. Out of Scope
-[What this version does NOT include]
-
-## 12. Timeline & Milestones
-[Realistic phases with user-testable deliverables]
-
-## 13. Success Criteria
-[How we know the product is successful - user-observable metrics]
+## Success Criteria & Acceptance Testing
+[How we know the product is successful with measurable, testable indicators.]
 
 QUALITY REQUIREMENTS:
 - Every Must-Have and Nice-to-Have feature MUST have a complete F-XX spec with all 10 fields
@@ -279,6 +259,49 @@ IMPORTANT:
 - This PRD should be usable by both developers AND product stakeholders
 - Acceptance criteria are for manual testing, not automated tests
 - The Functional Feature Catalogue is the CORE of the document — invest most detail here
+- LANGUAGE: Follow the language instruction provided below`;
+
+export const FINAL_PRD_REFINEMENT_PROMPT = `You are an experienced Product Manager refining an EXISTING PRD.
+
+CRITICAL RULES:
+- You are NOT generating from scratch.
+- Preserve the existing PRD structure and all valid content.
+- Integrate only the requested improvements and clarified decisions.
+- Fill missing sections explicitly instead of rewriting unrelated sections.
+- Keep Feature IDs stable whenever possible.
+- If a section is missing (especially Part D planning), add it completely.
+- Use ONLY canonical top-level headings for the final output.
+- Do NOT output legacy or numbered top-level headings such as:
+  - "## Part A — System Context"
+  - "## 4. Goals & Success Metrics"
+  - "## 5. Target Users"
+  - "## 9. User Interface Guidelines"
+
+MANDATORY OUTPUT REQUIREMENTS:
+- Return the full PRD document in Markdown (not a diff).
+- Keep or improve all existing key sections.
+- Use these top-level headings exactly:
+  - System Vision
+  - System Boundaries
+  - Domain Model
+  - Global Business Rules
+  - Functional Feature Catalogue
+  - Non-Functional Requirements
+  - Error Handling & Recovery
+  - Deployment & Infrastructure
+  - Definition of Done
+  - Out of Scope
+  - Timeline & Milestones
+  - Success Criteria & Acceptance Testing
+- Ensure planning sections are present and non-empty:
+  - Out of Scope
+  - Timeline & Milestones
+  - Success Criteria (with acceptance testing indicators)
+
+QUALITY BAR:
+- Every change request from the user decisions must be reflected concretely.
+- Acceptance criteria remain testable and user-observable.
+- Do not add meta commentary or explanations outside the PRD.
 - LANGUAGE: Follow the language instruction provided below`;
 
 export interface GuidedQuestion {

@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:e2e:ci": "playwright test e2e/smoke.spec.ts --project=chromium"
+    "test:e2e:ci": "playwright test --reporter=line"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.37.0",

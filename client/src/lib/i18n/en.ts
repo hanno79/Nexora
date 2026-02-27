@@ -420,6 +420,7 @@ export const en = {
     contentAdded: "Your content has been added to the editor",
     initialAnalysis: "Initial Analysis",
     minLengthError: "Please provide a more detailed project description (at least 10 characters)",
+    minLengthErrorExistingContent: "Please provide a refinement request (at least 3 characters)",
     answerOneQuestion: "Please answer at least one question",
     customAnswerRequired: "Please provide details for your custom answer",
     explainPreference: "Please explain your preference...",

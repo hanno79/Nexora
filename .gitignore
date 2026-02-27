@@ -27,6 +27,12 @@ gui-audit-results.md
 # Temporary run outputs
 .tmp_*.json
 .tmp_*.md
+.tmp_*.mts
+.tmp_*.mjs
+.tmp_*.log
+.tmp_*.png
+.tmp_*.txt
+.tmp_*.b64
 
 # Local tool caches / machine-specific
 .claude/settings.local.json

@@ -19,6 +19,12 @@ const POST_FEATURE_SECTIONS: SectionEntry[] = [
   { heading: 'Definition of Done', key: 'definitionOfDone' },
 ];
 
+const PLANNING_SECTIONS: SectionEntry[] = [
+  { heading: 'Out of Scope', key: 'outOfScope' },
+  { heading: 'Timeline & Milestones', key: 'timelineMilestones' },
+  { heading: 'Success Criteria & Acceptance Testing', key: 'successCriteria' },
+];
+
 const STRUCTURED_SUBSECTIONS: { field: keyof FeatureSpec; label: string; num: string; isArray: boolean }[] = [
   { field: 'purpose', label: 'Purpose', num: '1', isArray: false },
   { field: 'actors', label: 'Actors', num: '2', isArray: false },
@@ -42,6 +48,14 @@ function hasStructuredFields(feature: FeatureSpec): boolean {
   });
 }
 
+function isStringArray(x: unknown): x is string[] {
+  return Array.isArray(x) && x.every(item => typeof item === 'string');
+}
+
+function isNonEmptyString(x: unknown): x is string {
+  return typeof x === 'string' && x.trim().length > 0;
+}
+
 function renderFeatureFromStructure(feature: FeatureSpec): string {
   const lines: string[] = [];
 
@@ -52,21 +66,19 @@ function renderFeatureFromStructure(feature: FeatureSpec): string {
     const val = feature[sub.field];
 
     if (sub.isArray) {
-      const arr = val as string[] | undefined;
-      if (arr && arr.length > 0) {
+      if (isStringArray(val) && val.length > 0) {
         lines.push(`**${sub.num}. ${sub.label}**`);
         lines.push('');
-        for (let i = 0; i < arr.length; i++) {
-          lines.push(`${i + 1}. ${arr[i]}`);
+        for (let i = 0; i < val.length; i++) {
+          lines.push(`${i + 1}. ${val[i]}`);
         }
         lines.push('');
       }
     } else {
-      const str = val as string | undefined;
-      if (str && str.trim()) {
+      if (isNonEmptyString(val)) {
         lines.push(`**${sub.num}. ${sub.label}**`);
         lines.push('');
-        lines.push(str.trim());
+        lines.push(val.trim());
         lines.push('');
       }
     }
@@ -144,6 +156,13 @@ export function assembleStructureToMarkdown(structure: PRDStructure): string {
   }
 
   for (const entry of POST_FEATURE_SECTIONS) {
+    const content = structure[entry.key];
+    if (typeof content === 'string' && content.trim()) {
+      parts.push(`## ${entry.heading}\n\n${content.trim()}`);
+    }
+  }
+
+  for (const entry of PLANNING_SECTIONS) {
     const content = structure[entry.key];
     if (typeof content === 'string' && content.trim()) {
       parts.push(`## ${entry.heading}\n\n${content.trim()}`);

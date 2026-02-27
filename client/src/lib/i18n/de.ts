@@ -422,6 +422,7 @@ export const de: Translations = {
     contentAdded: "Ihr Inhalt wurde zum Editor hinzugefügt",
     initialAnalysis: "Erste Analyse",
     minLengthError: "Bitte geben Sie eine detailliertere Projektbeschreibung ein (mindestens 10 Zeichen)",
+    minLengthErrorExistingContent: "Bitte geben Sie einen Verfeinerungshinweis an (mindestens 3 Zeichen)",
     answerOneQuestion: "Bitte beantworten Sie mindestens eine Frage",
     customAnswerRequired: "Bitte geben Sie Details für Ihre benutzerdefinierte Antwort an",
     explainPreference: "Bitte erläutern Sie Ihre Präferenz...",

@@ -3,6 +3,7 @@ import { aiUsage, type InsertAiUsage } from "@shared/schema";
 import { eq, desc, gte, and, count, sum, sql } from "drizzle-orm";
 import { fetchOpenRouterModels } from "./openrouter";
 import { logger } from "./logger";
+import { normalizeTokenCount } from "./tokenMath";
 
 // Hardcoded fallback pricing (per token) for common models when OpenRouter API is unavailable.
 // Prices in USD per token (prompt / completion). Updated as of 2025-05.
@@ -56,8 +57,8 @@ export async function logAiUsage(
   prdId?: string
 ): Promise<void> {
   try {
-    const inputTokens = usage.prompt_tokens || 0;
-    const outputTokens = usage.completion_tokens || 0;
+    const inputTokens = normalizeTokenCount(usage.prompt_tokens);
+    const outputTokens = normalizeTokenCount(usage.completion_tokens);
 
     const pricing = await getModelPricing(model);
     const totalCost = inputTokens * pricing.prompt + outputTokens * pricing.completion;

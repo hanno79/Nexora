@@ -1,4 +1,5 @@
 import type { PRDStructure, FeatureSpec } from './prdStructure';
+import { logger } from './logger';
 
 const KNOWN_SECTION_MAP: Record<string, keyof PRDStructure> = {
   'system vision': 'systemVision',
@@ -26,6 +27,14 @@ const KNOWN_SECTION_MAP: Record<string, keyof PRDStructure> = {
   'infrastructure': 'deployment',
   'definition of done': 'definitionOfDone',
   'done criteria': 'definitionOfDone',
+  'out of scope': 'outOfScope',
+  'timeline & milestones': 'timelineMilestones',
+  'timeline and milestones': 'timelineMilestones',
+  'timeline': 'timelineMilestones',
+  'success criteria & acceptance testing': 'successCriteria',
+  'success criteria and acceptance testing': 'successCriteria',
+  'success criteria': 'successCriteria',
+  'acceptance testing': 'successCriteria',
 };
 
 const FEATURE_CATALOGUE_HEADINGS = [
@@ -42,6 +51,52 @@ const FEATURE_CATALOGUE_HEADINGS = [
   'required features',
 ];
 
+const FEATURE_CATALOGUE_INTRO_HEADINGS = [
+  'user stories',
+  'nutzergeschichten',
+];
+
+function mergeSectionContent(currentValue: string, incomingValue: string): string {
+  const current = String(currentValue || '').trim();
+  const incoming = String(incomingValue || '').trim();
+  if (!current) return incoming;
+  if (!incoming) return current;
+
+  const currentNormalized = current.toLowerCase().replace(/\s+/g, ' ').trim();
+  const incomingNormalized = incoming.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (currentNormalized.includes(incomingNormalized)) return current;
+  if (incomingNormalized.includes(currentNormalized)) return incoming;
+  return `${current}\n\n${incoming}`.trim();
+}
+
+function resolveTemplateAliasTarget(normalizedHeading: string): keyof PRDStructure | null {
+  if (/(^|\b)problem\s*statement(\b|$)|(^|\b)problemstellung(\b|$)/i.test(normalizedHeading)) {
+    return 'systemVision';
+  }
+  if (
+    /(^|\b)goals?\s*(?:&|and)\s*success\s*metrics?(\b|$)|(^|\b)ziele?\s*(?:&|und)\s*(?:erfolgsmetriken|success\s*metrics?)(\b|$)/i.test(
+      normalizedHeading
+    )
+  ) {
+    return 'successCriteria';
+  }
+  if (
+    /(^|\b)target\s*(?:audience|users?)\b|(^|\b)user\s*personas?(\b|$)|(^|\b)zielgruppe(\b|$)|(^|\b)persona?s?(\b|$)/i.test(
+      normalizedHeading
+    )
+  ) {
+    return 'systemBoundaries';
+  }
+  if (
+    /(^|\b)user\s*interface\s*guidelines?(\b|$)|(^|\b)ui\s*guidelines?(\b|$)|(^|\b)ux\s*guidelines?(\b|$)|(^|\b)benutzeroberfl[aä]chen?\s*richtlinien(\b|$)/i.test(
+      normalizedHeading
+    )
+  ) {
+    return 'nonFunctional';
+  }
+  return null;
+}
+
 interface RawSection {
   heading: string;
   level: number;
@@ -57,7 +112,9 @@ export function normalizeBrokenHeadingBoundaries(markdown: string): string {
 export function normalizeFeatureId(value: string): string {
   const match = String(value || '').toUpperCase().match(/F-(\d+)/);
   if (!match) return '';
-  return `F-${match[1].padStart(2, '0')}`;
+  const parsed = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return '';
+  return `F-${String(parsed).padStart(2, '0')}`;
 }
 
 export function dedupeFeatures(features: FeatureSpec[]): FeatureSpec[] {
@@ -128,16 +185,16 @@ export function splitIntoSections(markdown: string): RawSection[] {
 }
 
 const SUBSECTION_ORDER = [
-  { num: '1', field: 'purpose' as const, label: 'Purpose' },
-  { num: '2', field: 'actors' as const, label: 'Actors' },
-  { num: '3', field: 'trigger' as const, label: 'Trigger' },
-  { num: '4', field: 'preconditions' as const, label: 'Preconditions' },
-  { num: '5', field: 'mainFlow' as const, label: 'Main Flow' },
-  { num: '6', field: 'alternateFlows' as const, label: 'Alternate Flows' },
-  { num: '7', field: 'postconditions' as const, label: 'Postconditions' },
-  { num: '8', field: 'dataImpact' as const, label: 'Data Impact' },
-  { num: '9', field: 'uiImpact' as const, label: 'UI Impact' },
-  { num: '10', field: 'acceptanceCriteria' as const, label: 'Acceptance Criteria' },
+  { num: '1', field: 'purpose' as const, labels: ['Purpose', 'Zweck', 'Ziel', 'Nutzen'] },
+  { num: '2', field: 'actors' as const, labels: ['Actors', 'Akteure', 'Beteiligte', 'Rollen'] },
+  { num: '3', field: 'trigger' as const, labels: ['Trigger', 'Ausloeser', 'Ausloser'] },
+  { num: '4', field: 'preconditions' as const, labels: ['Preconditions', 'Vorbedingungen', 'Voraussetzungen'] },
+  { num: '5', field: 'mainFlow' as const, labels: ['Main Flow', 'Hauptablauf', 'Hauptfluss', 'Ablauf'] },
+  { num: '6', field: 'alternateFlows' as const, labels: ['Alternate Flows', 'Alternative Ablaeufe', 'Alternativablaeufe', 'Alternative Flows', 'Ausnahmefaelle'] },
+  { num: '7', field: 'postconditions' as const, labels: ['Postconditions', 'Nachbedingungen', 'Ergebniszustand'] },
+  { num: '8', field: 'dataImpact' as const, labels: ['Data Impact', 'Datenauswirkungen', 'Datenwirkungen', 'Datenwirkung'] },
+  { num: '9', field: 'uiImpact' as const, labels: ['UI Impact', 'UI-Auswirkungen', 'Benutzeroberflaechen-Auswirkungen', 'Oberflaechen-Auswirkungen'] },
+  { num: '10', field: 'acceptanceCriteria' as const, labels: ['Acceptance Criteria', 'Akzeptanzkriterien', 'Abnahmekriterien'] },
 ];
 
 function splitNumberedItems(text: string): string[] {
@@ -150,13 +207,17 @@ function splitNumberedItems(text: string): string[] {
     if (!trimmed) continue;
 
     const isNumbered = /^\d+[\.\)]\s+/.test(trimmed);
-    const isBullet = /^[-*]\s+/.test(trimmed);
+    const isChecklist = /^[-*+]\s+\[[ xX]\]\s+/.test(trimmed);
+    const isBullet = /^[-*+]\s+/.test(trimmed);
 
-    if (isNumbered || isBullet) {
+    if (isNumbered || isChecklist || isBullet) {
       if (currentItem.trim()) {
         items.push(currentItem.trim());
       }
-      currentItem = trimmed.replace(/^\d+[\.\)]\s+/, '').replace(/^[-*]\s+/, '');
+      currentItem = trimmed
+        .replace(/^\d+[\.\)]\s+/, '')
+        .replace(/^[-*+]\s+\[[ xX]\]\s+/, '')
+        .replace(/^[-*+]\s+/, '');
     } else {
       currentItem += ' ' + trimmed;
     }
@@ -175,8 +236,19 @@ export function parseFeatureSubsections(rawContent: string): Partial<Pick<Featur
     const subsectionBoundaries: { field: string; matchStart: number; contentStart: number; isArray: boolean }[] = [];
 
     for (const sub of SUBSECTION_ORDER) {
-      const pattern = new RegExp(`(?:^|\\n)\\s*(?:#{1,6}\\s*)?(?:\\*\\*)?${sub.num}\\.\\s*(?:\\*\\*)?\\s*${sub.label}\\s*[:\\s]*(?:\\*\\*)?`, 'i');
-      const match = rawContent.match(pattern);
+      const labelsPattern = sub.labels
+        .map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'))
+        .join('|');
+      const pattern = new RegExp(
+        `(?:^|\\n)\\s*` +
+        `(?:#{1,6}\\s*)?` +
+        `(?:\\*\\*)?` +
+        `(?:${sub.num}\\s*[\\.)\\-:]\\s*)?` +
+        `(?:${labelsPattern})` +
+        `\\s*(?:\\*\\*)?\\s*[:\\-\\s]*(?:\\*\\*)?`,
+        'i'
+      );
+      const match = pattern.exec(rawContent);
       if (match && match.index !== undefined) {
         const isArray = sub.field === 'mainFlow' || sub.field === 'alternateFlows' || sub.field === 'acceptanceCriteria';
         subsectionBoundaries.push({
@@ -209,6 +281,7 @@ export function parseFeatureSubsections(rawContent: string): Partial<Pick<Featur
       }
     }
   } catch (e) {
+    console.error('[parseFeatureSubsections] Failed to parse feature subsections:', e);
   }
 
   return result;
@@ -368,7 +441,31 @@ export function parsePRDToStructure(markdown: string): PRDStructure {
       continue;
     }
 
+    const isFeatureCatalogueIntroHeading = FEATURE_CATALOGUE_INTRO_HEADINGS.some(
+      h => normalizedHeading.includes(h)
+    );
+    if (isFeatureCatalogueIntroHeading) {
+      structure.featureCatalogueIntro = mergeSectionContent(
+        structure.featureCatalogueIntro || '',
+        section.body
+      );
+      continue;
+    }
+
+    const aliasTarget = resolveTemplateAliasTarget(normalizedHeading);
+    if (aliasTarget) {
+      const existing = String((structure as any)[aliasTarget] || '');
+      (structure as any)[aliasTarget] = mergeSectionContent(existing, section.body);
+      continue;
+    }
+
     const mappedKey = Object.entries(KNOWN_SECTION_MAP).find(([pattern]) => {
+      if (pattern === 'out of scope') {
+        return /\bout\s+of\s+scope\b/i.test(normalizedHeading);
+      }
+      if (pattern === 'scope') {
+        return /^\s*scope(?:\b|[\s:])/.test(normalizedHeading);
+      }
       if (pattern.length <= 3) {
         const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         return new RegExp(`\\b${escaped}\\b`, 'i').test(normalizedHeading);
@@ -409,9 +506,25 @@ export function parsePRDToStructure(markdown: string): PRDStructure {
   }
 
   // Global fallback: salvage feature specs even if section structure drifted.
+  // Only add missing IDs so a broad fallback scan cannot overwrite cleaner
+  // feature blocks parsed from the dedicated catalogue section.
   const globalFeatureScan = parseFeatureBlocks(markdown);
   if (globalFeatureScan.features.length > 0) {
-    structure.features.push(...globalFeatureScan.features);
+    const existingFeatureIds = new Set(
+      structure.features
+        .map(feature => normalizeFeatureId(feature.id))
+        .filter(Boolean),
+    );
+
+    for (const fallbackFeature of globalFeatureScan.features) {
+      const fallbackId = normalizeFeatureId(fallbackFeature.id);
+      if (!fallbackId || existingFeatureIds.has(fallbackId)) {
+        continue;
+      }
+
+      structure.features.push(fallbackFeature);
+      existingFeatureIds.add(fallbackId);
+    }
   }
   structure.features = dedupeFeatures(structure.features);
 
@@ -427,6 +540,9 @@ const REQUIRED_SECTIONS: (keyof PRDStructure)[] = [
   'errorHandling',
   'deployment',
   'definitionOfDone',
+  'outOfScope',
+  'timelineMilestones',
+  'successCriteria',
 ];
 
 const STRUCTURED_FIELDS: (keyof FeatureSpec)[] = [
@@ -455,8 +571,8 @@ export function logStructureValidation(structure: PRDStructure): void {
 
   const otherKeys = Object.keys(structure.otherSections);
 
-  console.log(`📊 PRD Structure Analysis:`);
-  console.log(`  Features found: ${structure.features.length}`);
+  logger.info(`📊 PRD Structure Analysis:`);
+  logger.info(`  Features found: ${structure.features.length}`);
   if (structure.features.length > 0) {
     let structuredCount = 0;
     for (const f of structure.features) {
@@ -473,24 +589,24 @@ export function logStructureValidation(structure: PRDStructure): void {
       }
       const isStructured = parsedFields.length >= 3;
       if (isStructured) structuredCount++;
-      console.log(`    - ${f.id}: ${f.name} (${f.rawContent.length} chars) [${parsedFields.length}/${STRUCTURED_FIELDS.length} fields]`);
+      logger.debug(`    - ${f.id}: ${f.name} (${f.rawContent.length} chars) [${parsedFields.length}/${STRUCTURED_FIELDS.length} fields]`);
       if (parsedFields.length > 0) {
-        console.log(`      Parsed: ${parsedFields.join(', ')}`);
+        logger.debug(`      Parsed: ${parsedFields.join(', ')}`);
       }
       if (missingFields.length > 0 && parsedFields.length > 0) {
-        console.log(`      Missing: ${missingFields.join(', ')}`);
+        logger.debug(`      Missing: ${missingFields.join(', ')}`);
       }
     }
     const pct = structure.features.length > 0
       ? Math.round((structuredCount / structure.features.length) * 100)
       : 0;
-    console.log(`  Structured features: ${structuredCount}/${structure.features.length} (${pct}%)`);
+    logger.info(`  Structured features: ${structuredCount}/${structure.features.length} (${pct}%)`);
   }
-  console.log(`  Sections detected: ${detectedSections.join(', ')}`);
+  logger.info(`  Sections detected: ${detectedSections.join(', ')}`);
   if (missingSections.length > 0) {
-    console.log(`  Missing sections: ${missingSections.join(', ')}`);
+    logger.warn(`  Missing sections: ${missingSections.join(', ')}`);
   }
   if (otherKeys.length > 0) {
-    console.log(`  Other sections: ${otherKeys.join(', ')}`);
+    logger.info(`  Other sections: ${otherKeys.join(', ')}`);
   }
 }

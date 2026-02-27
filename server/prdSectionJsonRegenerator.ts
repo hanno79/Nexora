@@ -13,6 +13,9 @@ const SECTION_DISPLAY_NAMES: Partial<Record<keyof PRDStructure, string>> = {
   errorHandling: 'Error Handling & Recovery',
   deployment: 'Deployment & Infrastructure',
   definitionOfDone: 'Definition of Done',
+  outOfScope: 'Out of Scope',
+  timelineMilestones: 'Timeline & Milestones',
+  successCriteria: 'Success Criteria & Acceptance Testing',
 };
 
 const JSON_REGEN_SYSTEM_PROMPT = `You are part of the Nexora Requirements Compiler.
@@ -183,9 +186,14 @@ function attemptJsonRepair(raw: string): string {
     // Continue with more aggressive repair
   }
 
-  // 5. Fix common escape issues: unescaped newlines in string values
-  // Replace literal newlines inside JSON string values with \n
-  str = str.replace(/(?<=":[ ]*"[^"]*)\n(?=[^"]*")/g, '\\n');
+  // 5. Fix common escape issues: unescaped newlines in string values.
+  // Scan each JSON string literal and replace literal CR/LF inside it with
+  // their escape sequences.  The pattern (?:[^"\\]|\\.)* correctly handles
+  // escaped characters (e.g. \", \\) so it never splits on an escaped quote.
+  str = str.replace(/"((?:[^"\\]|\\.)*)"/g, (_match, inner: string) => {
+    const fixed = inner.replace(/\r\n/g, '\\n').replace(/\r/g, '\\n').replace(/\n/g, '\\n');
+    return `"${fixed}"`;
+  });
 
   return str;
 }

@@ -17,6 +17,9 @@ const TRACKED_SECTIONS: (keyof PRDStructure)[] = [
   'errorHandling',
   'deployment',
   'definitionOfDone',
+  'outOfScope',
+  'timelineMilestones',
+  'successCriteria',
 ];
 
 export function compareStructures(
