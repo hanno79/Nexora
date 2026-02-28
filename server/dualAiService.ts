@@ -1,5 +1,5 @@
 // Dual-AI Service - Orchestrates Generator & Reviewer based on HRP-17
-import { getOpenRouterClient, MODEL_TIERS } from './openrouter';
+import { getOpenRouterClient, MODEL_TIERS, getDefaultFallbackModelForTier, sanitizeConfiguredModel, resolveModelTier } from './openrouter';
 import type { OpenRouterClient } from './openrouter';
 import type { TokenUsage } from "@shared/schema";
 import {
@@ -30,6 +30,7 @@ import type { PRDStructure, FeatureSpec } from './prdStructure';
 import { mergeExpansionIntoStructure } from './prdStructureMerger';
 import { finalizeWithCompilerGates } from './prdCompilerFinalizer';
 import { compilePrdDocument } from './prdCompiler';
+import { isHighConfidenceFeatureDuplicate } from './prdQualitySignals';
 import { resolvePrdWorkflowMode } from './prdWorkflowMode';
 import { buildTemplateInstruction } from './prdTemplateIntent';
 import { db } from './db';
@@ -503,6 +504,10 @@ Create an improved version that incorporates the new requirements while keeping 
         nfrFeatureCriteriaAdds: 0,
         jsonRetryAttempts: 0,
         jsonRepairSuccesses: 0,
+        aggregatedFeatureCount: 0,
+        languageFixRequired: false,
+        boilerplateHits: 0,
+        metaLeakHits: 0,
       },
       modelsUsed: new Set<string>(),
       iterations: [],
@@ -2457,25 +2462,13 @@ Your task:
     const aName = this.normalizeFeatureName(a.name);
     const bName = this.normalizeFeatureName(b.name);
     if (aName && bName && aName === bName) return true;
-    if (aName && bName && (aName.includes(bName) || bName.includes(aName)) && Math.min(aName.length, bName.length) >= 8) {
-      return true;
-    }
+    const language: 'de' | 'en' = /[äöüß]|\b(?:und|mit|fuer|für|nutzer|aufgabe|funktion)\b/i.test(
+      `${a.name} ${b.name} ${a.rawContent} ${b.rawContent}`
+    )
+      ? 'de'
+      : 'en';
 
-    const aTokens = new Set(aName.split(' ').filter(Boolean));
-    const bTokens = new Set(bName.split(' ').filter(Boolean));
-    let intersection = 0;
-    for (const token of Array.from(aTokens)) {
-      if (bTokens.has(token)) intersection++;
-    }
-    const union = new Set(
-      Array.from(aTokens).concat(Array.from(bTokens))
-    ).size || 1;
-    const similarity = intersection / union;
-    if (similarity >= 0.8) return true;
-
-    const aSig = this.normalizeFeatureName(a.rawContent).slice(0, 120);
-    const bSig = this.normalizeFeatureName(b.rawContent).slice(0, 120);
-    return aSig.length > 40 && aSig === bSig;
+    return isHighConfidenceFeatureDuplicate(a, b, 'feature', language);
   }
 
   private normalizeFeatureName(value: string): string {
@@ -3278,6 +3271,12 @@ Your task:
     updated.nonFunctional = nonFunctionalText.trim();
 
     const nfrCriterionPattern = /(performance|latency|response time|security|xss|csrf|accessibility|wcag|aria|reliability|availability|monitor|logging|metrics|zuverlaess|zuverläss|sicherheit|barriere|antwortzeit|beobacht)/i;
+    const buildFeatureSpecificNfrCriterion = (featureName: string): string => {
+      const safeName = String(featureName || '').trim() || (isGerman ? 'Feature' : 'Feature');
+      return isGerman
+        ? `NFR: "${safeName}" erfuellt definierte Performance-, Sicherheits-, Accessibility- und Reliability-Anforderungen mit nachvollziehbarem Monitoring.`
+        : `NFR: "${safeName}" meets defined performance, security, accessibility, and reliability requirements with observable monitoring.`;
+    };
     let featureCriteriaAdds = 0;
     for (const feature of updated.features) {
       const criteria = Array.isArray(feature.acceptanceCriteria)
@@ -3285,9 +3284,7 @@ Your task:
         : [];
       const hasNfrCriterion = criteria.some(c => nfrCriterionPattern.test(String(c)));
       if (!hasNfrCriterion) {
-        criteria.push(isGerman
-          ? 'NFR: Funktion erfuellt definierte Performance-, Sicherheits- und Accessibility-Basisanforderungen ohne Laufzeitfehler.'
-          : 'NFR: Feature meets defined baseline performance, security, and accessibility requirements without runtime errors.');
+        criteria.push(buildFeatureSpecificNfrCriterion(feature.name));
         feature.acceptanceCriteria = criteria;
         feature.rawContent = this.renderCanonicalFeatureRaw(feature);
         featureCriteriaAdds++;
@@ -3555,12 +3552,18 @@ Return JSON only.`;
         // Get AI model preferences
         if (userPrefs[0].aiPreferences) {
           const prefs = userPrefs[0].aiPreferences as any;
-          const tier = prefs.tier || 'production';
+          const tier = resolveModelTier(prefs.tier);
           const activeTierModels = prefs.tierModels?.[tier] || {};
-          const tierDefaults = MODEL_TIERS[tier as keyof typeof MODEL_TIERS] || MODEL_TIERS.production;
-          const resolvedGeneratorModel = activeTierModels.generatorModel || prefs.generatorModel || tierDefaults.generator;
-          const resolvedReviewerModel = activeTierModels.reviewerModel || prefs.reviewerModel || tierDefaults.reviewer;
-          const resolvedFallbackModel = activeTierModels.fallbackModel || prefs.fallbackModel;
+          const tierDefaults = MODEL_TIERS[tier] || MODEL_TIERS.development;
+          const resolvedGeneratorModel =
+            sanitizeConfiguredModel(activeTierModels.generatorModel || prefs.generatorModel) ||
+            tierDefaults.generator;
+          const resolvedReviewerModel =
+            sanitizeConfiguredModel(activeTierModels.reviewerModel || prefs.reviewerModel) ||
+            tierDefaults.reviewer;
+          const resolvedFallbackModel =
+            sanitizeConfiguredModel(activeTierModels.fallbackModel || prefs.fallbackModel) ||
+            getDefaultFallbackModelForTier(tier);
 
           dualAiLog(`🤖 User AI preferences loaded:`, {
             tier,
@@ -3579,12 +3582,8 @@ Return JSON only.`;
           if (resolvedReviewerModel) {
             client.setPreferredModel('reviewer', resolvedReviewerModel);
           }
-          if (resolvedFallbackModel) {
-            client.setPreferredModel('fallback', resolvedFallbackModel);
-          }
-          if (tier) {
-            client.setPreferredTier(tier);
-          }
+          client.setPreferredModel('fallback', resolvedFallbackModel);
+          client.setPreferredTier(tier);
         }
       }
     }

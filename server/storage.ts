@@ -30,6 +30,18 @@ import { parsePRDToStructure } from "./prdParser";
 import { shouldCreatePrdVersionSnapshot } from "./prdVersioning";
 import { buildPrdVersionSnapshot, getNextPrdVersionNumber } from "./prdVersioningUtils";
 import { normalizeEmail, normalizeOptionalEmail } from "./emailUtils";
+import { mergeDiagnosticsIntoIterationLog, type CompilerRunDiagnostics, type PrdFinalizationStage, type PrdQualityStatus } from "./prdRunQuality";
+
+export interface PersistPrdRunFinalizationInput {
+  prdId: string;
+  userId: string;
+  qualityStatus: PrdQualityStatus;
+  finalizationStage: PrdFinalizationStage;
+  content?: string;
+  structuredContent?: PRDStructure | null;
+  iterationLog?: string | null;
+  compilerDiagnostics?: CompilerRunDiagnostics | null;
+}
 
 export interface IStorage {
   // User operations (required for Replit Auth)
@@ -75,6 +87,7 @@ export interface IStorage {
   // Structured content operations
   updatePrdStructure(id: string, structure: PRDStructure): Promise<Prd>;
   getPrdWithStructure(id: string): Promise<{ prd: Prd; structure: PRDStructure | null }>;
+  persistPrdRunFinalization(input: PersistPrdRunFinalizationInput): Promise<Prd>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -364,6 +377,70 @@ export class DatabaseStorage implements IStorage {
     } catch {
       return { prd, structure: null };
     }
+  }
+
+  async persistPrdRunFinalization(input: PersistPrdRunFinalizationInput): Promise<Prd> {
+    return await db.transaction(async (tx: any) => {
+      const [currentPrd] = await tx.select().from(prds).where(eq(prds.id, input.prdId));
+      if (!currentPrd) {
+        throw new Error('PRD not found');
+      }
+
+      const updateData: Record<string, unknown> = {
+        updatedAt: new Date(),
+      };
+
+      const isFinalPassed = input.qualityStatus === 'passed' &&
+        input.finalizationStage === 'final' &&
+        typeof input.content === 'string' &&
+        input.content.trim().length > 0;
+
+      if (typeof input.iterationLog === 'string') {
+        updateData.iterationLog = input.iterationLog;
+      } else if (input.iterationLog === null) {
+        updateData.iterationLog = null;
+      } else if (input.compilerDiagnostics && input.qualityStatus !== 'passed') {
+        updateData.iterationLog = mergeDiagnosticsIntoIterationLog(
+          currentPrd.iterationLog,
+          input.qualityStatus,
+          input.compilerDiagnostics
+        );
+      }
+
+      if (isFinalPassed) {
+        updateData.content = input.content!.trim();
+        if (Object.prototype.hasOwnProperty.call(input, 'structuredContent')) {
+          updateData.structuredContent = input.structuredContent as any;
+          updateData.structuredAt = input.structuredContent ? new Date() : null;
+        }
+      }
+
+      const [updatedPrd] = await tx
+        .update(prds)
+        .set(updateData)
+        .where(eq(prds.id, input.prdId))
+        .returning();
+
+      if (isFinalPassed) {
+        const [{ count }] = await tx
+          .select({ count: sql<number>`count(*)` })
+          .from(prdVersions)
+          .where(eq(prdVersions.prdId, input.prdId));
+
+        const versionNumber = getNextPrdVersionNumber(Number(count) || 0);
+        const snapshot = buildPrdVersionSnapshot({
+          id: updatedPrd.id,
+          title: updatedPrd.title,
+          description: updatedPrd.description,
+          content: updatedPrd.content,
+          status: updatedPrd.status,
+          structuredContent: (updatedPrd as any).structuredContent ?? null,
+        }, versionNumber, input.userId);
+        await tx.insert(prdVersions).values(snapshot);
+      }
+
+      return updatedPrd;
+    });
   }
 }
 

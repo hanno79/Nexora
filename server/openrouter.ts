@@ -15,14 +15,19 @@ interface ModelConfig {
   premium: ModelTier;
 }
 
+const DEFAULT_SAFE_TIER: keyof ModelConfig = 'development';
+const DEFAULT_FREE_GENERATOR_MODEL = 'nvidia/nemotron-3-nano-30b-a3b:free';
+const DEFAULT_FREE_REVIEWER_MODEL = 'arcee-ai/trinity-large-preview:free';
+const DEFAULT_FREE_FALLBACK_MODEL = 'google/gemma-3-27b-it:free';
+
 const DEPRECATED_MODEL_IDS = new Set<string>([
   'deepseek/deepseek-r1-0528:free',
 ]);
 
 const DEFAULT_FALLBACK_MODEL_BY_TIER: Record<keyof ModelConfig, string> = {
-  development: 'meta-llama/llama-3.3-70b-instruct:free',
-  production: 'anthropic/claude-sonnet-4',
-  premium: 'anthropic/claude-sonnet-4',
+  development: DEFAULT_FREE_FALLBACK_MODEL,
+  production: DEFAULT_FREE_FALLBACK_MODEL,
+  premium: DEFAULT_FREE_FALLBACK_MODEL,
 };
 
 export function sanitizeConfiguredModel(model: string | null | undefined): string | undefined {
@@ -33,14 +38,28 @@ export function sanitizeConfiguredModel(model: string | null | undefined): strin
 }
 
 export function getDefaultFallbackModelForTier(tier: keyof ModelConfig): string {
-  return DEFAULT_FALLBACK_MODEL_BY_TIER[tier] || DEFAULT_FALLBACK_MODEL_BY_TIER.production;
+  return DEFAULT_FALLBACK_MODEL_BY_TIER[tier] || DEFAULT_FREE_FALLBACK_MODEL;
+}
+
+export function resolveModelTier(tier: string | null | undefined): keyof ModelConfig {
+  if (!tier) return DEFAULT_SAFE_TIER;
+  return tier in MODEL_TIERS ? (tier as keyof ModelConfig) : DEFAULT_SAFE_TIER;
+}
+
+function extractOpenRouterErrorMessage(errorData: any, fallbackText: string): string {
+  return String(
+    errorData?.error?.message ||
+    errorData?.message ||
+    fallbackText ||
+    ''
+  ).trim();
 }
 
 // Model configuration with currently available models (verified Feb 2026)
 const MODEL_TIERS: ModelConfig = {
   development: {
-    generator: "meta-llama/llama-3.3-70b-instruct:free",
-    reviewer: "meta-llama/llama-3.3-70b-instruct:free",
+    generator: DEFAULT_FREE_GENERATOR_MODEL,
+    reviewer: DEFAULT_FREE_REVIEWER_MODEL,
     cost: "$0/Million Tokens"
   },
   production: {
@@ -90,7 +109,7 @@ class OpenRouterClient {
   private preferredModels: { generator?: string; reviewer?: string; fallback?: string } = {};
   private modelCooldowns = new Map<string, { until: number; reason: string }>();
 
-  constructor(apiKey?: string, tier: keyof ModelConfig = 'production') {
+  constructor(apiKey?: string, tier: keyof ModelConfig = DEFAULT_SAFE_TIER) {
     this.apiKey = apiKey || process.env.OPENROUTER_API_KEY || '';
     this.tier = tier;
     
@@ -216,16 +235,50 @@ class OpenRouterClient {
           errorData = { message: errorText };
         }
         
+        const errorMsg = extractOpenRouterErrorMessage(errorData, errorText);
+        const normalizedError = errorMsg.toLowerCase();
+
         // Handle specific error types with user-friendly messages
-        if (response.status === 401 || response.status === 403) {
-          throw new Error('OpenRouter API key is invalid or unauthorized. Please check your OPENROUTER_API_KEY in settings or get a new key at https://openrouter.ai/keys');
-        }
-        
-        if (response.status === 429) {
+        if (
+          response.status === 429 ||
+          normalizedError.includes('rate limit') ||
+          normalizedError.includes('too many requests') ||
+          normalizedError.includes('temporarily rate-limited')
+        ) {
           throw new Error('Rate limit exceeded. OpenRouter has temporarily limited your requests. Please wait a few minutes and try again, or upgrade your OpenRouter plan at https://openrouter.ai/settings/limits');
         }
-        
-        if (response.status === 402 || errorText.includes('insufficient') || errorText.includes('credit')) {
+
+        if (
+          response.status === 403 &&
+          (
+            normalizedError.includes('key limit exceeded') ||
+            normalizedError.includes('monthly limit') ||
+            normalizedError.includes('quota')
+          )
+        ) {
+          throw new Error('OpenRouter key quota exceeded (monthly limit). Please adjust key limits in OpenRouter settings or use free models only.');
+        }
+
+        if (
+          response.status === 401 ||
+          (
+            response.status === 403 &&
+            (
+              normalizedError.includes('unauthorized') ||
+              normalizedError.includes('forbidden') ||
+              normalizedError.includes('invalid') ||
+              normalizedError.includes('api key')
+            )
+          )
+        ) {
+          throw new Error('OpenRouter API key is invalid or unauthorized. Please check your OPENROUTER_API_KEY in settings or get a new key at https://openrouter.ai/keys');
+        }
+
+        if (
+          response.status === 402 ||
+          normalizedError.includes('insufficient') ||
+          normalizedError.includes('credit')
+        ) {
           throw new Error('Insufficient credits in your OpenRouter account. Please add credits at https://openrouter.ai/settings/credits or switch to a free model in Settings.');
         }
         
@@ -242,7 +295,6 @@ class OpenRouterClient {
         }
         
         // Generic error with model name
-        const errorMsg = errorData?.error?.message || errorData.message || errorText;
         throw new Error(`AI model error (${modelName}): ${errorMsg}. Status: ${response.status}`);
       }
 
@@ -377,9 +429,11 @@ class OpenRouterClient {
  * Each request gets its own client with isolated state for preferences.
  */
 export function getOpenRouterClient(tier?: keyof ModelConfig): OpenRouterClient {
-  const envTier = (process.env.AI_TIER as keyof ModelConfig) || 'production';
-  const selectedTier = tier || envTier;
-  
+  // Ignore process.env.AI_TIER — it could force paid models globally for all users.
+  // Base tier is always DEFAULT_SAFE_TIER ('development' = free models).
+  // User-specific tier is applied later via createClientWithUserPreferences().
+  const selectedTier = tier || DEFAULT_SAFE_TIER;
+
   // Always create a fresh instance to prevent shared mutable state
   return new OpenRouterClient(undefined, selectedTier);
 }
@@ -476,6 +530,10 @@ export {
   OpenRouterClient,
   MODEL_TIERS,
   DEPRECATED_MODEL_IDS,
+  DEFAULT_SAFE_TIER,
+  DEFAULT_FREE_GENERATOR_MODEL,
+  DEFAULT_FREE_REVIEWER_MODEL,
+  DEFAULT_FREE_FALLBACK_MODEL,
   DEFAULT_FALLBACK_MODEL_BY_TIER,
 };
 export type { ModelTier, ModelConfig };

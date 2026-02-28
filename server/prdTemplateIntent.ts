@@ -76,6 +76,17 @@ const TEMPLATE_PROFILES: Record<PrdTemplateCategory, TemplateProfile> = {
       ],
       requiredSections: ['systemVision', 'successCriteria'],
       minFeatureCount: 4,
+      featureNameSignals: [
+        /\b(create|update|delete|view|list|manage|sync|validate|import|export|create|register|capture)\b/i,
+        /\b(erstellen|bearbeiten|loeschen|anzeigen|auflisten|verwalten|synchronisieren|validieren|import|export)\b/i,
+        /\b(user|nutzer|workflow|prozess|task|aufgabe|freigabe|approval|notification|benachrichtigung)\b/i,
+      ],
+      minFeatureSignalRatio: 0.45,
+      disallowedFeatureNameSignals: [
+        /\b(system\s*vision|problem\s*statement|goals?(?:\s*&\s*success\s*metrics?)?|target\s*audience|user\s*stories|timeline|out\s*of\s*scope|definition\s*of\s*done|success\s*criteria)\b/i,
+        /\b(part\s*[a-d]|section\s*[a-d]|review\s*feedback|iteration\s*\d+)\b/i,
+      ],
+      maxDisallowedFeatureRatio: 0.35,
     },
   },
   epic: {
@@ -398,6 +409,13 @@ function topFeatureNames(structure: PRDStructure): string[] {
     .slice(0, 3);
 }
 
+function tokenizeScope(value: string): string[] {
+  return normalizeForMatch(value)
+    .split(/\s+/)
+    .map(token => token.trim())
+    .filter(token => token.length >= 4 && !STOP_WORDS.has(token));
+}
+
 function buildContextFragment(params: {
   structure: PRDStructure;
   contextHint?: string;
@@ -623,11 +641,46 @@ export function collectTemplateSemanticIssues(params: {
     const maxRatio = Math.max(0, Math.min(1, profile.semanticSignals.maxDisallowedFeatureRatio ?? 1));
     const allowedCount = Math.floor(featureNames.length * maxRatio);
     if (disallowedCount > allowedCount) {
-      issues.push({
-        code: `template_semantic_disallowed_feature_signals_${category}`,
-        message: `Template "${category}" mismatch: ${disallowedCount}/${featureNames.length} feature names appear generic or unrelated to template intent.`,
-        severity: hardSeverity,
-      });
+      if (category === 'feature') {
+        issues.push({
+          code: 'feature_scope_drift_detected',
+          message: `Feature template scope drift detected: ${disallowedCount}/${featureNames.length} feature names look off-scope or structural/meta.`,
+          severity: hardSeverity,
+        });
+      } else {
+        issues.push({
+          code: `template_semantic_disallowed_feature_signals_${category}`,
+          message: `Template "${category}" mismatch: ${disallowedCount}/${featureNames.length} feature names appear generic or unrelated to template intent.`,
+          severity: hardSeverity,
+        });
+      }
+    }
+  }
+
+  if (category === 'feature' && featureNames.length >= 4) {
+    const contextTokens = new Set<string>([
+      ...tokenizeScope(String(params.structure.systemVision || '')),
+      ...tokenizeScope(String(params.structure.systemBoundaries || '')),
+      ...tokenizeScope(String(params.structure.domainModel || '')),
+      ...tokenizeScope(String(params.structure.globalBusinessRules || '')),
+    ]);
+
+    if (contextTokens.size > 0) {
+      let offScopeCount = 0;
+      for (const featureName of featureNames) {
+        const tokens = tokenizeScope(featureName);
+        if (tokens.length === 0) continue;
+        const overlap = tokens.some(token => contextTokens.has(token));
+        if (!overlap) offScopeCount++;
+      }
+
+      if (offScopeCount >= Math.ceil(featureNames.length * 0.6)) {
+        issues.push({
+          code: 'feature_scope_drift_detected',
+          message: `Feature scope drift detected: ${offScopeCount}/${featureNames.length} feature names do not align with core context tokens.`,
+          severity: hardSeverity,
+        });
+      }
     }
   }
 

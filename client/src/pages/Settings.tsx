@@ -35,10 +35,10 @@ export default function Settings() {
   const [role, setRole] = useState("");
   const [uiLanguage, setUiLanguage] = useState("auto");
   const [defaultContentLanguage, setDefaultContentLanguage] = useState("auto");
-  const [generatorModel, setGeneratorModel] = useState("google/gemini-2.5-flash");
-  const [reviewerModel, setReviewerModel] = useState("anthropic/claude-sonnet-4");
-  const [fallbackModel, setFallbackModel] = useState("anthropic/claude-sonnet-4");
-  const [aiTier, setAiTier] = useState<"development" | "production" | "premium">("production");
+  const [generatorModel, setGeneratorModel] = useState("nvidia/nemotron-3-nano-30b-a3b:free");
+  const [reviewerModel, setReviewerModel] = useState("arcee-ai/trinity-large-preview:free");
+  const [fallbackModel, setFallbackModel] = useState("google/gemma-3-27b-it:free");
+  const [aiTier, setAiTier] = useState<"development" | "production" | "premium">("development");
   const [modelFilter, setModelFilter] = useState<'all' | 'free' | 'paid'>('all');
   const [modelSearch, setModelSearch] = useState('');
   const [tierDefaults, setTierDefaults] = useState<{
@@ -117,10 +117,10 @@ export default function Settings() {
     if (aiPreferences) {
       const tm = aiPreferences.tierModels || {};
       setSavedTierModels(tm);
-      setGeneratorModel(aiPreferences.generatorModel || "google/gemini-2.5-flash");
-      setReviewerModel(aiPreferences.reviewerModel || "anthropic/claude-sonnet-4");
-      setFallbackModel(aiPreferences.fallbackModel || "anthropic/claude-sonnet-4");
-      setAiTier(aiPreferences.tier || "production");
+      setGeneratorModel(aiPreferences.generatorModel || "nvidia/nemotron-3-nano-30b-a3b:free");
+      setReviewerModel(aiPreferences.reviewerModel || "arcee-ai/trinity-large-preview:free");
+      setFallbackModel(aiPreferences.fallbackModel || "google/gemma-3-27b-it:free");
+      setAiTier(aiPreferences.tier || "development");
       setTierDefaults(aiPreferences.tierDefaults || {});
       setIterativeMode(aiPreferences.iterativeMode || false);
       setIterationCount(aiPreferences.iterationCount || 3);
@@ -130,10 +130,10 @@ export default function Settings() {
 
       // Snapshot the loaded state so auto-save doesn't fire on initial load
       lastSavedModelKeyRef.current = JSON.stringify({
-        generatorModel: aiPreferences.generatorModel || "google/gemini-2.5-flash",
-        reviewerModel: aiPreferences.reviewerModel || "anthropic/claude-sonnet-4",
-        fallbackModel: aiPreferences.fallbackModel || "anthropic/claude-sonnet-4",
-        aiTier: aiPreferences.tier || "production",
+        generatorModel: aiPreferences.generatorModel || "nvidia/nemotron-3-nano-30b-a3b:free",
+        reviewerModel: aiPreferences.reviewerModel || "arcee-ai/trinity-large-preview:free",
+        fallbackModel: aiPreferences.fallbackModel || "google/gemma-3-27b-it:free",
+        aiTier: aiPreferences.tier || "development",
       });
       aiPrefsLoadedRef.current = true;
     }
@@ -156,9 +156,9 @@ export default function Settings() {
   });
 
   const tierFallbackDefaults: Record<string, string> = {
-    development: "meta-llama/llama-3.3-70b-instruct:free",
-    production: "anthropic/claude-sonnet-4",
-    premium: "anthropic/claude-sonnet-4",
+    development: "google/gemma-3-27b-it:free",
+    production: "google/gemma-3-27b-it:free",
+    premium: "google/gemma-3-27b-it:free",
   };
 
   const handleTierChange = (value: "development" | "production" | "premium") => {
@@ -179,7 +179,7 @@ export default function Settings() {
       const systemDefaults = openRouterData?.tierDefaults?.[value];
       if (systemDefaults?.generator) setGeneratorModel(systemDefaults.generator);
       if (systemDefaults?.reviewer) setReviewerModel(systemDefaults.reviewer);
-      setFallbackModel(tierFallbackDefaults[value] || "anthropic/claude-sonnet-4");
+      setFallbackModel(tierFallbackDefaults[value] || "google/gemma-3-27b-it:free");
     }
   };
 

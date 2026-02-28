@@ -25,6 +25,7 @@ stresstest-results.md
 gui-audit-results.md
 
 # Temporary run outputs
+.tmp_*
 .tmp_*.json
 .tmp_*.md
 .tmp_*.mts
@@ -33,6 +34,13 @@ gui-audit-results.md
 .tmp_*.png
 .tmp_*.txt
 .tmp_*.b64
+
+# Empty artifacts from debug/test runs
+fallbackModel
+generatorModel
+reviewerModel
+tier
+tierModels
 
 # Local tool caches / machine-specific
 .claude/settings.local.json

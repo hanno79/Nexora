@@ -569,6 +569,10 @@ interface CompilerDiagnostics {
   finalSanitizerApplied?: boolean;
   artifactWriteConsistency?: boolean;
   artifactWriteIssues?: number;
+  aggregatedFeatureCount?: number;
+  languageFixRequired?: boolean;
+  boilerplateHits?: number;
+  metaLeakHits?: number;
 }
 
 interface IterativeResponse {

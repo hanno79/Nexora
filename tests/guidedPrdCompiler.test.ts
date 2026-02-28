@@ -71,7 +71,7 @@ describe('prdCompiler', () => {
     const compiled = compilePrdDocument(incompleteCandidate, {
       mode: 'improve',
       existingContent: existing,
-      language: 'de',
+      language: 'en',
     });
 
     expect(compiled.quality.valid).toBe(true);
@@ -174,7 +174,7 @@ describe('prdCompiler', () => {
     expect(compiled.content).toContain('Completely new rewritten vision without baseline wording.');
   });
 
-  it('limits improve-mode feature delta to deterministic cap', () => {
+  it('does not enforce a hard improve-mode feature cap', () => {
     const existing = [
       '## System Vision',
       'Baseline improve mode test.',
@@ -199,39 +199,39 @@ describe('prdCompiler', () => {
       '',
       '### F-02: New Feature 2',
       '1. Purpose',
-      'New capability 2.',
+      'Provide project-level notification settings.',
       '10. Acceptance Criteria',
-      '- Works 2.',
+      '- Notification settings persist.',
       '',
-      '### F-03: New Feature 3',
+      '### F-03: Billing Export',
       '1. Purpose',
-      'New capability 3.',
+      'Export billing records in CSV format.',
       '10. Acceptance Criteria',
-      '- Works 3.',
+      '- Billing export file is generated.',
       '',
-      '### F-04: New Feature 4',
+      '### F-04: Team Access Audit',
       '1. Purpose',
-      'New capability 4.',
+      'Review recent role and permission changes.',
       '10. Acceptance Criteria',
-      '- Works 4.',
+      '- Audit entries are filterable by actor and date.',
       '',
-      '### F-05: New Feature 5',
+      '### F-05: API Key Rotation',
       '1. Purpose',
-      'New capability 5.',
+      'Rotate integration API keys safely.',
       '10. Acceptance Criteria',
-      '- Works 5.',
+      '- Rotated keys become active immediately.',
       '',
-      '### F-06: New Feature 6',
+      '### F-06: SSO Domain Mapping',
       '1. Purpose',
-      'New capability 6.',
+      'Map customer email domains to SSO providers.',
       '10. Acceptance Criteria',
-      '- Works 6.',
+      '- SSO domain mapping resolves correct provider.',
       '',
-      '### F-07: New Feature 7',
+      '### F-07: Data Retention Policy',
       '1. Purpose',
-      'New capability 7.',
+      'Apply retention windows to archived records.',
       '10. Acceptance Criteria',
-      '- Works 7.',
+      '- Retention policy is applied by scheduled job.',
     ].join('\n');
 
     const compiled = compilePrdDocument(candidate, {
@@ -241,12 +241,11 @@ describe('prdCompiler', () => {
     });
 
     expect(compiled.quality.valid).toBe(true);
-    expect(compiled.structure.features.length).toBe(5); // F-01 baseline + 4 new
-    expect(compiled.content).toContain('### F-05:');
-    expect(compiled.content).not.toContain('### F-06:');
+    expect(compiled.structure.features.length).toBe(7);
+    expect(compiled.content).toContain('### F-07:');
     expect(
       compiled.quality.issues.some(issue => issue.code === 'improve_new_feature_limit_applied')
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('enforces strict canonical heading gate and rejects unknown top-level sections', () => {
@@ -682,7 +681,6 @@ describe('prdCompiler', () => {
       mode: 'improve',
       existingContent: existing,
       language: 'en',
-      improveMaxNewFeatures: 0,
     });
 
     expect(compiled.quality.valid).toBe(true);

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { finalizeWithCompilerGates } from '../server/prdCompilerFinalizer';
-import type { CompilePrdOptions, CompilePrdResult } from '../server/prdCompiler';
+import type { CompilePrdResult } from '../server/prdCompiler';
 
 function usage(total: number) {
   return {
@@ -367,7 +367,7 @@ describe('prdCompilerFinalizer', () => {
     expect(result.content).not.toContain('## Project Overview');
   });
 
-  it('relaxes improve-mode delta limit when it would otherwise empty the feature catalogue', async () => {
+  it('includes new quality-gate repair instructions for boilerplate, leaks, and language', async () => {
     const invalid: CompilePrdResult = {
       content: 'invalid',
       structure: {
@@ -381,25 +381,29 @@ describe('prdCompilerFinalizer', () => {
         featureCount: 0,
         issues: [
           {
-            code: 'missing_feature_catalogue',
-            message: 'Functional Feature Catalogue is missing or empty.',
+            code: 'boilerplate_repetition_detected',
+            message: 'Repeated boilerplate sentence detected.',
             severity: 'error',
           },
           {
-            code: 'improve_new_feature_limit_applied',
-            message: 'Improve-mode delta limit applied: dropped 9 new feature(s).',
-            severity: 'warning',
+            code: 'meta_prompt_leak_detected',
+            message: 'Prompt/meta leakage detected.',
+            severity: 'error',
+          },
+          {
+            code: 'language_mismatch_section_systemVision',
+            message: 'Section language mismatch.',
+            severity: 'error',
           },
         ],
       },
     };
 
-    const relaxed: CompilePrdResult = {
-      content: 'relaxed',
+    const valid: CompilePrdResult = {
+      content: 'valid',
       structure: {
-        features: [
-          { id: 'F-01', name: 'Recovered Feature', rawContent: 'Feature body' },
-        ],
+        systemVision: 'Valid output.',
+        features: [{ id: 'F-01', name: 'Feature', rawContent: 'Feature body' }],
         otherSections: {},
       },
       quality: {
@@ -411,18 +415,21 @@ describe('prdCompilerFinalizer', () => {
       },
     };
 
-    const compileDocument = vi.fn((_: string, options: CompilePrdOptions) => {
-      if ((options.improveMaxNewFeatures ?? 0) === Number.MAX_SAFE_INTEGER) {
-        return relaxed;
-      }
+    const compileDocument = vi.fn((content: string) => {
+      if (content.includes('fixed-output')) return valid;
       return invalid;
     });
 
-    const repairGenerator = vi.fn(async () => ({
-      content: 'repair',
-      model: 'mock/repair',
-      usage: usage(10),
-    }));
+    const repairGenerator = vi.fn(async (prompt: string) => {
+      expect(prompt).toContain('Resolve repeated boilerplate phrasing');
+      expect(prompt).toContain('Remove prompt/meta artifacts');
+      expect(prompt).toContain('Keep complete body content in target language');
+      return {
+        content: 'fixed-output',
+        model: 'mock/repair',
+        usage: usage(10),
+      };
+    });
 
     const result = await finalizeWithCompilerGates({
       initialResult: {
@@ -430,17 +437,15 @@ describe('prdCompilerFinalizer', () => {
         model: 'mock/initial',
         usage: usage(10),
       },
-      mode: 'improve',
-      existingContent: 'baseline',
+      mode: 'generate',
       language: 'en',
-      originalRequest: 'Improve existing PRD.',
+      originalRequest: 'Generate complete PRD.',
       repairGenerator,
       compileDocument,
+      maxRepairPasses: 1,
     });
 
     expect(result.quality.valid).toBe(true);
-    expect(result.content).toBe('relaxed');
-    expect(repairGenerator).not.toHaveBeenCalled();
-    expect(compileDocument).toHaveBeenCalledTimes(2);
+    expect(repairGenerator).toHaveBeenCalledTimes(1);
   });
 });

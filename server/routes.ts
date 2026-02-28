@@ -22,7 +22,7 @@ interface AuthenticatedRequest extends Request {
 }
 import { asyncHandler } from "./asyncHandler";
 import { insertPrdSchema, users, aiPreferencesSchema } from "@shared/schema";
-import { generatePRDContent } from "./anthropic";
+// Legacy Anthropic import removed – legacy endpoint disabled (see below)
 import { exportToLinear, checkLinearConnection } from "./linearHelper";
 import { exportToDart, updateDartDoc, checkDartConnection, getDartboards } from "./dartHelper";
 import { generatePDF, generateWord } from "./exportUtils";
@@ -32,6 +32,7 @@ import { db, pool } from "./db";
 import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { parsePRDToStructure } from "./prdParser";
+import { compilePrdDocument } from "./prdCompiler";
 import { computeCompleteness } from "./prdCompleteness";
 import { setupWebSocket, broadcastPrdUpdate } from "./wsServer";
 import type { PRDStructure } from "./prdStructure";
@@ -45,7 +46,14 @@ import { canShareWithUser, planShareAction } from "./sharePolicy";
 import { logger } from "./logger";
 import { isIterativeClientDisconnected } from "./iterativeRequestGuard";
 import { splitTokenCount } from "./tokenMath";
-import { MODEL_TIERS, getDefaultFallbackModelForTier, sanitizeConfiguredModel } from "./openrouter";
+import { MODEL_TIERS, getDefaultFallbackModelForTier, sanitizeConfiguredModel, resolveModelTier } from "./openrouter";
+import { resolvePrdWorkflowMode } from "./prdWorkflowMode";
+import {
+  buildCompilerRunDiagnostics,
+  classifyRunFailure,
+  mergeDiagnosticsIntoIterationLog,
+  type PrdQualityStatus,
+} from "./prdRunQuality";
 import {
   updateUserSchema,
   createTemplateSchema,
@@ -103,6 +111,41 @@ export function syncPrdHeaderMetadata(
   );
 
   return updatedContent;
+}
+
+function qualityStatusHttpCode(status: PrdQualityStatus): number {
+  if (status === 'failed_quality') return 422;
+  if (status === 'cancelled') return 409;
+  if (status === 'failed_runtime') return 500;
+  return 200;
+}
+
+function assessCompilerOutcome(params: {
+  content: string;
+  mode: 'generate' | 'improve';
+  existingContent?: string;
+  templateCategory?: string;
+  baseDiagnostics?: Record<string, any>;
+}) {
+  const compiled = compilePrdDocument(params.content, {
+    mode: params.mode,
+    existingContent: params.existingContent,
+    templateCategory: params.templateCategory,
+    strictCanonical: true,
+    strictLanguageConsistency: true,
+    enableFeatureAggregation: true,
+  });
+  const qualityStatus: PrdQualityStatus = compiled.quality.valid ? 'passed' : 'failed_quality';
+  const compilerDiagnostics = buildCompilerRunDiagnostics({
+    quality: compiled.quality,
+    base: params.baseDiagnostics || {},
+  });
+  return {
+    qualityStatus,
+    compiled,
+    compilerDiagnostics,
+    finalizationStage: 'final' as const,
+  };
 }
 
 // Rate-limiter factory — reusable in-memory per-IP limiter
@@ -178,9 +221,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }).from(users).where(eq(users.id, userId)).limit(1);
 
     const stored = (user[0]?.aiPreferences as any) || {};
-    const tier = stored.tier || 'production';
-    const tierKey = (tier in MODEL_TIERS ? tier : 'production') as keyof typeof MODEL_TIERS;
-    const tierDefaults = MODEL_TIERS[tierKey] || MODEL_TIERS.production;
+    const tier = resolveModelTier(stored.tier);
+    const tierKey = tier;
+    const tierDefaults = MODEL_TIERS[tierKey] || MODEL_TIERS.development;
     const rawTierModels = (stored.tierModels || {}) as Record<string, {
       generatorModel?: string;
       reviewerModel?: string;
@@ -188,8 +231,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }>;
     const tierModels = Object.fromEntries(
       Object.entries(rawTierModels).map(([tierName, modelSet]) => {
-        const typedTier = (tierName in MODEL_TIERS ? tierName : 'production') as keyof typeof MODEL_TIERS;
-        const defaults = MODEL_TIERS[typedTier] || MODEL_TIERS.production;
+        const typedTier = resolveModelTier(tierName);
+        const defaults = MODEL_TIERS[typedTier] || MODEL_TIERS.development;
         return [
           tierName,
           {
@@ -236,9 +279,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const existingPrefs = (existing[0]?.aiPreferences as any) || {};
     const existingTierModels = existingPrefs.tierModels || {};
 
-    const activeTier = preferences.tier || existingPrefs.tier || 'production';
-    const activeTierKey = (activeTier in MODEL_TIERS ? activeTier : 'production') as keyof typeof MODEL_TIERS;
-    const activeTierDefaults = MODEL_TIERS[activeTierKey] || MODEL_TIERS.production;
+    const activeTier = resolveModelTier(preferences.tier || existingPrefs.tier);
+    const activeTierKey = activeTier;
+    const activeTierDefaults = MODEL_TIERS[activeTierKey] || MODEL_TIERS.development;
 
     const normalizeIncomingModel = (value: string | undefined, replacement: string): string | undefined => {
       if (!value) return undefined;
@@ -252,8 +295,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } | undefined>;
     const sanitizedIncomingTierModels = Object.fromEntries(
       Object.entries(incomingTierModels).map(([tierName, modelSet]) => {
-        const typedTier = (tierName in MODEL_TIERS ? tierName : 'production') as keyof typeof MODEL_TIERS;
-        const tierDefaults = MODEL_TIERS[typedTier] || MODEL_TIERS.production;
+        const typedTier = resolveModelTier(tierName);
+        const tierDefaults = MODEL_TIERS[typedTier] || MODEL_TIERS.development;
         return [
           tierName,
           {
@@ -802,16 +845,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     broadcastPrdUpdate(id, 'approval:updated');
   }));
 
-  // AI generation route (legacy - uses single Anthropic model)
-  app.post('/api/ai/generate', isAuthenticated, aiRateLimiter, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { prompt, currentContent } = req.body;
-
-    if (!prompt) {
-      return res.status(400).json({ message: "Prompt is required" });
-    }
-
-    const content = await generatePRDContent(prompt, currentContent || "");
-    res.json({ content });
+  // AI generation route (legacy - DISABLED: bypassed tier system, always used paid Anthropic model)
+  app.post('/api/ai/generate', isAuthenticated, aiRateLimiter, asyncHandler(async (_req: AuthenticatedRequest, res) => {
+    return res.status(410).json({
+      message: "Legacy single-model generation is disabled. Please use the Dual-AI or Guided workflow."
+    });
   }));
 
   // OpenRouter models list endpoint
@@ -870,52 +908,115 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     const service = getDualAiService();
-    const result = await service.generatePRD({
-      userInput: userInput || '',
-      existingContent,
-      mode: mode || 'improve',
-      templateCategory,
-    }, userId);
+    try {
+      const result = await service.generatePRD({
+        userInput: userInput || '',
+        existingContent,
+        mode: mode || 'improve',
+        templateCategory,
+      }, userId);
 
-    // Log AI usage for both generator and reviewer
-    await logAiUsage(
-      userId,
-      'generator',
-      result.generatorResponse.model,
-      result.generatorResponse.tier as any,
-      result.generatorResponse.usage,
-      editablePrdId || undefined
-    );
+      const modeResolution = resolvePrdWorkflowMode({
+        requestedMode: mode === 'improve' ? 'improve' : 'generate',
+        existingContent: existingContent || '',
+      });
+      const effectiveMode: 'generate' | 'improve' = modeResolution.mode;
+      const assessed = assessCompilerOutcome({
+        content: result.finalContent,
+        mode: effectiveMode,
+        existingContent,
+        templateCategory,
+      });
 
-    await logAiUsage(
-      userId,
-      'reviewer',
-      result.reviewerResponse.model,
-      result.reviewerResponse.tier as any,
-      result.reviewerResponse.usage,
-      editablePrdId || undefined
-    );
+      // Log AI usage for both generator and reviewer
+      await logAiUsage(
+        userId,
+        'generator',
+        result.generatorResponse.model,
+        result.generatorResponse.tier as any,
+        result.generatorResponse.usage,
+        editablePrdId || undefined
+      );
 
-    // Signal to frontend whether server will autosave (so frontend skips content in PATCH)
-    const saveRequested = !!(editablePrdId && result.finalContent && result.structuredContent);
-    res.json({ ...result, autoSaveRequested: saveRequested });
+      await logAiUsage(
+        userId,
+        'reviewer',
+        result.reviewerResponse.model,
+        result.reviewerResponse.tier as any,
+        result.reviewerResponse.usage,
+        editablePrdId || undefined
+      );
 
-    // Background autosave: persist structuredContent alongside content if prdId provided
-    if (saveRequested && editablePrdId) {
-      (async () => {
+      const saveRequested = !!(editablePrdId && assessed.qualityStatus === 'passed');
+      const responsePayload: any = {
+        ...result,
+        qualityStatus: assessed.qualityStatus,
+        compilerDiagnostics: assessed.compilerDiagnostics,
+        finalizationStage: assessed.finalizationStage,
+        autoSaveRequested: saveRequested,
+      };
+
+      if (assessed.qualityStatus !== 'passed') {
+        res.status(qualityStatusHttpCode(assessed.qualityStatus)).json(responsePayload);
+      } else {
+        res.json(responsePayload);
+      }
+
+      if (editablePrdId) {
+        (async () => {
+          try {
+            const existingPrd = await storage.getPrd(editablePrdId);
+            if (!existingPrd) return;
+            const iterationLog = assessed.qualityStatus === 'passed'
+              ? existingPrd.iterationLog || null
+              : mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, assessed.qualityStatus, assessed.compilerDiagnostics);
+            await storage.persistPrdRunFinalization({
+              prdId: editablePrdId,
+              userId,
+              qualityStatus: assessed.qualityStatus,
+              finalizationStage: 'final',
+              content: assessed.qualityStatus === 'passed' ? assessed.compiled.content : undefined,
+              structuredContent: assessed.qualityStatus === 'passed'
+                ? (result.structuredContent || assessed.compiled.structure)
+                : undefined,
+              iterationLog,
+              compilerDiagnostics: assessed.compilerDiagnostics,
+            });
+            logger.debug("Dual AI finalization persisted", {
+              prdId: editablePrdId,
+              qualityStatus: assessed.qualityStatus,
+            });
+          } catch (saveError) {
+            logger.error("Dual AI finalization persistence failed", { error: saveError });
+          }
+        })();
+      }
+    } catch (error: any) {
+      const failure = classifyRunFailure(error);
+      if (editablePrdId) {
         try {
           const existingPrd = await storage.getPrd(editablePrdId);
-          if (!existingPrd) return;
-          await storage.updatePrd(editablePrdId, {
-            content: result.finalContent,
-            structuredContent: result.structuredContent,
-            structuredAt: new Date(),
-          } as any);
-          logger.debug("Dual AI autosave completed", { prdId: editablePrdId, hasStructure: true });
-        } catch (saveError) {
-          logger.error("Dual AI autosave failed", { error: saveError });
+          if (existingPrd) {
+            await storage.persistPrdRunFinalization({
+              prdId: editablePrdId,
+              userId,
+              qualityStatus: failure.qualityStatus,
+              finalizationStage: 'final',
+              iterationLog: mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, failure.qualityStatus, failure.diagnostics),
+              compilerDiagnostics: failure.diagnostics,
+            });
+          }
+        } catch (persistFailureError) {
+          logger.error("Dual AI failure diagnostics persistence failed", { error: persistFailureError });
         }
-      })();
+      }
+      res.status(qualityStatusHttpCode(failure.qualityStatus)).json({
+        message: failure.message,
+        qualityStatus: failure.qualityStatus,
+        compilerDiagnostics: failure.diagnostics,
+        finalizationStage: 'final',
+        autoSaveRequested: false,
+      });
     }
   }));
 
@@ -952,6 +1053,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/ai/generate-iterative', isAuthenticated, aiRateLimiter, async (req, res) => {
     const authReq = req as unknown as AuthenticatedRequest;
+    let editablePrdId: string | null = null;
+    let userId = '';
     let useSSE = false;
     let sseClosed = false;
     let sseCompleted = false;
@@ -980,8 +1083,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Support both old format (initialContent) and new format (existingContent + additionalRequirements + mode)
       const { initialContent, existingContent, additionalRequirements, mode, iterationCount, useFinalReview, prdId } = req.body;
-      const userId = authReq.user.claims.sub;
-      const editablePrdId = await requireEditablePrdId(storage, authReq, res, prdId, {
+      userId = authReq.user.claims.sub;
+      editablePrdId = await requireEditablePrdId(storage, authReq, res, prdId, {
         invalidMessage: "PRD ID must be a non-empty string",
       });
       if (prdId !== undefined && prdId !== null && !editablePrdId) {
@@ -1111,6 +1214,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         iterationCount: result.iterations?.length || 0,
       });
 
+      const assessed = assessCompilerOutcome({
+        content: result.finalContent || (result as any).mergedPRD || '',
+        mode: finalMode,
+        existingContent: finalMode === 'improve' ? finalExistingContent : undefined,
+        templateCategory,
+        baseDiagnostics: result.diagnostics || {},
+      });
+
       const includeVerboseIterations = process.env.DEBUG_ITERATIVE_VERBOSE === "true";
       const slimResult: any = {
         finalContent: result.finalContent || (result as any).mergedPRD || '',
@@ -1118,6 +1229,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalTokens: result.totalTokens,
         modelsUsed: result.modelsUsed,
         diagnostics: result.diagnostics,
+        qualityStatus: assessed.qualityStatus,
+        compilerDiagnostics: assessed.compilerDiagnostics,
+        finalizationStage: assessed.finalizationStage,
         finalReview: result.finalReview
           ? {
               model: result.finalReview.model,
@@ -1140,51 +1254,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
         verboseIterations: includeVerboseIterations,
       });
 
-      const contentToPersist = slimResult.finalContent;
-      const saveRequested = !!(editablePrdId && contentToPersist && contentToPersist.trim().length > 0);
+      const contentToPersist = assessed.compiled.content;
+      const saveRequested = !!(editablePrdId && assessed.qualityStatus === 'passed' && contentToPersist && contentToPersist.trim().length > 0);
       slimResult.autoSaveRequested = saveRequested;
       logger.debug("Iterative autosave decision", {
         hasPrdId: !!editablePrdId,
         saveRequested,
+        qualityStatus: assessed.qualityStatus,
       });
 
       // Respond first to avoid blocking UI on DB writes for large runs.
       if (useSSE) {
-        // Send final result as named SSE event, then close the stream
         if (!isRequestClosed()) {
-          res.write(`event: result\ndata: ${JSON.stringify(slimResult)}\n\n`);
+          if (assessed.qualityStatus === 'passed') {
+            res.write(`event: result\ndata: ${JSON.stringify(slimResult)}\n\n`);
+          } else {
+            res.write(`event: error\ndata: ${JSON.stringify({
+              message: 'Compiler quality gate failed after final verification.',
+              ...slimResult,
+            })}\n\n`);
+          }
         }
         sseCompleted = true;
         safeEndSse();
-      } else {
+      } else if (assessed.qualityStatus === 'passed') {
         res.json(slimResult);
+      } else {
+        res.status(qualityStatusHttpCode(assessed.qualityStatus)).json({
+          message: 'Compiler quality gate failed after final verification.',
+          ...slimResult,
+        });
       }
-      logger.info("Iterative response sent", { hasPrdId: !!editablePrdId });
+      logger.info("Iterative response sent", {
+        hasPrdId: !!editablePrdId,
+        qualityStatus: assessed.qualityStatus,
+      });
 
-      // Persist iterative results server-side in background so long-running
-      // workflows are not lost even if the client disconnects.
-      if (saveRequested && editablePrdId) {
+      if (editablePrdId) {
         (async () => {
           try {
-            const existingPrd = await storage.getPrd(editablePrdId);
+            const existingPrd = await storage.getPrd(editablePrdId!);
             if (!existingPrd) {
-              logger.warn("Iterative autosave skipped because PRD was not found", { prdId: editablePrdId });
+              logger.warn("Iterative finalization persistence skipped because PRD was not found", { prdId: editablePrdId });
               return;
             }
 
-            await storage.updatePrd(editablePrdId, {
-              content: contentToPersist,
-              iterationLog: result.iterationLog || null,
-              structuredContent: result.structuredContent || null,
-              structuredAt: result.structuredContent ? new Date() : undefined,
-            } as any);
-            logger.info("Iterative autosave completed", {
+            const iterationLog = assessed.qualityStatus === 'passed'
+              ? (result.iterationLog || existingPrd.iterationLog || null)
+              : mergeDiagnosticsIntoIterationLog(result.iterationLog || existingPrd.iterationLog, assessed.qualityStatus, assessed.compilerDiagnostics);
+
+            await storage.persistPrdRunFinalization({
+              prdId: editablePrdId!,
+              userId,
+              qualityStatus: assessed.qualityStatus,
+              finalizationStage: 'final',
+              content: assessed.qualityStatus === 'passed' ? contentToPersist : undefined,
+              iterationLog,
+              structuredContent: assessed.qualityStatus === 'passed' ? (result.structuredContent || assessed.compiled.structure) : undefined,
+              compilerDiagnostics: assessed.compilerDiagnostics,
+            });
+            logger.info("Iterative finalization persisted", {
               prdId: editablePrdId,
-              contentLength: contentToPersist.length,
-              hasStructure: !!result.structuredContent,
+              qualityStatus: assessed.qualityStatus,
+              contentLength: assessed.qualityStatus === 'passed' ? contentToPersist.length : 0,
             });
           } catch (saveError) {
-            logger.error("Iterative autosave failed", { error: saveError });
+            logger.error("Iterative finalization persistence failed", { error: saveError });
           }
         })();
       }
@@ -1244,15 +1379,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       logger.error("Iterative AI generation failed", { error });
-
-      // Pass through the detailed error message from AI services
-      const errorMessage = error.message || "Failed to generate PRD with iterative AI workflow. Please try again or check your API settings.";
+      const failure = classifyRunFailure(error);
       if (useSSE && res.headersSent && !res.writableEnded && !res.destroyed) {
-        // SSE mode: send error as event and close stream
-        res.write(`event: error\ndata: ${JSON.stringify({ message: errorMessage })}\n\n`);
+        res.write(`event: error\ndata: ${JSON.stringify({
+          message: failure.message,
+          qualityStatus: failure.qualityStatus,
+          compilerDiagnostics: failure.diagnostics,
+          finalizationStage: 'final',
+          autoSaveRequested: false,
+        })}\n\n`);
         res.end();
       } else {
-        res.status(500).json({ message: errorMessage });
+        res.status(qualityStatusHttpCode(failure.qualityStatus)).json({
+          message: failure.message,
+          qualityStatus: failure.qualityStatus,
+          compilerDiagnostics: failure.diagnostics,
+          finalizationStage: 'final',
+          autoSaveRequested: false,
+        });
+      }
+
+      if (editablePrdId && userId) {
+        try {
+          const existingPrd = await storage.getPrd(editablePrdId);
+          if (existingPrd) {
+            await storage.persistPrdRunFinalization({
+              prdId: editablePrdId,
+              userId,
+              qualityStatus: failure.qualityStatus,
+              finalizationStage: 'final',
+              iterationLog: mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, failure.qualityStatus, failure.diagnostics),
+              compilerDiagnostics: failure.diagnostics,
+            });
+          }
+        } catch (persistFailureError) {
+          logger.error("Iterative failure diagnostics persistence failed", { error: persistFailureError });
+        }
       }
     } finally {
       cleanupSseListeners();
@@ -1353,21 +1515,94 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     const service = getGuidedAiService();
-    const result = await service.finalizePRD(sessionId, userId, { templateCategory });
+    try {
+      const result = await service.finalizePRD(sessionId, userId, { templateCategory });
+      const assessed = assessCompilerOutcome({
+        content: result.prdContent,
+        mode: result.workflowMode || 'generate',
+        existingContent: result.existingContent,
+        templateCategory,
+      });
+      const saveRequested = !!(editablePrdId && assessed.qualityStatus === 'passed');
 
-    // Log AI usage
-    if (result.modelsUsed.length > 0) {
-      await logAiUsage(
-        userId,
-        'generator',
-        result.modelsUsed[0],
-        'production',
-        { prompt_tokens: 0, completion_tokens: result.tokensUsed, total_tokens: result.tokensUsed },
-        prdId
-      );
+      // Log AI usage with actual user tier (not hardcoded)
+      if (result.modelsUsed.length > 0) {
+        const [userRow] = await db.select({ aiPreferences: users.aiPreferences }).from(users).where(eq(users.id, userId)).limit(1);
+        const userTier = resolveModelTier((userRow?.aiPreferences as any)?.tier);
+        await logAiUsage(
+          userId,
+          'generator',
+          result.modelsUsed[0],
+          userTier,
+          { prompt_tokens: 0, completion_tokens: result.tokensUsed, total_tokens: result.tokensUsed },
+          prdId
+        );
+      }
+
+      const payload: any = {
+        ...result,
+        qualityStatus: assessed.qualityStatus,
+        compilerDiagnostics: assessed.compilerDiagnostics,
+        finalizationStage: assessed.finalizationStage,
+        autoSaveRequested: saveRequested,
+      };
+
+      if (assessed.qualityStatus !== 'passed') {
+        res.status(qualityStatusHttpCode(assessed.qualityStatus)).json(payload);
+      } else {
+        res.json(payload);
+      }
+
+      if (editablePrdId) {
+        (async () => {
+          try {
+            const existingPrd = await storage.getPrd(editablePrdId!);
+            if (!existingPrd) return;
+            const iterationLog = assessed.qualityStatus === 'passed'
+              ? existingPrd.iterationLog || null
+              : mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, assessed.qualityStatus, assessed.compilerDiagnostics);
+            await storage.persistPrdRunFinalization({
+              prdId: editablePrdId!,
+              userId,
+              qualityStatus: assessed.qualityStatus,
+              finalizationStage: 'final',
+              content: assessed.qualityStatus === 'passed' ? assessed.compiled.content : undefined,
+              structuredContent: assessed.qualityStatus === 'passed' ? assessed.compiled.structure : undefined,
+              iterationLog,
+              compilerDiagnostics: assessed.compilerDiagnostics,
+            });
+          } catch (persistError) {
+            logger.error("Guided finalize persistence failed", { error: persistError });
+          }
+        })();
+      }
+    } catch (error: any) {
+      const failure = classifyRunFailure(error);
+      if (editablePrdId) {
+        try {
+          const existingPrd = await storage.getPrd(editablePrdId);
+          if (existingPrd) {
+            await storage.persistPrdRunFinalization({
+              prdId: editablePrdId,
+              userId,
+              qualityStatus: failure.qualityStatus,
+              finalizationStage: 'final',
+              iterationLog: mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, failure.qualityStatus, failure.diagnostics),
+              compilerDiagnostics: failure.diagnostics,
+            });
+          }
+        } catch (persistFailureError) {
+          logger.error("Guided finalize failure diagnostics persistence failed", { error: persistFailureError });
+        }
+      }
+      res.status(qualityStatusHttpCode(failure.qualityStatus)).json({
+        message: failure.message,
+        qualityStatus: failure.qualityStatus,
+        compilerDiagnostics: failure.diagnostics,
+        finalizationStage: 'final',
+        autoSaveRequested: false,
+      });
     }
-
-    res.json(result);
   }));
   
   // Skip guided workflow and generate PRD directly
@@ -1400,25 +1635,99 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     const service = getGuidedAiService();
-    const result = await service.skipToFinalize(normalizedIdea, userId, {
-      existingContent: hasExistingContent ? normalizedExistingContent : undefined,
-      mode: mode === 'improve' ? 'improve' : 'generate',
-      templateCategory,
-    });
+    try {
+      const requestedMode: 'improve' | 'generate' = mode === 'improve' ? 'improve' : 'generate';
+      const result = await service.skipToFinalize(normalizedIdea, userId, {
+        existingContent: hasExistingContent ? normalizedExistingContent : undefined,
+        mode: requestedMode,
+        templateCategory,
+      });
+      const assessed = assessCompilerOutcome({
+        content: result.prdContent,
+        mode: result.workflowMode || requestedMode,
+        existingContent: result.existingContent,
+        templateCategory,
+      });
+      const saveRequested = !!(editablePrdId && assessed.qualityStatus === 'passed');
 
-    // Log AI usage
-    if (result.modelsUsed.length > 0) {
-      await logAiUsage(
-        userId,
-        'generator',
-        result.modelsUsed[0],
-        'production',
-        { prompt_tokens: 0, completion_tokens: result.tokensUsed, total_tokens: result.tokensUsed },
-        prdId
-      );
+      // Log AI usage with actual user tier (not hardcoded)
+      if (result.modelsUsed.length > 0) {
+        const [userRow] = await db.select({ aiPreferences: users.aiPreferences }).from(users).where(eq(users.id, userId)).limit(1);
+        const userTier = resolveModelTier((userRow?.aiPreferences as any)?.tier);
+        await logAiUsage(
+          userId,
+          'generator',
+          result.modelsUsed[0],
+          userTier,
+          { prompt_tokens: 0, completion_tokens: result.tokensUsed, total_tokens: result.tokensUsed },
+          prdId
+        );
+      }
+
+      const payload: any = {
+        ...result,
+        qualityStatus: assessed.qualityStatus,
+        compilerDiagnostics: assessed.compilerDiagnostics,
+        finalizationStage: assessed.finalizationStage,
+        autoSaveRequested: saveRequested,
+      };
+
+      if (assessed.qualityStatus !== 'passed') {
+        res.status(qualityStatusHttpCode(assessed.qualityStatus)).json(payload);
+      } else {
+        res.json(payload);
+      }
+
+      if (editablePrdId) {
+        (async () => {
+          try {
+            const existingPrd = await storage.getPrd(editablePrdId!);
+            if (!existingPrd) return;
+            const iterationLog = assessed.qualityStatus === 'passed'
+              ? existingPrd.iterationLog || null
+              : mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, assessed.qualityStatus, assessed.compilerDiagnostics);
+            await storage.persistPrdRunFinalization({
+              prdId: editablePrdId!,
+              userId,
+              qualityStatus: assessed.qualityStatus,
+              finalizationStage: 'final',
+              content: assessed.qualityStatus === 'passed' ? assessed.compiled.content : undefined,
+              structuredContent: assessed.qualityStatus === 'passed' ? assessed.compiled.structure : undefined,
+              iterationLog,
+              compilerDiagnostics: assessed.compilerDiagnostics,
+            });
+          } catch (persistError) {
+            logger.error("Guided skip persistence failed", { error: persistError });
+          }
+        })();
+      }
+    } catch (error: any) {
+      const failure = classifyRunFailure(error);
+      if (editablePrdId) {
+        try {
+          const existingPrd = await storage.getPrd(editablePrdId);
+          if (existingPrd) {
+            await storage.persistPrdRunFinalization({
+              prdId: editablePrdId,
+              userId,
+              qualityStatus: failure.qualityStatus,
+              finalizationStage: 'final',
+              iterationLog: mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, failure.qualityStatus, failure.diagnostics),
+              compilerDiagnostics: failure.diagnostics,
+            });
+          }
+        } catch (persistFailureError) {
+          logger.error("Guided skip failure diagnostics persistence failed", { error: persistFailureError });
+        }
+      }
+      res.status(qualityStatusHttpCode(failure.qualityStatus)).json({
+        message: failure.message,
+        qualityStatus: failure.qualityStatus,
+        compilerDiagnostics: failure.diagnostics,
+        finalizationStage: 'final',
+        autoSaveRequested: false,
+      });
     }
-
-    res.json(result);
   }));
 
   // Export routes

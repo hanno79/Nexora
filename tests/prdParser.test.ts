@@ -7,6 +7,7 @@ import {
   parsePRDToStructure,
 } from '../server/prdParser';
 import { assembleStructureToMarkdown } from '../server/prdAssembler';
+import { compilePrdDocument } from '../server/prdCompiler';
 import type { FeatureSpec } from '../server/prdStructure';
 
 describe('normalizeFeatureId', () => {
@@ -382,5 +383,42 @@ describe('parsePRDToStructure', () => {
     expect(feature.dataImpact).toContain('Datenbank');
     expect(feature.uiImpact).toContain('Kanban');
     expect(feature.acceptanceCriteria?.length).toBeGreaterThan(0);
+  });
+
+  it('keeps parser stability after compiler aggregation and canonicalization', () => {
+    const markdown = [
+      '## System Vision',
+      'Task operations platform for collaborative planning.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      '### F-01: Task list management',
+      '1. Purpose',
+      'Manage task lists in team boards.',
+      '10. Acceptance Criteria',
+      '- Lists can be managed deterministically.',
+      '',
+      '### F-02: Task list management workflow',
+      '1. Purpose',
+      'Manage task lists with deterministic behavior.',
+      '10. Acceptance Criteria',
+      '- List updates are persisted.',
+      '',
+      '### F-03: Task assignment workflow',
+      '1. Purpose',
+      'Assign tasks.',
+      '10. Acceptance Criteria',
+      '- Assignment is visible.',
+    ].join('\n');
+
+    const compiled = compilePrdDocument(markdown, {
+      mode: 'generate',
+      language: 'en',
+      templateCategory: 'feature',
+    });
+    const reparsed = parsePRDToStructure(compiled.content);
+
+    expect(reparsed.features.length).toBeLessThanOrEqual(3);
+    expect(new Set(reparsed.features.map(feature => feature.id)).size).toBe(reparsed.features.length);
   });
 });

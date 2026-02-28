@@ -119,7 +119,7 @@ test.describe('Guided PRD compiler flow (e2e)', () => {
     const compiled = compilePrdDocument(truncatedCandidate, {
       mode: 'improve',
       existingContent: baseline,
-      language: 'de',
+      language: 'en',
     });
 
     expect(compiled.quality.valid).toBeTruthy();

@@ -1,6 +1,6 @@
 // Guided AI Service - User-involved PRD Generation Workflow
 import { getOpenRouterClient } from './openrouter';
-import { MODEL_TIERS, getDefaultFallbackModelForTier, sanitizeConfiguredModel } from './openrouter';
+import { MODEL_TIERS, getDefaultFallbackModelForTier, sanitizeConfiguredModel, resolveModelTier } from './openrouter';
 import {
   FEATURE_ANALYSIS_PROMPT,
   USER_QUESTION_PROMPT,
@@ -370,6 +370,8 @@ Generate a complete, professional PRD that incorporates all gathered requirement
         prdContent: compiled.content,
         tokensUsed: compiled.totalTokens,
         modelsUsed: compiled.modelsUsed,
+        workflowMode: isImproveWorkflow ? 'improve' : 'generate',
+        existingContent: isImproveWorkflow ? context.existingContent : undefined,
       };
     } catch (error) {
       // Restore session context on failure so users can retry finalize.
@@ -470,6 +472,8 @@ Generate a complete, professional PRD.`;
       prdContent: compiled.content,
       tokensUsed: analysisResult.usage.total_tokens + compiled.totalTokens,
       modelsUsed: [analysisResult.model, ...compiled.modelsUsed],
+      workflowMode: isImproveWorkflow ? 'improve' : 'generate',
+      existingContent: isImproveWorkflow ? normalizedExistingContent : undefined,
     };
   }
 
@@ -692,10 +696,9 @@ Generate a complete, professional PRD.`;
         
         if (userPrefs[0].aiPreferences) {
           const prefs = userPrefs[0].aiPreferences as any;
-          const tier = prefs.tier || 'production';
-          const tierKey = (tier in MODEL_TIERS ? tier : 'production') as keyof typeof MODEL_TIERS;
-          const tierDefaults = MODEL_TIERS[tierKey] || MODEL_TIERS.production;
-          const activeTierModels = prefs.tierModels?.[tier] || {};
+          const tierKey = resolveModelTier(prefs.tier);
+          const tierDefaults = MODEL_TIERS[tierKey] || MODEL_TIERS.development;
+          const activeTierModels = prefs.tierModels?.[tierKey] || {};
 
           const resolvedGeneratorModel =
             sanitizeConfiguredModel(activeTierModels.generatorModel || prefs.generatorModel) ||

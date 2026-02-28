@@ -1,12 +1,10 @@
 import type { TokenUsage } from '@shared/schema';
 import type { PRDStructure } from './prdStructure';
-import { logger } from './logger';
 import {
   CANONICAL_PRD_HEADINGS,
   compilePrdDocument,
   looksLikeTruncatedOutput,
   type CompilePrdDocumentFn,
-  type CompilePrdResult,
   type PrdQualityReport,
 } from './prdCompiler';
 import { buildTemplateInstruction } from './prdTemplateIntent';
@@ -39,16 +37,17 @@ export interface FinalizeWithCompilerGatesResult {
   repairAttempts: CompilerModelResult[];
 }
 
-const FINALIZER_IMPROVE_MAX_NEW_FEATURES: number = (() => {
-  const raw = process.env.PRD_FINALIZER_IMPROVE_MAX_NEW_FEATURES;
-  if (raw === undefined || raw.trim() === '') return 0;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    logger.warn('Invalid PRD_FINALIZER_IMPROVE_MAX_NEW_FEATURES value; defaulting to 0', { raw });
-    return 0;
+export class PrdCompilerQualityError extends Error {
+  readonly quality: PrdQualityReport;
+  readonly repairAttempts: CompilerModelResult[];
+
+  constructor(message: string, quality: PrdQualityReport, repairAttempts: CompilerModelResult[]) {
+    super(message);
+    this.name = 'PrdCompilerQualityError';
+    this.quality = quality;
+    this.repairAttempts = repairAttempts;
   }
-  return Math.floor(parsed);
-})();
+}
 
 function shouldRepair(
   result: CompilerModelResult,
@@ -112,6 +111,9 @@ ${canonicalHeadings}
 ${templateInstruction}
 - Do not add any extra top-level sections.
 - Keep existing feature IDs stable and preserve baseline content unless directly improved.
+- Resolve repeated boilerplate phrasing so each feature spec stays concrete and unique.
+- Remove prompt/meta artifacts (e.g., Iteration X, Questions Identified, Answer:, Reasoning:, ORIGINAL PRD, REVIEW FEEDBACK).
+- Keep complete body content in target language except canonical H2 headings and allowed technical terms.
 - No truncation, placeholders, or unfinished bullets/sentences.`;
   }
 
@@ -134,47 +136,10 @@ ${canonicalHeadings}
 - Follow this template context:
 ${templateInstruction}
 - Do not add any extra top-level sections.
+- Resolve repeated boilerplate phrasing so each feature spec stays concrete and unique.
+- Remove prompt/meta artifacts (e.g., Iteration X, Questions Identified, Answer:, Reasoning:, ORIGINAL PRD, REVIEW FEEDBACK).
+- Keep complete body content in target language except canonical H2 headings and allowed technical terms.
 - No truncation, placeholders, or unfinished bullets/sentences.`;
-}
-
-function countErrors(result: CompilePrdResult): number {
-  return result.quality.issues.filter(issue => issue.severity === 'error').length;
-}
-
-function shouldRelaxImproveDeltaLimit(
-  mode: 'generate' | 'improve',
-  result: CompilePrdResult
-): boolean {
-  if (mode !== 'improve') return false;
-  const codes = new Set(result.quality.issues.map(issue => issue.code));
-  return codes.has('missing_feature_catalogue') && codes.has('improve_new_feature_limit_applied');
-}
-
-function maybeRelaxImproveLimit(params: {
-  mode: 'generate' | 'improve';
-  baseResult: CompilePrdResult;
-  compile: (improveMaxNewFeatures?: number) => CompilePrdResult;
-}): CompilePrdResult {
-  const { mode, baseResult, compile } = params;
-  if (!shouldRelaxImproveDeltaLimit(mode, baseResult)) {
-    return baseResult;
-  }
-
-  const relaxed = compile(Number.MAX_SAFE_INTEGER);
-  const baseErrors = countErrors(baseResult);
-  const relaxedErrors = countErrors(relaxed);
-
-  if (relaxed.quality.featureCount > baseResult.quality.featureCount) {
-    return relaxed;
-  }
-  if (relaxedErrors < baseErrors) {
-    return relaxed;
-  }
-  if (baseResult.quality.truncatedLikely && !relaxed.quality.truncatedLikely) {
-    return relaxed;
-  }
-
-  return baseResult;
 }
 
 export async function finalizeWithCompilerGates(
@@ -193,25 +158,19 @@ export async function finalizeWithCompilerGates(
   } = options;
 
   let current = initialResult;
-  const compileCurrent = (content: string, improveMaxNewFeatures?: number) =>
+  const compileCurrent = (content: string) =>
     compileDocument(content, {
       mode,
       existingContent,
       language,
       templateCategory,
       strictCanonical: true,
+      strictLanguageConsistency: true,
+      enableFeatureAggregation: true,
       contextHint: originalRequest,
-      improveMaxNewFeatures: mode === 'improve'
-        ? (improveMaxNewFeatures ?? FINALIZER_IMPROVE_MAX_NEW_FEATURES)
-        : undefined,
     });
 
-  let compiled = maybeRelaxImproveLimit({
-    mode,
-    baseResult: compileCurrent(current.content),
-    compile: (improveMaxNewFeatures?: number) =>
-      compileCurrent(current.content, improveMaxNewFeatures),
-  });
+  let compiled = compileCurrent(current.content);
   let needsRepair = shouldRepair(current, compiled.quality);
   const repairAttempts: CompilerModelResult[] = [];
 
@@ -229,18 +188,17 @@ export async function finalizeWithCompilerGates(
 
     current = await repairGenerator(repairPrompt, pass);
     repairAttempts.push(current);
-    compiled = maybeRelaxImproveLimit({
-      mode,
-      baseResult: compileCurrent(current.content),
-      compile: (improveMaxNewFeatures?: number) =>
-        compileCurrent(current.content, improveMaxNewFeatures),
-    });
+    compiled = compileCurrent(current.content);
     needsRepair = shouldRepair(current, compiled.quality);
   }
 
   if (needsRepair) {
     const details = compiled.quality.issues.map(i => i.message).join(' | ') || 'Unknown quality issue.';
-    throw new Error(`PRD compiler quality gate failed after ${repairAttempts.length} repair attempt(s): ${details}`);
+    throw new PrdCompilerQualityError(
+      `PRD compiler quality gate failed after ${repairAttempts.length} repair attempt(s): ${details}`,
+      compiled.quality,
+      repairAttempts
+    );
   }
 
   return {

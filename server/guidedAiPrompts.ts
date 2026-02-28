@@ -338,4 +338,6 @@ export interface GuidedFinalizeResponse {
   prdContent: string;
   tokensUsed: number;
   modelsUsed: string[];
+  workflowMode?: 'generate' | 'improve';
+  existingContent?: string;
 }

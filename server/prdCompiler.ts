@@ -8,6 +8,15 @@ import {
   isLegacyGenericFallback,
   type RequiredSectionKey,
 } from './prdTemplateIntent';
+import {
+  applyConservativeFeatureAggregation,
+  collectBoilerplateRepetitionIssues,
+  collectLanguageConsistencyIssues,
+  collectMetaLeakIssues,
+  findFeatureAggregationCandidates,
+  sanitizeMetaLeaksInStructure,
+  type FeatureAggregationAnalysis,
+} from './prdQualitySignals';
 
 type SupportedLanguage = 'de' | 'en';
 
@@ -15,6 +24,8 @@ export interface PrdQualityIssue {
   code: string;
   message: string;
   severity: 'error' | 'warning';
+  evidencePath?: string;
+  evidenceSnippet?: string;
 }
 
 export interface PrdQualityReport {
@@ -31,6 +42,9 @@ export interface CompilePrdOptions {
   language?: SupportedLanguage;
   strictCanonical?: boolean;
   improveMaxNewFeatures?: number;
+  strictLanguageConsistency?: boolean;
+  enableFeatureAggregation?: boolean;
+  aggregationStrictness?: 'conservative';
   templateCategory?: string;
   contextHint?: string;
 }
@@ -135,10 +149,6 @@ export const CANONICAL_PRD_HEADINGS = [
   'Success Criteria & Acceptance Testing',
 ] as const;
 
-const IMPROVE_MAX_NEW_FEATURES = Math.max(
-  0,
-  Number(process.env.PRD_IMPROVE_MAX_NEW_FEATURES || 4)
-);
 const MIN_REQUIRED_SECTION_LENGTH = 30;
 
 const FEATURE_STRUCTURED_FIELDS: Array<keyof FeatureSpec> = [
@@ -156,7 +166,6 @@ const FEATURE_STRUCTURED_FIELDS: Array<keyof FeatureSpec> = [
 
 interface ImproveMergeResult {
   structure: PRDStructure;
-  droppedNewFeatureIds: string[];
 }
 
 interface ValidationOptions {
@@ -165,6 +174,10 @@ interface ValidationOptions {
   unknownSectionHeadings?: string[];
   mode?: 'generate' | 'improve';
   templateCategory?: string;
+  targetLanguage?: SupportedLanguage;
+  strictLanguageConsistency?: boolean;
+  aggregationAppliedCount?: number;
+  aggregationNearDuplicateCount?: number;
 }
 
 function hasText(value: unknown): boolean {
@@ -359,29 +372,21 @@ function mergeFeatureSpecs(base: FeatureSpec, candidate: FeatureSpec): FeatureSp
 
 function mergeFeatureMaps(
   base: FeatureSpec[],
-  candidate: FeatureSpec[],
-  maxNewFeatures: number
-): { features: FeatureSpec[]; droppedNewFeatureIds: string[] } {
+  candidate: FeatureSpec[]
+): { features: FeatureSpec[] } {
   const byId = new Map<string, FeatureSpec>();
   for (const feature of base) {
     byId.set(feature.id, { ...feature });
   }
 
-  const droppedNewFeatureIds: string[] = [];
   const sortedCandidate = [...candidate].sort((a, b) =>
     a.id.localeCompare(b.id, undefined, { numeric: true })
   );
-  let acceptedNewFeatureCount = 0;
 
   for (const feature of sortedCandidate) {
     const existing = byId.get(feature.id);
     if (!existing) {
-      if (acceptedNewFeatureCount >= maxNewFeatures) {
-        droppedNewFeatureIds.push(feature.id);
-        continue;
-      }
       byId.set(feature.id, { ...feature });
-      acceptedNewFeatureCount++;
       continue;
     }
     byId.set(feature.id, mergeFeatureSpecs(existing, feature));
@@ -391,7 +396,6 @@ function mergeFeatureMaps(
     features: Array.from(byId.values()).sort((a, b) =>
       a.id.localeCompare(b.id, undefined, { numeric: true })
     ),
-    droppedNewFeatureIds,
   };
 }
 
@@ -413,13 +417,11 @@ function mergeSectionWithPreservation(baseValue: string, candidateValue: string)
 
 function mergeStructuresForImproveWithDiagnostics(
   base: PRDStructure,
-  candidate: PRDStructure,
-  maxNewFeatures: number
+  candidate: PRDStructure
 ): ImproveMergeResult {
   const mergedFeatures = mergeFeatureMaps(
     base.features || [],
-    candidate.features || [],
-    maxNewFeatures
+    candidate.features || []
   );
 
   const merged: PRDStructure = {
@@ -452,16 +454,14 @@ function mergeStructuresForImproveWithDiagnostics(
 
   return {
     structure: merged,
-    droppedNewFeatureIds: mergedFeatures.droppedNewFeatureIds,
   };
 }
 
 export function mergeStructuresForImprove(
   base: PRDStructure,
-  candidate: PRDStructure,
-  maxNewFeatures: number = IMPROVE_MAX_NEW_FEATURES
+  candidate: PRDStructure
 ): PRDStructure {
-  return mergeStructuresForImproveWithDiagnostics(base, candidate, maxNewFeatures).structure;
+  return mergeStructuresForImproveWithDiagnostics(base, candidate).structure;
 }
 
 export function ensurePrdRequiredSections(
@@ -774,6 +774,44 @@ export function validatePrdStructure(
     issues.push(issue);
   }
 
+  const boilerplateIssues = collectBoilerplateRepetitionIssues(structure);
+  for (const issue of boilerplateIssues) {
+    issues.push(issue);
+  }
+
+  const metaLeakIssues = collectMetaLeakIssues(structure);
+  for (const issue of metaLeakIssues) {
+    issues.push(issue);
+  }
+
+  const strictLanguageConsistency = options?.strictLanguageConsistency !== false;
+  if (strictLanguageConsistency) {
+    const languageIssues = collectLanguageConsistencyIssues(
+      structure,
+      options?.targetLanguage || 'en',
+      options?.templateCategory
+    );
+    for (const issue of languageIssues) {
+      issues.push(issue);
+    }
+  }
+
+  if ((options?.aggregationAppliedCount || 0) > 0) {
+    issues.push({
+      code: 'feature_aggregation_applied',
+      message: `Conservative feature aggregation merged ${options?.aggregationAppliedCount || 0} near-duplicate feature(s).`,
+      severity: 'warning',
+    });
+  }
+
+  if ((options?.aggregationNearDuplicateCount || 0) > 0) {
+    issues.push({
+      code: 'feature_near_duplicates_unmerged',
+      message: `${options?.aggregationNearDuplicateCount || 0} potential near-duplicate feature pair(s) were detected but not auto-merged (low confidence).`,
+      severity: 'warning',
+    });
+  }
+
   const hasErrors = issues.some(issue => issue.severity === 'error');
   return {
     valid: !hasErrors,
@@ -789,36 +827,45 @@ export function compilePrdDocument(
   options: CompilePrdOptions
 ): CompilePrdResult {
   const strictCanonical = options.strictCanonical !== false;
-  const improveMaxNewFeatures = Math.max(
-    0,
-    Number.isFinite(options.improveMaxNewFeatures as number)
-      ? Number(options.improveMaxNewFeatures)
-      : IMPROVE_MAX_NEW_FEATURES
-  );
+  const strictLanguageConsistency = options.strictLanguageConsistency !== false;
+  const enableFeatureAggregation = options.enableFeatureAggregation !== false;
   const language = detectLanguage(options.language, rawContent);
-  const candidate = safeParseStructure(rawContent);
+  const candidate = sanitizeMetaLeaksInStructure(safeParseStructure(rawContent)).structure;
   const candidateUnknownSections = collectUnknownSectionHeadings(candidate);
   const improveBaseStructure = options.mode === 'improve' && hasText(options.existingContent)
-    ? safeParseStructure(String(options.existingContent || ''))
+    ? sanitizeMetaLeaksInStructure(safeParseStructure(String(options.existingContent || ''))).structure
     : null;
-  const improveBaseFeatureCount = improveBaseStructure?.features?.length ?? 0;
-  const effectiveImproveMaxNewFeatures = options.mode === 'improve' && improveBaseFeatureCount === 0
-    ? Number.MAX_SAFE_INTEGER
-    : improveMaxNewFeatures;
-  let improveMergeDiagnostics: ImproveMergeResult | null = null;
   const merged = improveBaseStructure
-    ? (() => {
-      improveMergeDiagnostics = mergeStructuresForImproveWithDiagnostics(
-        improveBaseStructure,
-        candidate,
-        effectiveImproveMaxNewFeatures
-      );
-      return improveMergeDiagnostics.structure;
-    })()
+    ? mergeStructuresForImproveWithDiagnostics(
+      improveBaseStructure,
+      candidate
+    ).structure
     : candidate;
 
   const normalized = normalizeStructureForCompiler(merged, { strictCanonical });
-  const withRequiredContext = ensurePrdRequiredSections(normalized, language, {
+  const sanitized = sanitizeMetaLeaksInStructure(normalized).structure;
+  let aggregationAnalysis: FeatureAggregationAnalysis = {
+    candidates: [],
+    nearDuplicates: [],
+  };
+  let aggregatedFeatureCount = 0;
+  const maybeAggregated = (() => {
+    if (!enableFeatureAggregation) return sanitized;
+    aggregationAnalysis = findFeatureAggregationCandidates(
+      sanitized.features || [],
+      options.templateCategory,
+      language
+    );
+    const aggregated = applyConservativeFeatureAggregation(
+      sanitized,
+      aggregationAnalysis.candidates,
+      language
+    );
+    aggregatedFeatureCount = aggregated.aggregatedFeatureCount;
+    return aggregated.structure;
+  })();
+
+  const withRequiredContext = ensurePrdRequiredSections(maybeAggregated, language, {
     templateCategory: options.templateCategory,
     contextHint: options.contextHint || rawContent,
   });
@@ -834,14 +881,11 @@ export function compilePrdDocument(
     unknownSectionHeadings: candidateUnknownSections,
     mode: options.mode,
     templateCategory: options.templateCategory,
+    targetLanguage: language,
+    strictLanguageConsistency,
+    aggregationAppliedCount: aggregatedFeatureCount,
+    aggregationNearDuplicateCount: aggregationAnalysis.nearDuplicates.length,
   });
-  if (improveMergeDiagnostics && improveMergeDiagnostics.droppedNewFeatureIds.length > 0) {
-    quality.issues.push({
-      code: 'improve_new_feature_limit_applied',
-      message: `Improve-mode delta limit applied: dropped ${improveMergeDiagnostics.droppedNewFeatureIds.length} new feature(s).`,
-      severity: 'warning',
-    });
-  }
 
   return {
     content,

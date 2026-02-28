@@ -538,4 +538,162 @@ describe('prdTemplateIntent compiler integration', () => {
       compiled.quality.issues.some(issue => issue.code === 'template_semantic_feature_signal_mismatch_product-launch' && issue.severity === 'error')
     ).toBe(true);
   });
+
+  it('flags feature template scope drift when feature names are structural/meta noise', () => {
+    const raw = [
+      '## System Vision',
+      'A task planning product for teams to execute operational workflows.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      '### F-01: System Vision',
+      '1. Purpose',
+      'Invalid structural heading as feature name.',
+      '10. Acceptance Criteria',
+      '- Should be rejected by scope drift checks.',
+      '',
+      '### F-02: Target Audience',
+      '1. Purpose',
+      'Invalid structural heading as feature name.',
+      '10. Acceptance Criteria',
+      '- Should be rejected by scope drift checks.',
+      '',
+      '### F-03: Review Feedback',
+      '1. Purpose',
+      'Meta heading leaked into feature name.',
+      '10. Acceptance Criteria',
+      '- Should be rejected by scope drift checks.',
+      '',
+      '### F-04: Iteration 3',
+      '1. Purpose',
+      'Iteration marker leaked into feature name.',
+      '10. Acceptance Criteria',
+      '- Should be rejected by scope drift checks.',
+    ].join('\n');
+
+    const compiled = compilePrdDocument(raw, {
+      mode: 'generate',
+      language: 'en',
+      templateCategory: 'feature',
+    });
+
+    expect(compiled.quality.valid).toBe(false);
+    expect(
+      compiled.quality.issues.some(issue => issue.code === 'feature_scope_drift_detected')
+    ).toBe(true);
+  });
+
+  it('accepts coherent feature-template feature names without scope-drift signal', () => {
+    const raw = [
+      '## System Vision',
+      'Task coordination for distributed teams with shared operational workflows.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      '### F-01: Task creation workflow',
+      '1. Purpose',
+      'Users create actionable tasks with owner and due date.',
+      '10. Acceptance Criteria',
+      '- A created task is visible in the team board immediately.',
+      '',
+      '### F-02: Task assignment workflow',
+      '1. Purpose',
+      'Users assign tasks to team members with clear ownership.',
+      '10. Acceptance Criteria',
+      '- Assignment updates are visible to all collaborators.',
+      '',
+      '### F-03: Task status update workflow',
+      '1. Purpose',
+      'Users update in-progress and done states for each task.',
+      '10. Acceptance Criteria',
+      '- Status changes are persisted and visible without reload.',
+      '',
+      '### F-04: Task completion workflow',
+      '1. Purpose',
+      'Users close tasks and capture completion notes.',
+      '10. Acceptance Criteria',
+      '- Completed tasks are moved into done state with timestamp.',
+    ].join('\n');
+
+    const compiled = compilePrdDocument(raw, {
+      mode: 'generate',
+      language: 'en',
+      templateCategory: 'feature',
+    });
+
+    expect(
+      compiled.quality.issues.some(issue => issue.code === 'feature_scope_drift_detected')
+    ).toBe(false);
+  });
+
+  it('aggregates near-duplicate features conservatively without hard feature cap', () => {
+    const raw = [
+      '## System Vision',
+      'Task operations platform with feature-level workflow automation.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      '### F-01: Task creation workflow',
+      '1. Purpose',
+      'Create tasks.',
+      '10. Acceptance Criteria',
+      '- Task can be created.',
+      '',
+      '### F-02: Task list management',
+      '1. Purpose',
+      'Manage task lists.',
+      '10. Acceptance Criteria',
+      '- Lists can be managed.',
+      '',
+      '### F-03: Task list management workflow',
+      '1. Purpose',
+      'Manage task lists with deterministic behavior.',
+      '10. Acceptance Criteria',
+      '- List updates are persisted.',
+      '',
+      '### F-04: Task assignment workflow',
+      '1. Purpose',
+      'Assign tasks.',
+      '10. Acceptance Criteria',
+      '- Assignment is visible.',
+      '',
+      '### F-05: Task status update workflow',
+      '1. Purpose',
+      'Update task status.',
+      '10. Acceptance Criteria',
+      '- Status is synchronized.',
+      '',
+      '### F-06: Task completion workflow',
+      '1. Purpose',
+      'Complete tasks.',
+      '10. Acceptance Criteria',
+      '- Completion is persisted.',
+      '',
+      '### F-07: Task archive workflow',
+      '1. Purpose',
+      'Archive tasks.',
+      '10. Acceptance Criteria',
+      '- Archive state is visible.',
+      '',
+      '### F-08: Task export workflow',
+      '1. Purpose',
+      'Export tasks.',
+      '10. Acceptance Criteria',
+      '- Export file is generated.',
+    ].join('\n');
+
+    const compiled = compilePrdDocument(raw, {
+      mode: 'generate',
+      language: 'en',
+      templateCategory: 'feature',
+    });
+
+    expect(compiled.structure.features.length).toBeGreaterThanOrEqual(7);
+    expect(
+      compiled.quality.issues.some(issue => issue.code === 'feature_aggregation_applied')
+    ).toBe(true);
+    expect(
+      compiled.quality.issues.some(issue => issue.code === 'improve_new_feature_limit_applied')
+    ).toBe(false);
+  });
 });
