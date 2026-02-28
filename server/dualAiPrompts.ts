@@ -503,6 +503,7 @@ interface DualAiRequest {
   userInput: string;
   existingContent?: string;
   mode: 'generate' | 'improve' | 'review-only';
+  templateCategory?: string;
 }
 
 interface GeneratorResponse {

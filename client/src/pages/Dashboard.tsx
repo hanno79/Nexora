@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Plus, FileText, Search as SearchIcon, Clock, CheckCircle2, Send, Sparkles, ExternalLink } from "lucide-react";
+import { Plus, FileText, Search as SearchIcon, Clock, CheckCircle2, Send, Sparkles, ExternalLink, Filter } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
 import { TopBar } from "@/components/TopBar";
 import { EmptyState } from "@/components/EmptyState";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
@@ -18,6 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { getLoginPath } from "@/lib/authRoutes";
 import { useTranslation } from "@/lib/i18n";
+import { useTemplates } from "@/hooks/useTemplates";
 
 interface DashboardStats {
   totalPrds: number;
@@ -31,10 +34,12 @@ export default function Dashboard() {
   const [, navigate] = useLocation();
   const loginPath = getLoginPath();
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [selectedTemplateIds, setSelectedTemplateIds] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
   const [showOnboarding, setShowOnboarding] = useState(false);
   const { toast } = useToast();
   const { t } = useTranslation();
+  const { templates, getTemplateById, getTemplateName, getTemplateIcon } = useTemplates();
 
   // Check if user has completed onboarding
   useEffect(() => {
@@ -71,7 +76,9 @@ export default function Dashboard() {
     const matchesStatus = statusFilter === "all" || prd.status === statusFilter;
     const matchesSearch = prd.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       prd.description?.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesStatus && matchesSearch;
+    const matchesTemplate = selectedTemplateIds.size === 0 ||
+      (prd.templateId ? selectedTemplateIds.has(prd.templateId) : selectedTemplateIds.has("__none__"));
+    return matchesStatus && matchesSearch && matchesTemplate;
   });
 
   if (error && !isUnauthorizedError(error as Error)) {
@@ -218,21 +225,90 @@ export default function Dashboard() {
         )}
 
         {/* Filters */}
-        <Tabs value={statusFilter} onValueChange={setStatusFilter} className="mb-8">
-          <TabsList>
-            <TabsTrigger value="all" data-testid="tab-all">{t.dashboard.filters.all}</TabsTrigger>
-            <TabsTrigger value="draft" data-testid="tab-draft">{t.dashboard.filters.draft}</TabsTrigger>
-            <TabsTrigger value="in-progress" data-testid="tab-in-progress">{t.dashboard.filters.inProgress}</TabsTrigger>
-            <TabsTrigger value="review" data-testid="tab-review">{t.dashboard.filters.review}</TabsTrigger>
-            <TabsTrigger value="completed" data-testid="tab-completed">{t.dashboard.filters.completed}</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="flex flex-wrap items-center gap-3 mb-8">
+          <Tabs value={statusFilter} onValueChange={setStatusFilter}>
+            <TabsList>
+              <TabsTrigger value="all" data-testid="tab-all">{t.dashboard.filters.all}</TabsTrigger>
+              <TabsTrigger value="draft" data-testid="tab-draft">{t.dashboard.filters.draft}</TabsTrigger>
+              <TabsTrigger value="in-progress" data-testid="tab-in-progress">{t.dashboard.filters.inProgress}</TabsTrigger>
+              <TabsTrigger value="review" data-testid="tab-review">{t.dashboard.filters.review}</TabsTrigger>
+              <TabsTrigger value="completed" data-testid="tab-completed">{t.dashboard.filters.completed}</TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          {/* Template Filter */}
+          {templates.length > 0 && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-2" data-testid="template-filter-trigger">
+                  <Filter className="w-4 h-4" />
+                  {t.dashboard.templateFilter}
+                  {selectedTemplateIds.size > 0 && (
+                    <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-xs">
+                      {selectedTemplateIds.size}
+                    </Badge>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-64 p-3" align="start">
+                <div className="space-y-1 max-h-64 overflow-y-auto">
+                  {templates.map((template) => {
+                    const Icon = getTemplateIcon(template.category);
+                    return (
+                      <label key={template.id} className="flex items-center gap-2 cursor-pointer py-1.5 px-1 rounded hover:bg-muted/50">
+                        <Checkbox
+                          checked={selectedTemplateIds.has(template.id)}
+                          onCheckedChange={(checked) => {
+                            setSelectedTemplateIds(prev => {
+                              const next = new Set(prev);
+                              if (checked) next.add(template.id);
+                              else next.delete(template.id);
+                              return next;
+                            });
+                          }}
+                        />
+                        <Icon className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                        <span className="text-sm truncate">{getTemplateName(template)}</span>
+                      </label>
+                    );
+                  })}
+                  <label className="flex items-center gap-2 cursor-pointer py-1.5 px-1 rounded hover:bg-muted/50">
+                    <Checkbox
+                      checked={selectedTemplateIds.has("__none__")}
+                      onCheckedChange={(checked) => {
+                        setSelectedTemplateIds(prev => {
+                          const next = new Set(prev);
+                          if (checked) next.add("__none__");
+                          else next.delete("__none__");
+                          return next;
+                        });
+                      }}
+                    />
+                    <span className="text-sm text-muted-foreground italic">
+                      {t.dashboard.noTemplate}
+                    </span>
+                  </label>
+                </div>
+                {selectedTemplateIds.size > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full mt-2"
+                    onClick={() => setSelectedTemplateIds(new Set())}
+                  >
+                    {t.dashboard.templateFilterAll}
+                  </Button>
+                )}
+              </PopoverContent>
+            </Popover>
+          )}
+        </div>
 
         {/* Content */}
         {isLoading ? (
           <LoadingSpinner className="py-20" />
         ) : !filteredPrds || filteredPrds.length === 0 ? (
-          searchQuery || statusFilter !== "all" ? (
+          searchQuery || statusFilter !== "all" || selectedTemplateIds.size > 0 ? (
             <EmptyState
               icon={SearchIcon}
               title={t.dashboard.noPrdsFound}
@@ -295,11 +371,24 @@ export default function Dashboard() {
                     </div>
                   )}
                   
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <FileText className="w-4 h-4" />
-                    <span>
-                      {t.dashboard.updated} {formatDistance(new Date(prd.updatedAt!), new Date(), { addSuffix: true })}
-                    </span>
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4" />
+                      <span>
+                        {t.dashboard.updated} {formatDistance(new Date(prd.updatedAt!), new Date(), { addSuffix: true })}
+                      </span>
+                    </div>
+                    {(() => {
+                      const template = getTemplateById(prd.templateId);
+                      if (!template) return null;
+                      const Icon = getTemplateIcon(template.category);
+                      return (
+                        <div className="flex items-center gap-1.5">
+                          <Icon className="w-3.5 h-3.5" />
+                          <span className="truncate max-w-[120px]">{getTemplateName(template)}</span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </CardHeader>
               </Card>

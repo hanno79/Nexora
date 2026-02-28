@@ -292,7 +292,7 @@ describe('prdCompiler', () => {
       '## Success Criteria & Acceptance Testing',
       '- 95% valid output.',
       '',
-      '## Part A — System Context',
+      '## Project Overview',
       'This must be rejected by canonical gate.',
     ].join('\n');
 
@@ -305,7 +305,7 @@ describe('prdCompiler', () => {
     expect(
       compiled.quality.issues.some(issue => issue.code === 'unknown_top_level_sections')
     ).toBe(true);
-    expect(compiled.content).not.toContain('## Part A — System Context');
+    expect(compiled.content).not.toContain('## Project Overview');
   });
 
   it('accepts common template headings by canonicalizing them before quality gate', () => {
@@ -378,6 +378,40 @@ describe('prdCompiler', () => {
     expect(compiled.content).toContain('## System Boundaries');
     expect(compiled.content).toContain('## Non-Functional Requirements');
     expect(compiled.content).toContain('## Success Criteria & Acceptance Testing');
+  });
+
+  it('accepts Part A/C/D wrapper headings by canonicalizing them before quality gate', () => {
+    const raw = [
+      '## Part A — System Context',
+      'Core context and scope baseline for this initiative.',
+      '',
+      '## Part C — Technical & Design Context',
+      'Technical architecture and implementation constraints for v1.',
+      '',
+      '## Part D — Planning & Risk',
+      'Milestone planning and risk checkpoints for staged rollout.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      '### F-01: Canonical Wrapper Handling',
+      '1. Purpose',
+      'Ensure wrapper-style template headings compile into canonical structure.',
+      '10. Acceptance Criteria',
+      '- Wrapper headings are preserved semantically without unknown-heading errors.',
+    ].join('\n');
+
+    const compiled = compilePrdDocument(raw, {
+      mode: 'generate',
+      language: 'en',
+    });
+
+    expect(compiled.quality.valid).toBe(true);
+    expect(
+      compiled.quality.issues.some(issue => issue.code === 'unknown_top_level_sections')
+    ).toBe(false);
+    expect(compiled.content).toContain('## System Vision');
+    expect(compiled.content).toContain('## Deployment & Infrastructure');
+    expect(compiled.content).toContain('## Timeline & Milestones');
   });
 
   it('deterministically scaffolds unstructured feature prose into full feature specs', () => {

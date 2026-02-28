@@ -69,7 +69,44 @@ function mergeSectionContent(currentValue: string, incomingValue: string): strin
   return `${current}\n\n${incoming}`.trim();
 }
 
+function normalizeHeadingForAliasMatching(value: string): string {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function resolveTemplateAliasTarget(normalizedHeading: string): keyof PRDStructure | null {
+  const headingForMatch = normalizeHeadingForAliasMatching(normalizedHeading);
+
+  if (
+    /(^|\b)part\s*a(\b|$)|(^|\b)system\s*context(\b|$)/i.test(headingForMatch) ||
+    /^(?:product\s+overview|executive\s+summary|vision\s+(?:and|&)\s+strategy|value\s+proposition|overview)$/i.test(headingForMatch)
+  ) {
+    return 'systemVision';
+  }
+
+  if (
+    /(^|\b)part\s*c(\b|$)|(^|\b)technical\s*(?:and|&)\s*design\s*context(\b|$)/i.test(headingForMatch) ||
+    /(^|\b)technical\s+requirements?(\b|$)|(^|\b)proposed\s+solution(\b|$)|(^|\b)implementation\s+details?(\b|$)|(^|\b)architecture\s+diagram(\b|$)|(^|\b)architecture\s+overview(\b|$)|(^|\b)rollout\s+plan(\b|$)|(^|\b)go\s+to\s+market\s+strategy(\b|$)/i.test(headingForMatch)
+  ) {
+    return 'deployment';
+  }
+
+  if (/(^|\b)part\s*d(\b|$)|(^|\b)planning\s*(?:and|&)\s*risk(\b|$)/i.test(headingForMatch)) {
+    return 'timelineMilestones';
+  }
+
+  if (
+    /(^|\b)dependencies?\s*(?:and|&)\s*risks?(\b|$)|(^|\b)dependencies?(\b|$)|(^|\b)risks?\s*(?:and|&)\s*mitigation(\b|$)|(^|\b)risk\s+mitigation(\b|$)/i.test(
+      headingForMatch
+    )
+  ) {
+    return 'errorHandling';
+  }
+
   if (/(^|\b)problem\s*statement(\b|$)|(^|\b)problemstellung(\b|$)/i.test(normalizedHeading)) {
     return 'systemVision';
   }
@@ -93,6 +130,13 @@ function resolveTemplateAliasTarget(normalizedHeading: string): keyof PRDStructu
     )
   ) {
     return 'nonFunctional';
+  }
+  if (
+    /(^|\b)goals?\s*(?:&|and)\s*objectives?(\b|$)|(^|\b)success\s*metrics?(\b|$)|(^|\b)kpis?(\b|$)|(^|\b)roadmap(\b|$)|(^|\b)testing\s+strategy(\b|$)/i.test(
+      headingForMatch
+    )
+  ) {
+    return 'successCriteria';
   }
   return null;
 }

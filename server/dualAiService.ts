@@ -31,6 +31,7 @@ import { mergeExpansionIntoStructure } from './prdStructureMerger';
 import { finalizeWithCompilerGates } from './prdCompilerFinalizer';
 import { compilePrdDocument } from './prdCompiler';
 import { resolvePrdWorkflowMode } from './prdWorkflowMode';
+import { buildTemplateInstruction } from './prdTemplateIntent';
 import { db } from './db';
 import { users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
@@ -80,6 +81,7 @@ interface IterationOpts {
   existingContent: string;
   additionalRequirements: string | undefined;
   mode: 'improve' | 'generate';
+  templateCategory?: string;
   isImprovement: boolean;
   workflowInputText: string;
   resolvedLanguage: 'en' | 'de';
@@ -123,12 +125,13 @@ export class DualAiService {
     const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
     dualAiLog(`🎯 Simple run models: generator=${client.getPreferredModel('generator') || '(tier default)'}, reviewer=${client.getPreferredModel('reviewer') || '(tier default)'}, fallback=${client.getPreferredModel('fallback') || '(none)'}`);
     
-    const { userInput, existingContent, mode } = request;
+    const { userInput, existingContent, mode, templateCategory } = request;
     const resolvedLanguage = this.resolveScaffoldLanguage(
       contentLanguage,
       `${userInput || ''}\n${existingContent || ''}`
     );
     const langInstruction = getLanguageInstruction(resolvedLanguage);
+    const templateInstruction = buildTemplateInstruction(templateCategory, resolvedLanguage);
 
     if (mode === 'review-only' && !existingContent) {
       throw new Error('review-only mode requires existingContent');
@@ -167,6 +170,8 @@ CRITICAL RULES:
 - EXPAND existing sections with more details where relevant
 - Only MODIFY content if it directly contradicts the new requirements
 
+${templateInstruction}
+
 EXISTING PRD (PRESERVE THIS):
 ${existingContent}
 
@@ -176,7 +181,7 @@ ${userInput}
 Create an improved version that incorporates the new requirements while keeping all existing content intact.`;
       } else {
         // NEW GENERATION MODE: Create from scratch
-        generatorPrompt = `Erstelle ein vollständiges PRD basierend auf:\n\n${userInput}`;
+        generatorPrompt = `Erstelle ein vollständiges PRD basierend auf:\n\n${userInput}\n\n${templateInstruction}`;
       }
 
       const genResult = await client.callWithFallback(
@@ -256,7 +261,7 @@ Create an improved version that incorporates the new requirements while keeping 
     // Step 2: Review with AI Reviewer
     dualAiLog('🔍 Step 2: Reviewing PRD with AI Reviewer...');
     
-    const reviewerPrompt = `Bewerte folgendes PRD kritisch:\n\n${generatorResponse.content}`;
+    const reviewerPrompt = `Bewerte folgendes PRD kritisch:\n\n${generatorResponse.content}\n\nTemplate-Kontext:\n${templateInstruction}`;
 
     const reviewResult = await client.callWithFallback(
       'reviewer',
@@ -283,7 +288,7 @@ Create an improved version that incorporates the new requirements while keeping 
     if (effectiveMode === 'improve') {
       dualAiLog('🔧 Step 3: Improving PRD based on review feedback...');
       
-      const improvementPrompt = `ORIGINAL PRD:\n${generatorResponse.content}\n\nREVIEW FEEDBACK:\n${reviewContent}\n\nVerbessere das PRD und adressiere die kritischen Fragen.`;
+      const improvementPrompt = `ORIGINAL PRD:\n${generatorResponse.content}\n\nREVIEW FEEDBACK:\n${reviewContent}\n\nTemplate-Kontext:\n${templateInstruction}\n\nVerbessere das PRD und adressiere die kritischen Fragen.`;
 
       const improveResult = await client.callWithFallback(
         'generator',
@@ -319,8 +324,9 @@ Create an improved version that incorporates the new requirements while keeping 
       mode: compileMode,
       existingContent: compileMode === 'improve' ? existingContent : undefined,
       language: resolvedLanguage,
+      templateCategory,
       originalRequest: userInput || reviewContent || cleanedFinalContent.slice(0, 400),
-      maxRepairPasses: 2,
+      maxRepairPasses: 3,
       repairGenerator: async (repairPrompt) => {
         const repairResult = await client.callWithFallback(
           'generator',
@@ -414,7 +420,8 @@ Create an improved version that incorporates the new requirements while keeping 
     useFinalReview: boolean = false,
     userId?: string,
     onProgress?: (event: { type: string; [key: string]: any }) => void,
-    isCancelled?: () => boolean
+    isCancelled?: () => boolean,
+    templateCategory?: string
   ): Promise<IterativeResponse> {
     // Create fresh client per request to prevent cross-user contamination
     const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
@@ -458,6 +465,7 @@ Create an improved version that incorporates the new requirements while keeping 
       existingContent,
       additionalRequirements,
       mode: effectiveMode,
+      templateCategory,
       isImprovement,
       workflowInputText,
       resolvedLanguage,
@@ -647,6 +655,8 @@ Create an improved version that incorporates the new requirements while keeping 
       mode: opts.isImprovement ? 'improve' : 'generate',
       existingContent: opts.isImprovement ? opts.existingContent : undefined,
       language: opts.resolvedLanguage,
+      templateCategory: opts.templateCategory,
+      contextHint: opts.workflowInputText,
     });
     let currentPRD = canonicalMergedPRD;
     if (state.iterations.length > 0) {
@@ -878,6 +888,7 @@ Create an improved version that incorporates the new requirements while keeping 
       dualAiLog(`🤖 AI #1: Generating PRD draft and identifying gaps...`);
 
       let generatorPrompt: string;
+      const templateInstruction = buildTemplateInstruction(opts.templateCategory, opts.resolvedLanguage);
 
       if (i === 1) {
         if (opts.isImprovement) {
@@ -885,6 +896,8 @@ Create an improved version that incorporates the new requirements while keeping 
 
 EXISTING PRD (PRESERVE THIS STRUCTURE AND CONTENT):
 ${opts.existingContent}
+
+${templateInstruction}
 
 ${opts.additionalRequirements ? `ADDITIONAL REQUIREMENTS TO INTEGRATE:
 ${opts.additionalRequirements}
@@ -900,7 +913,7 @@ Your task:
 3. Identify gaps and missing information
 4. Ask questions to improve specific sections`}`;
         } else {
-          generatorPrompt = `INITIAL INPUT:\n${opts.additionalRequirements || opts.existingContent}\n\nCreate an initial PRD draft and ask questions about open points.`;
+          generatorPrompt = `INITIAL INPUT:\n${opts.additionalRequirements || opts.existingContent}\n\n${templateInstruction}\n\nCreate an initial PRD draft and ask questions about open points.`;
         }
       } else {
         // FEATURE FREEZE: Add freeze rules to prompt when frozen and iteration >= 2
@@ -934,6 +947,8 @@ ${state.currentPRD}
 
 ANSWERS FROM PREVIOUS ITERATION (MUST be incorporated into the PRD):
 ${previousIteration.answererOutput}
+
+${templateInstruction}
 
 Your task:
 1. PRESERVE all existing sections and content
@@ -1541,8 +1556,9 @@ Your task:
         mode: opts.isImprovement ? 'improve' : 'generate',
         existingContent: opts.isImprovement ? opts.existingContent : undefined,
         language: opts.resolvedLanguage,
+        templateCategory: opts.templateCategory,
         originalRequest: opts.workflowInputText || currentPRD.slice(0, 400),
-        maxRepairPasses: 2,
+        maxRepairPasses: 3,
         repairGenerator: async (repairPrompt) => {
           const repairResult = await opts.client.callWithFallback(
             'generator',
@@ -2955,6 +2971,8 @@ Your task:
       mode: 'generate' | 'improve';
       existingContent?: string;
       language: 'de' | 'en';
+      templateCategory?: string;
+      contextHint?: string;
     }
   ): string {
     const latestMerged = iterations.length > 0 ? iterations[iterations.length - 1].mergedPRD : '';
@@ -2967,6 +2985,8 @@ Your task:
         existingContent: options.existingContent,
         language: options.language,
         strictCanonical: true,
+        templateCategory: options.templateCategory,
+        contextHint: options.contextHint,
       });
       canonical = compiled.content;
     } catch {

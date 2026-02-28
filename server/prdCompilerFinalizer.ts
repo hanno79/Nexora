@@ -9,6 +9,7 @@ import {
   type CompilePrdResult,
   type PrdQualityReport,
 } from './prdCompiler';
+import { buildTemplateInstruction } from './prdTemplateIntent';
 
 type SupportedLanguage = 'de' | 'en';
 
@@ -24,6 +25,7 @@ export interface FinalizeWithCompilerGatesOptions {
   mode: 'generate' | 'improve';
   existingContent?: string;
   language?: SupportedLanguage;
+  templateCategory?: string;
   originalRequest: string;
   maxRepairPasses?: number;
   repairGenerator: (repairPrompt: string, pass: number) => Promise<CompilerModelResult>;
@@ -71,9 +73,20 @@ function buildRepairPrompt(params: {
   existingContent?: string;
   currentContent: string;
   originalRequest: string;
+  templateCategory?: string;
+  language?: SupportedLanguage;
 }): string {
-  const { mode, issueSummary, existingContent, currentContent, originalRequest } = params;
+  const {
+    mode,
+    issueSummary,
+    existingContent,
+    currentContent,
+    originalRequest,
+    templateCategory,
+    language,
+  } = params;
   const canonicalHeadings = CANONICAL_PRD_HEADINGS.map(h => `- ## ${h}`).join('\n');
+  const templateInstruction = buildTemplateInstruction(templateCategory, language || 'en');
 
   if (mode === 'improve') {
     return `The previous PRD output failed quality gates and must be repaired.
@@ -95,6 +108,8 @@ Return a COMPLETE corrected PRD in Markdown.
 STRICT OUTPUT RULES:
 - Use only this top-level heading set exactly once each (H2):
 ${canonicalHeadings}
+- Follow this template context:
+${templateInstruction}
 - Do not add any extra top-level sections.
 - Keep existing feature IDs stable and preserve baseline content unless directly improved.
 - No truncation, placeholders, or unfinished bullets/sentences.`;
@@ -116,6 +131,8 @@ Return a COMPLETE corrected PRD in Markdown.
 STRICT OUTPUT RULES:
 - Use only this top-level heading set exactly once each (H2):
 ${canonicalHeadings}
+- Follow this template context:
+${templateInstruction}
 - Do not add any extra top-level sections.
 - No truncation, placeholders, or unfinished bullets/sentences.`;
 }
@@ -168,6 +185,7 @@ export async function finalizeWithCompilerGates(
     mode,
     existingContent,
     language,
+    templateCategory,
     originalRequest,
     repairGenerator,
     maxRepairPasses = 2,
@@ -180,7 +198,9 @@ export async function finalizeWithCompilerGates(
       mode,
       existingContent,
       language,
+      templateCategory,
       strictCanonical: true,
+      contextHint: originalRequest,
       improveMaxNewFeatures: mode === 'improve'
         ? (improveMaxNewFeatures ?? FINALIZER_IMPROVE_MAX_NEW_FEATURES)
         : undefined,
@@ -203,6 +223,8 @@ export async function finalizeWithCompilerGates(
       existingContent,
       currentContent: current.content,
       originalRequest,
+      templateCategory,
+      language,
     });
 
     current = await repairGenerator(repairPrompt, pass);

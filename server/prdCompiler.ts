@@ -1,6 +1,13 @@
 import { assembleStructureToMarkdown } from './prdAssembler';
 import { parsePRDToStructure } from './prdParser';
 import type { PRDStructure, FeatureSpec } from './prdStructure';
+import {
+  buildSectionFallback,
+  collectPlaceholderIssues,
+  collectTemplateSemanticIssues,
+  isLegacyGenericFallback,
+  type RequiredSectionKey,
+} from './prdTemplateIntent';
 
 type SupportedLanguage = 'de' | 'en';
 
@@ -24,6 +31,8 @@ export interface CompilePrdOptions {
   language?: SupportedLanguage;
   strictCanonical?: boolean;
   improveMaxNewFeatures?: number;
+  templateCategory?: string;
+  contextHint?: string;
 }
 
 export interface CompilePrdResult {
@@ -155,6 +164,7 @@ interface ValidationOptions {
   strictCanonical?: boolean;
   unknownSectionHeadings?: string[];
   mode?: 'generate' | 'improve';
+  templateCategory?: string;
 }
 
 function hasText(value: unknown): boolean {
@@ -456,7 +466,11 @@ export function mergeStructuresForImprove(
 
 export function ensurePrdRequiredSections(
   structure: PRDStructure,
-  language: SupportedLanguage
+  language: SupportedLanguage,
+  context?: {
+    templateCategory?: string;
+    contextHint?: string;
+  }
 ): { structure: PRDStructure; addedSections: string[] } {
   const updated: PRDStructure = {
     ...structure,
@@ -467,7 +481,13 @@ export function ensurePrdRequiredSections(
 
   for (const def of REQUIRED_SECTION_DEFS) {
     if (hasText(updated[def.key])) continue;
-    (updated as any)[def.key] = language === 'de' ? def.fallbackDe : def.fallbackEn;
+    (updated as any)[def.key] = buildSectionFallback({
+      section: def.key as RequiredSectionKey,
+      language,
+      category: context?.templateCategory,
+      structure: updated,
+      contextHint: context?.contextHint,
+    }) || (language === 'de' ? def.fallbackDe : def.fallbackEn);
     addedSections.push(def.label);
   }
 
@@ -476,7 +496,11 @@ export function ensurePrdRequiredSections(
 
 export function ensurePrdSectionDepth(
   structure: PRDStructure,
-  language: SupportedLanguage
+  language: SupportedLanguage,
+  context?: {
+    templateCategory?: string;
+    contextHint?: string;
+  }
 ): { structure: PRDStructure; expandedSections: string[] } {
   const updated: PRDStructure = {
     ...structure,
@@ -489,7 +513,13 @@ export function ensurePrdSectionDepth(
     const currentValue = String(updated[def.key] || '').trim();
     if (!currentValue || currentValue.length >= MIN_REQUIRED_SECTION_LENGTH) continue;
 
-    const fallback = language === 'de' ? def.fallbackDe : def.fallbackEn;
+    const fallback = buildSectionFallback({
+      section: def.key as RequiredSectionKey,
+      language,
+      category: context?.templateCategory,
+      structure: updated,
+      contextHint: context?.contextHint,
+    }) || (language === 'de' ? def.fallbackDe : def.fallbackEn);
     const merged = mergeSectionWithPreservation(currentValue, fallback);
     if (merged.length > currentValue.length) {
       (updated as any)[def.key] = merged;
@@ -662,6 +692,14 @@ export function validatePrdStructure(
         severity: 'warning',
       });
     }
+
+    if (isLegacyGenericFallback(String(value || ''))) {
+      issues.push({
+        code: `generic_section_boilerplate_${String(def.key)}`,
+        message: `Section appears generic and not context-specific: ${def.label}`,
+        severity: options?.mode === 'generate' ? 'error' : 'warning',
+      });
+    }
   }
 
   const featureCount = Array.isArray(structure.features) ? structure.features.length : 0;
@@ -718,6 +756,24 @@ export function validatePrdStructure(
     });
   }
 
+  const templateSemanticIssues = collectTemplateSemanticIssues({
+    category: options?.templateCategory,
+    structure,
+    content: assembled,
+    mode: options?.mode || 'generate',
+  });
+  for (const issue of templateSemanticIssues) {
+    issues.push(issue);
+  }
+
+  const placeholderIssues = collectPlaceholderIssues({
+    structure,
+    mode: options?.mode || 'generate',
+  });
+  for (const issue of placeholderIssues) {
+    issues.push(issue);
+  }
+
   const hasErrors = issues.some(issue => issue.severity === 'error');
   return {
     valid: !hasErrors,
@@ -762,8 +818,14 @@ export function compilePrdDocument(
     : candidate;
 
   const normalized = normalizeStructureForCompiler(merged, { strictCanonical });
-  const withRequired = ensurePrdRequiredSections(normalized, language);
-  const withDepth = ensurePrdSectionDepth(withRequired.structure, language);
+  const withRequiredContext = ensurePrdRequiredSections(normalized, language, {
+    templateCategory: options.templateCategory,
+    contextHint: options.contextHint || rawContent,
+  });
+  const withDepth = ensurePrdSectionDepth(withRequiredContext.structure, language, {
+    templateCategory: options.templateCategory,
+    contextHint: options.contextHint || rawContent,
+  });
   const withFeatureDepth = ensurePrdFeatureDepth(withDepth.structure, language);
   const content = assembleStructureToMarkdown(withFeatureDepth.structure);
   const quality = validatePrdStructure(withFeatureDepth.structure, content, {
@@ -771,6 +833,7 @@ export function compilePrdDocument(
     strictCanonical,
     unknownSectionHeadings: candidateUnknownSections,
     mode: options.mode,
+    templateCategory: options.templateCategory,
   });
   if (improveMergeDiagnostics && improveMergeDiagnostics.droppedNewFeatureIds.length > 0) {
     quality.issues.push({

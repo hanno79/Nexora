@@ -22,6 +22,7 @@ import { GuidedSessionStore } from './guidedSessionStore';
 import { logger } from './logger';
 import { finalizeWithCompilerGates } from './prdCompilerFinalizer';
 import { resolvePrdWorkflowMode } from './prdWorkflowMode';
+import { buildTemplateInstruction } from './prdTemplateIntent';
 
 interface ConversationContext {
   projectIdea: string;
@@ -30,6 +31,7 @@ interface ConversationContext {
   roundNumber: number;
   workflowMode: 'generate' | 'improve';
   existingContent?: string;
+  templateCategory?: string;
 }
 
 interface GuidedGenerationResult {
@@ -49,6 +51,7 @@ export class GuidedAiService {
     options?: {
       existingContent?: string;
       mode?: 'improve' | 'generate';
+      templateCategory?: string;
     }
   ): Promise<GuidedStartResponse & { sessionId: string }> {
     const authenticatedUserId = this.requireAuthenticatedUserId(userId);
@@ -66,6 +69,7 @@ export class GuidedAiService {
       existingContent: normalizedExistingContent,
     });
     const workflowMode: 'generate' | 'improve' = modeResolution.mode;
+    const templateInstruction = buildTemplateInstruction(options?.templateCategory, resolvedLanguage);
     
     logger.debug('Guided workflow started', {
       projectIdeaLength: projectIdea.length,
@@ -87,7 +91,7 @@ EXISTING PRD BASELINE:
 ${normalizedExistingContent}
 
 Analyze what should be preserved and what should be improved. Focus on concrete user-facing refinements and missing sections.`
-      : `Analyze this project idea:\n\n${projectIdea}`;
+      : `Analyze this project idea:\n\n${projectIdea}\n\n${templateInstruction}`;
     
     const analysisResult = await client.callWithFallback(
       'generator',
@@ -104,8 +108,8 @@ Analyze what should be preserved and what should be improved. Focus on concrete 
     // Step 2: Generate initial questions for the user
     logger.debug('Guided workflow generating clarifying questions');
     const questionContext = workflowMode === 'improve'
-      ? `Based on this analysis of an EXISTING PRD and requested refinements, generate 3-5 clarifying questions with multiple choice answers.\n\nAnalysis:\n${featureOverview}\n\nChange request: ${projectIdea}\n\nExisting PRD:\n${normalizedExistingContent}`
-      : `Based on this project analysis, generate 3-5 clarifying questions with multiple choice answers:\n\n${featureOverview}\n\nOriginal idea: ${projectIdea}`;
+      ? `Based on this analysis of an EXISTING PRD and requested refinements, generate 3-5 clarifying questions with multiple choice answers.\n\nAnalysis:\n${featureOverview}\n\nChange request: ${projectIdea}\n\nExisting PRD:\n${normalizedExistingContent}\n\n${templateInstruction}`
+      : `Based on this project analysis, generate 3-5 clarifying questions with multiple choice answers:\n\n${featureOverview}\n\nOriginal idea: ${projectIdea}\n\n${templateInstruction}`;
     
     const questionsResult = await client.callWithFallback(
       'reviewer',
@@ -130,6 +134,7 @@ Analyze what should be preserved and what should be improved. Focus on concrete 
       roundNumber: 1,
       workflowMode,
       existingContent: normalizedExistingContent || undefined,
+      templateCategory: options?.templateCategory,
     });
 
     return {
@@ -209,7 +214,9 @@ ${context.featureOverview}
 User's answers:
 ${formattedAnswers}
 
-Refine the plan as an incremental improvement to the existing PRD. Preserve existing valid content and target the requested changes.`
+Refine the plan as an incremental improvement to the existing PRD. Preserve existing valid content and target the requested changes.
+
+${buildTemplateInstruction(context.templateCategory, resolvedLanguage)}`
       : `Original project idea:
 ${context.projectIdea}
 
@@ -219,7 +226,9 @@ ${context.featureOverview}
 User's answers:
 ${formattedAnswers}
 
-Refine the product vision and features based on these answers.`;
+Refine the product vision and features based on these answers.
+
+${buildTemplateInstruction(context.templateCategory, resolvedLanguage)}`;
     
     const refinementResult = await client.callWithFallback(
       'generator',
@@ -281,7 +290,10 @@ Refine the product vision and features based on these answers.`;
 
   async finalizePRD(
     sessionId: string,
-    userId: string
+    userId: string,
+    options?: {
+      templateCategory?: string;
+    }
   ): Promise<GuidedFinalizeResponse> {
     const authenticatedUserId = this.requireAuthenticatedUserId(userId);
     const context = this.consumeSessionContextOrThrow(sessionId, authenticatedUserId);
@@ -302,6 +314,8 @@ Refine the product vision and features based on these answers.`;
 
     try {
       const isImproveWorkflow = context.workflowMode === 'improve' && !!context.existingContent?.trim();
+      const effectiveTemplateCategory = options?.templateCategory || context.templateCategory;
+      const templateInstruction = buildTemplateInstruction(effectiveTemplateCategory, resolvedLanguage);
       const systemPrompt = isImproveWorkflow
         ? FINAL_PRD_REFINEMENT_PROMPT + langInstruction
         : FINAL_PRD_GENERATION_PROMPT + langInstruction;
@@ -320,6 +334,8 @@ ${context.featureOverview}
 USER DECISIONS & PREFERENCES:
 ${allAnswers || 'No specific user preferences collected.'}
 
+${templateInstruction}
+
 Return the complete improved PRD.`
         : `Create a complete PRD based on:
 
@@ -332,6 +348,8 @@ ${context.featureOverview}
 USER DECISIONS & PREFERENCES:
 ${allAnswers || 'No specific user preferences collected.'}
 
+${templateInstruction}
+
 Generate a complete, professional PRD that incorporates all gathered requirements.`;
 
       const compiled = await this.generateWithCompilerGates({
@@ -341,6 +359,7 @@ Generate a complete, professional PRD that incorporates all gathered requirement
         mode: isImproveWorkflow ? 'improve' : 'generate',
         existingContent: isImproveWorkflow ? context.existingContent : undefined,
         contentLanguage: resolvedLanguage,
+        templateCategory: effectiveTemplateCategory,
       });
 
       logger.debug('Guided workflow final PRD compiled', {
@@ -365,6 +384,7 @@ Generate a complete, professional PRD that incorporates all gathered requirement
     options?: {
       existingContent?: string;
       mode?: 'improve' | 'generate';
+      templateCategory?: string;
     }
   ): Promise<GuidedFinalizeResponse> {
     const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
@@ -381,6 +401,7 @@ Generate a complete, professional PRD that incorporates all gathered requirement
       existingContent: normalizedExistingContent,
     });
     const isImproveWorkflow = modeResolution.mode === 'improve';
+    const templateInstruction = buildTemplateInstruction(options?.templateCategory, resolvedLanguage);
 
     logger.debug('Guided workflow skipped directly to finalize');
 
@@ -393,7 +414,7 @@ ${projectIdea}
 
 EXISTING PRD:
 ${normalizedExistingContent}`
-      : `Analyze this project idea:\n\n${projectIdea}`;
+      : `Analyze this project idea:\n\n${projectIdea}\n\n${templateInstruction}`;
     const analysisResult = await client.callWithFallback(
       'generator',
       FEATURE_ANALYSIS_PROMPT + langInstruction,
@@ -417,6 +438,8 @@ ${projectIdea}
 FEATURE ANALYSIS:
 ${analysisResult.content}
 
+${templateInstruction}
+
 Return the complete improved PRD.`
       : `Create a complete PRD based on:
 
@@ -426,6 +449,8 @@ ${projectIdea}
 FEATURE ANALYSIS:
 ${analysisResult.content}
 
+${templateInstruction}
+
 Generate a complete, professional PRD.`;
     const compiled = await this.generateWithCompilerGates({
       client,
@@ -434,6 +459,7 @@ Generate a complete, professional PRD.`;
       mode: isImproveWorkflow ? 'improve' : 'generate',
       existingContent: isImproveWorkflow ? normalizedExistingContent : undefined,
       contentLanguage: resolvedLanguage,
+      templateCategory: options?.templateCategory,
     });
 
     logger.debug('Guided direct finalize complete', {
@@ -454,8 +480,9 @@ Generate a complete, professional PRD.`;
     mode: 'generate' | 'improve';
     existingContent?: string;
     contentLanguage?: string | null;
+    templateCategory?: string;
   }): Promise<GuidedGenerationResult> {
-    const { client, systemPrompt, userPrompt, mode, existingContent, contentLanguage } = params;
+    const { client, systemPrompt, userPrompt, mode, existingContent, contentLanguage, templateCategory } = params;
     const language = this.resolveContentLanguage(contentLanguage, `${userPrompt}\n${existingContent || ''}`);
     const modelsUsed = new Set<string>();
     let totalTokens = 0;
@@ -478,8 +505,9 @@ Generate a complete, professional PRD.`;
       mode,
       existingContent,
       language,
+      templateCategory,
       originalRequest: userPrompt,
-      maxRepairPasses: 2,
+      maxRepairPasses: 3,
       repairGenerator: async (repairPrompt) => {
         logger.warn('Guided compiler quality gate failed; starting repair pass');
         const repairResult = await client.callWithFallback(

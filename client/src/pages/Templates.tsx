@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { FileText, Rocket, Code, Layers, ArrowLeft, Plus } from "lucide-react";
+import { ArrowLeft, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { TopBar } from "@/components/TopBar";
@@ -30,16 +30,9 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { resolveLanguage } from "@/lib/i18n";
 import { useMutationErrorHandler } from "@/hooks/useMutationErrorHandler";
+import { useTemplates } from "@/hooks/useTemplates";
 import { useState } from "react";
 import { useTranslation } from "@/lib/i18n";
-
-const templateIcons: Record<string, any> = {
-  feature: FileText,
-  epic: Layers,
-  technical: Code,
-  'product-launch': Rocket,
-  custom: FileText,
-};
 
 export default function Templates() {
   const [, navigate] = useLocation();
@@ -53,6 +46,8 @@ export default function Templates() {
   const [prdTitle, setPrdTitle] = useState("");
   const [prdDescription, setPrdDescription] = useState("");
   const [prdLanguage, setPrdLanguage] = useState<string>("auto");
+
+  const { getTemplateName, getTemplateDescription, getTemplateIcon } = useTemplates();
 
   const { data: templates, isLoading, error, refetch } = useQuery<Template[]>({
     queryKey: ["/api/templates"],
@@ -102,22 +97,6 @@ export default function Templates() {
     // Pre-fill language with user's default
     setPrdLanguage(user?.defaultContentLanguage || "auto");
     setDialogOpen(true);
-  };
-
-  const getTemplateName = (template: Template) => {
-    const key = template.category as keyof typeof t.templates.defaults;
-    if (template.isDefault === 'true' && t.templates.defaults[key]) {
-      return t.templates.defaults[key].name;
-    }
-    return template.name;
-  };
-
-  const getTemplateDescription = (template: Template) => {
-    const key = template.category as keyof typeof t.templates.defaults;
-    if (template.isDefault === 'true' && t.templates.defaults[key]) {
-      return t.templates.defaults[key].description;
-    }
-    return template.description;
   };
 
   const handleDialogClose = (open: boolean) => {
@@ -181,7 +160,7 @@ export default function Templates() {
         ) : (
           <div className="grid gap-4 sm:gap-6 sm:grid-cols-2">
             {templates?.map((template) => {
-              const Icon = templateIcons[template.category] || FileText;
+              const Icon = getTemplateIcon(template.category);
               const isCustom = template.category === 'custom' || template.userId;
               return (
                 <Card

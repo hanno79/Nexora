@@ -48,6 +48,9 @@ export const de: Translations = {
       review: "Prüfung",
       completed: "Abgeschlossen",
     },
+    templateFilter: "Vorlage",
+    templateFilterAll: "Alle Vorlagen",
+    noTemplate: "Keine Vorlage",
   },
 
   editor: {
@@ -79,6 +82,7 @@ export const de: Translations = {
     untitledPlaceholder: "Unbenanntes PRD",
     descriptionPlaceholder: "Kurze Beschreibung hinzufügen...",
     contentPlaceholder: "Beginnen Sie hier, Ihren PRD-Inhalt zu schreiben...",
+    template: "Vorlage",
     statusLabel: "Status:",
     dualAiAssist: "Dual-KI Assistent",
     preview: "Vorschau",

@@ -828,6 +828,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Dual-AI generation routes (HRP-17)
   const { getDualAiService } = await import('./dualAiService');
   const { logAiUsage, getUserAiUsageStats } = await import('./aiUsageLogger');
+  const resolveTemplateCategoryForPrd = async (prdId?: string | null): Promise<string | undefined> => {
+    if (!prdId) return undefined;
+    const prd = await storage.getPrd(prdId);
+    if (!prd?.templateId) return undefined;
+    const template = await storage.getTemplate(prd.templateId);
+    return template?.category || undefined;
+  };
 
   // AI Usage statistics endpoint
   app.get('/api/ai/usage', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
@@ -856,6 +863,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (prdId !== undefined && prdId !== null && !editablePrdId) {
       return;
     }
+    const templateCategory = await resolveTemplateCategoryForPrd(editablePrdId);
 
     if (!userInput && !existingContent) {
       return res.status(400).json({ message: "User input or existing content is required" });
@@ -865,7 +873,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const result = await service.generatePRD({
       userInput: userInput || '',
       existingContent,
-      mode: mode || 'improve'
+      mode: mode || 'improve',
+      templateCategory,
     }, userId);
 
     // Log AI usage for both generator and reviewer
@@ -978,6 +987,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (prdId !== undefined && prdId !== null && !editablePrdId) {
         return;
       }
+      const templateCategory = await resolveTemplateCategoryForPrd(editablePrdId);
 
       logger.info("Iterative request received", {
         hasPrdId: !!editablePrdId,
@@ -1087,7 +1097,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         useFinalReview || false,
         userId,
         sendSSE,
-        isRequestClosed
+        isRequestClosed,
+        templateCategory
       );
 
       if (isRequestClosed()) {
@@ -1259,8 +1270,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
 
-    const { projectIdea, existingContent, mode } = req.body;
+    const { projectIdea, existingContent, mode, prdId } = req.body;
     const userId = req.user.claims.sub;
+    const editablePrdId = await requireEditablePrdId(storage, req, res, prdId, {
+      invalidMessage: "PRD ID must be a non-empty string",
+    });
+    if (prdId !== undefined && prdId !== null && !editablePrdId) {
+      return;
+    }
+    const templateCategory = await resolveTemplateCategoryForPrd(editablePrdId);
     const normalizedIdea = typeof projectIdea === 'string' ? projectIdea.trim() : '';
     const normalizedExistingContent = typeof existingContent === 'string' ? existingContent.trim() : '';
     const hasExistingContent = normalizedExistingContent.length > 0;
@@ -1277,6 +1295,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const result = await service.startGuidedWorkflow(normalizedIdea, userId, {
       existingContent: hasExistingContent ? normalizedExistingContent : undefined,
       mode: mode === 'improve' ? 'improve' : 'generate',
+      templateCategory,
     });
 
     res.json(result);
@@ -1321,13 +1340,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const { sessionId, prdId } = req.body;
     const userId = req.user.claims.sub;
+    const editablePrdId = await requireEditablePrdId(storage, req, res, prdId, {
+      invalidMessage: "PRD ID must be a non-empty string",
+    });
+    if (prdId !== undefined && prdId !== null && !editablePrdId) {
+      return;
+    }
+    const templateCategory = await resolveTemplateCategoryForPrd(editablePrdId);
 
     if (!sessionId) {
       return res.status(400).json({ message: "Session ID is required" });
     }
 
     const service = getGuidedAiService();
-    const result = await service.finalizePRD(sessionId, userId);
+    const result = await service.finalizePRD(sessionId, userId, { templateCategory });
 
     // Log AI usage
     if (result.modelsUsed.length > 0) {
@@ -1354,6 +1380,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const { projectIdea, existingContent, mode, prdId } = req.body;
     const userId = req.user.claims.sub;
+    const editablePrdId = await requireEditablePrdId(storage, req, res, prdId, {
+      invalidMessage: "PRD ID must be a non-empty string",
+    });
+    if (prdId !== undefined && prdId !== null && !editablePrdId) {
+      return;
+    }
+    const templateCategory = await resolveTemplateCategoryForPrd(editablePrdId);
     const normalizedIdea = typeof projectIdea === 'string' ? projectIdea.trim() : '';
     const normalizedExistingContent = typeof existingContent === 'string' ? existingContent.trim() : '';
     const hasExistingContent = normalizedExistingContent.length > 0;
@@ -1370,6 +1403,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const result = await service.skipToFinalize(normalizedIdea, userId, {
       existingContent: hasExistingContent ? normalizedExistingContent : undefined,
       mode: mode === 'improve' ? 'improve' : 'generate',
+      templateCategory,
     });
 
     // Log AI usage

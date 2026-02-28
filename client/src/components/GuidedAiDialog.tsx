@@ -106,6 +106,7 @@ export function GuidedAiDialog({
           projectIdea: idea.trim(),
           existingContent: hasExistingContent ? existingContent : undefined,
           mode: hasExistingContent ? 'improve' : 'generate',
+          prdId,
         }),
         signal,
       });

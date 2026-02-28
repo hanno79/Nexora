@@ -46,6 +46,9 @@ export const en = {
       review: "Review",
       completed: "Completed",
     },
+    templateFilter: "Template",
+    templateFilterAll: "All Templates",
+    noTemplate: "No Template",
   },
 
   editor: {
@@ -77,6 +80,7 @@ export const en = {
     untitledPlaceholder: "Untitled PRD",
     descriptionPlaceholder: "Add a brief description...",
     contentPlaceholder: "Start writing your PRD content here...",
+    template: "Template",
     statusLabel: "Status:",
     dualAiAssist: "Dual-AI Assist",
     preview: "Preview",

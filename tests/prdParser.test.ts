@@ -262,6 +262,63 @@ describe('parsePRDToStructure', () => {
     expect(result.features.length).toBe(1);
   });
 
+  it('maps technical requirements and dependencies/risk aliases to canonical sections', () => {
+    const markdown = [
+      '## Technical Requirements',
+      '- Node.js backend with PostgreSQL and Clerk authentication.',
+      '',
+      '## Dependencies & Risks',
+      '- Dependency on external auth provider; mitigate with graceful fallback UX.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      '### F-01: Deterministic Compiler',
+      '1. Purpose',
+      'Compile generated drafts into canonical PRD structure.',
+      '10. Acceptance Criteria',
+      '- Unknown legacy headings are canonicalized before quality gates.',
+    ].join('\n');
+
+    const result = parsePRDToStructure(markdown);
+    expect(result.deployment).toContain('Node.js backend with PostgreSQL');
+    expect(result.errorHandling).toContain('Dependency on external auth provider');
+    expect(result.features.length).toBe(1);
+  });
+
+  it('maps Part A/C/D wrapper headings to canonical sections', () => {
+    const markdown = [
+      '## Part A — System Context',
+      'Context and purpose for the initiative.',
+      '',
+      '## Part C — Technical & Design Context',
+      'Architecture overview and implementation constraints.',
+      '',
+      '## Part D — Planning & Risk',
+      'Milestones, sequencing, and rollout checkpoints.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      '### F-01: Wrapper Compatibility',
+      '1. Purpose',
+      'Support wrapper headings under strict canonical compiler mode.',
+      '10. Acceptance Criteria',
+      '- Part wrapper headings do not trigger unknown-heading quality errors.',
+    ].join('\n');
+
+    const result = parsePRDToStructure(markdown);
+    expect(result.systemVision).toContain('Context and purpose');
+    expect(result.deployment).toContain('Architecture overview');
+    expect(result.timelineMilestones).toContain('Milestones, sequencing');
+    expect(Object.keys(result.otherSections)).not.toEqual(
+      expect.arrayContaining([
+        'Part A — System Context',
+        'Part C — Technical & Design Context',
+        'Part D — Planning & Risk',
+      ])
+    );
+    expect(result.features.length).toBe(1);
+  });
+
   it('treats user stories as feature catalogue intro context', () => {
     const markdown = [
       '## User Stories',
