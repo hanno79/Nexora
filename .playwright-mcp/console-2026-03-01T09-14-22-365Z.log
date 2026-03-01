@@ -1,0 +1,104 @@
+[    1826ms] [WARNING] Clerk: Clerk has been loaded with development keys. Development instances have strict usage limits and should not be used when deploying your application to production. Learn more: https://clerk.com/docs/deployments/overview @ https://romantic-pigeon-5.clerk.accounts.dev/npm/@clerk/clerk-js@5/dist/clerk.browser.js:18
+[   18320ms] [WARNING] Clerk: Clerk has been loaded with development keys. Development instances have strict usage limits and should not be used when deploying your application to production. Learn more: https://clerk.com/docs/deployments/overview @ https://romantic-pigeon-5.clerk.accounts.dev/npm/@clerk/clerk-js@5/dist/clerk.browser.js:18
+[   74820ms] [WARNING] Clerk: Clerk has been loaded with development keys. Development instances have strict usage limits and should not be used when deploying your application to production. Learn more: https://clerk.com/docs/deployments/overview @ https://romantic-pigeon-5.clerk.accounts.dev/npm/@clerk/clerk-js@5/dist/clerk.browser.js:18
+[  178405ms] [WARNING] Clerk: Clerk has been loaded with development keys. Development instances have strict usage limits and should not be used when deploying your application to production. Learn more: https://clerk.com/docs/deployments/overview @ https://romantic-pigeon-5.clerk.accounts.dev/npm/@clerk/clerk-js@5/dist/clerk.browser.js:18
+[  192860ms] [WARNING] Clerk: Clerk has been loaded with development keys. Development instances have strict usage limits and should not be used when deploying your application to production. Learn more: https://clerk.com/docs/deployments/overview @ https://romantic-pigeon-5.clerk.accounts.dev/npm/@clerk/clerk-js@5/dist/clerk.browser.js:18
+[  193937ms] [WARNING] Clerk: Clerk has been loaded with development keys. Development instances have strict usage limits and should not be used when deploying your application to production. Learn more: https://clerk.com/docs/deployments/overview @ https://romantic-pigeon-5.clerk.accounts.dev/npm/@clerk/clerk-js@5/dist/clerk.browser.js:18
+[  799045ms] [ERROR] Failed to load resource: the server responded with a status of 422 (Unprocessable Entity) @ http://localhost:5000/api/ai/generate-dual:0
+[  799046ms] [ERROR] AI generation error: Error: PRD compiler quality gate failed after 2 repair attempt(s): Output appears truncated or cut off. | Template "feature" feature semantics mismatch: only 2/9 feature names contain required template-specific signals.
+    at handleSimpleGeneration (http://localhost:5000/src/components/DualAiDialog.tsx:132:13)
+    at async handleGenerate (http://localhost:5000/src/components/DualAiDialog.tsx:100:9) @ http://localhost:5000/src/components/DualAiDialog.tsx:104
+[ 2129321ms] [WARNING] Clerk: Clerk has been loaded with development keys. Development instances have strict usage limits and should not be used when deploying your application to production. Learn more: https://clerk.com/docs/deployments/overview @ https://romantic-pigeon-5.clerk.accounts.dev/npm/@clerk/clerk-js@5/dist/clerk.browser.js:18
+[ 2130071ms] [WARNING] Clerk: Clerk has been loaded with development keys. Development instances have strict usage limits and should not be used when deploying your application to production. Learn more: https://clerk.com/docs/deployments/overview @ https://romantic-pigeon-5.clerk.accounts.dev/npm/@clerk/clerk-js@5/dist/clerk.browser.js:18
+[ 2353964ms] [ERROR] AI generation error: AbortError: signal is aborted without reason
+    at onClick (http://localhost:5000/src/components/DualAiDialog.tsx:784:44)
+    at HTMLUnknownElement.callCallback2 (http://localhost:5000/@fs/app/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=eab43a45:3674:22)
+    at Object.invokeGuardedCallbackDev (http://localhost:5000/@fs/app/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=eab43a45:3699:24)
+    at invokeGuardedCallback (http://localhost:5000/@fs/app/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=eab43a45:3733:39)
+    at invokeGuardedCallbackAndCatchFirstError (http://localhost:5000/@fs/app/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=eab43a45:3736:33)
+    at executeDispatch (http://localhost:5000/@fs/app/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=eab43a45:7014:11)
+    at processDispatchQueueItemsInOrder (http://localhost:5000/@fs/app/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=eab43a45:7034:15)
+    at processDispatchQueue (http://localhost:5000/@fs/app/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=eab43a45:7043:13)
+    at dispatchEventsForPlugins (http://localhost:5000/@fs/app/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=eab43a45:7051:11)
+    at http://localhost:5000/@fs/app/node_modules/.vite/deps/chunk-RPCDYKBN.js?v=eab43a45:7174:20 @ http://localhost:5000/src/components/DualAiDialog.tsx:104
+[ 2383155ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2386509ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2391260ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2401095ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2416751ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2447346ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2479149ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2511005ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2529464ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2559854ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2590920ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2613508ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2631022ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2650542ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2677527ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2700170ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2717569ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2746817ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2774331ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2803634ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2822171ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2843080ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2869735ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2892451ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2924141ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2952800ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2970920ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 2993211ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3019596ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3042819ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3073599ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3095614ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3118962ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3146039ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3163941ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3193705ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3213136ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3231456ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3263222ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3283179ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3314799ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3343252ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3374560ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3400168ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3430148ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3453984ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3485502ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3510852ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3529722ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3555049ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3582251ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3600446ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3623392ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3645584ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3677448ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3707904ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3739882ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3759501ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3779733ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3804953ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3827027ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3846419ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3867864ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3895771ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3918426ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3944884ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3972620ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 3997634ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 4020587ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 4110551ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Connection closed before receiving a handshake response @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 4114279ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 4119378ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 4127645ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 6242621ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Connection closed before receiving a handshake response @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 6243669ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Connection closed before receiving a handshake response @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 6776917ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Connection closed before receiving a handshake response @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 6778487ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Connection closed before receiving a handshake response @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 6851919ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 6855969ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 6861714ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:5000/src/lib/useWebSocket.ts:15
+[ 6867901ms] [ERROR] WebSocket connection to 'ws://localhost:5000/ws' failed: Connection closed before receiving a handshake response @ http://localhost:5000/src/lib/useWebSocket.ts:15

@@ -3,7 +3,6 @@ import type { PRDStructure } from './prdStructure';
 import {
   CANONICAL_PRD_HEADINGS,
   compilePrdDocument,
-  looksLikeTruncatedOutput,
   type CompilePrdDocumentFn,
   type PrdQualityReport,
 } from './prdCompiler';
@@ -34,6 +33,7 @@ export interface FinalizeWithCompilerGatesResult {
   content: string;
   structure: PRDStructure;
   quality: PrdQualityReport;
+  qualityScore: number;
   repairAttempts: CompilerModelResult[];
 }
 
@@ -49,21 +49,51 @@ export class PrdCompilerQualityError extends Error {
   }
 }
 
+export function qualityScore(quality: PrdQualityReport): number {
+  let score = 100;
+  for (const issue of quality.issues) {
+    score -= issue.severity === 'error' ? 10 : 3;
+  }
+  if (quality.truncatedLikely) score -= 15;
+  score -= (quality.missingSections?.length || 0) * 5;
+  score += Math.min(20, (quality.featureCount || 0) * 2);
+  return score;
+}
+
 function shouldRepair(
-  result: CompilerModelResult,
+  _result: CompilerModelResult,
   quality: PrdQualityReport
 ): boolean {
-  const sourceLooksTruncated = looksLikeTruncatedOutput(result.content);
-  const finishReasonSuggestsCutoff = result.finishReason === 'length' &&
-    (sourceLooksTruncated || quality.truncatedLikely || !quality.valid);
-
   if (!quality.valid) return true;
   if (quality.truncatedLikely) return true;
-  if (finishReasonSuggestsCutoff) return true;
 
   // If the compiler produced a valid, non-truncated structure, accept it even
-  // when the raw model output looked syntactically incomplete.
+  // when the raw model output looked syntactically incomplete (finish_reason='length').
   return false;
+}
+
+export interface RepairHistoryEntry {
+  pass: number;
+  score: number;
+  issueCount: number;
+  topIssues: string[];
+}
+
+function formatRepairHistory(history: RepairHistoryEntry[]): string {
+  if (history.length === 0) return '';
+  const lines = history.map(h =>
+    `- Pass ${h.pass}: score ${h.score}, ${h.issueCount} issue(s): ${h.topIssues.join(', ') || 'none'}`
+  );
+  // Identify persistent issues (present in every pass)
+  const allIssueSets = history.map(h => new Set(h.topIssues));
+  const persistent = history[0].topIssues.filter(code =>
+    allIssueSets.every(s => s.has(code))
+  );
+  const focusHint = persistent.length > 0
+    ? `\nFocus on fixing the persistent issue(s): ${persistent.join(', ')}`
+    : '';
+  return `\nREPAIR HISTORY (do NOT repeat failed approaches):
+${lines.join('\n')}${focusHint}\n`;
 }
 
 function buildRepairPrompt(params: {
@@ -74,6 +104,7 @@ function buildRepairPrompt(params: {
   originalRequest: string;
   templateCategory?: string;
   language?: SupportedLanguage;
+  repairHistory?: RepairHistoryEntry[];
 }): string {
   const {
     mode,
@@ -83,16 +114,18 @@ function buildRepairPrompt(params: {
     originalRequest,
     templateCategory,
     language,
+    repairHistory,
   } = params;
   const canonicalHeadings = CANONICAL_PRD_HEADINGS.map(h => `- ## ${h}`).join('\n');
   const templateInstruction = buildTemplateInstruction(templateCategory, language || 'en');
+  const historyBlock = formatRepairHistory(repairHistory || []);
 
   if (mode === 'improve') {
     return `The previous PRD output failed quality gates and must be repaired.
 
 QUALITY ISSUES:
 ${issueSummary}
-
+${historyBlock}
 BASELINE PRD (must remain intact unless directly improved):
 ${existingContent || '(no baseline provided)'}
 
@@ -113,7 +146,7 @@ ${templateInstruction}
 - Keep existing feature IDs stable and preserve baseline content unless directly improved.
 - Resolve repeated boilerplate phrasing so each feature spec stays concrete and unique.
 - Remove prompt/meta artifacts (e.g., Iteration X, Questions Identified, Answer:, Reasoning:, ORIGINAL PRD, REVIEW FEEDBACK).
-- Keep complete body content in target language except canonical H2 headings and allowed technical terms.
+- Target language: ${language || 'en'}. Write ALL body content in this language. Keep only the canonical H2 headings in English.
 - No truncation, placeholders, or unfinished bullets/sentences.`;
   }
 
@@ -121,7 +154,7 @@ ${templateInstruction}
 
 QUALITY ISSUES:
 ${issueSummary}
-
+${historyBlock}
 CURRENT INCOMPLETE OUTPUT:
 ${currentContent}
 
@@ -138,7 +171,7 @@ ${templateInstruction}
 - Do not add any extra top-level sections.
 - Resolve repeated boilerplate phrasing so each feature spec stays concrete and unique.
 - Remove prompt/meta artifacts (e.g., Iteration X, Questions Identified, Answer:, Reasoning:, ORIGINAL PRD, REVIEW FEEDBACK).
-- Keep complete body content in target language except canonical H2 headings and allowed technical terms.
+- Target language: ${language || 'en'}. Write ALL body content in this language. Keep only the canonical H2 headings in English.
 - No truncation, placeholders, or unfinished bullets/sentences.`;
 }
 
@@ -174,26 +207,57 @@ export async function finalizeWithCompilerGates(
   let needsRepair = shouldRepair(current, compiled.quality);
   const repairAttempts: CompilerModelResult[] = [];
 
+  // Track best result across repair passes to prevent quality degradation
+  let bestCurrent = current;
+  let bestCompiled = compiled;
+  let bestScore = qualityScore(compiled.quality);
+  let degradationCount = 0;
+
+  const repairHistory: RepairHistoryEntry[] = [];
+
   for (let pass = 1; pass <= maxRepairPasses && needsRepair; pass++) {
-    const issueSummary = compiled.quality.issues.map(i => `- ${i.message}`).join('\n') || '- Unknown quality issue';
+    const issueSummary = bestCompiled.quality.issues.map(i => `- ${i.message}`).join('\n') || '- Unknown quality issue';
     const repairPrompt = buildRepairPrompt({
       mode,
       issueSummary,
       existingContent,
-      currentContent: current.content,
+      currentContent: bestCurrent.content,
       originalRequest,
       templateCategory,
       language,
+      repairHistory,
     });
 
-    current = await repairGenerator(repairPrompt, pass);
-    repairAttempts.push(current);
-    compiled = compileCurrent(current.content);
+    const repairResult = await repairGenerator(repairPrompt, pass);
+    repairAttempts.push(repairResult);
+    const repairCompiled = compileCurrent(repairResult.content);
+    const repairScore = qualityScore(repairCompiled.quality);
+
+    repairHistory.push({
+      pass,
+      score: repairScore,
+      issueCount: repairCompiled.quality.issues.length,
+      topIssues: repairCompiled.quality.issues.slice(0, 3).map(i => i.code),
+    });
+
+    if (repairScore > bestScore) {
+      bestCurrent = repairResult;
+      bestCompiled = repairCompiled;
+      bestScore = repairScore;
+      degradationCount = 0;
+    } else {
+      degradationCount++;
+      if (degradationCount >= 2) break; // repairs are not helping, abort early
+    }
+
+    current = bestCurrent;
+    compiled = bestCompiled;
     needsRepair = shouldRepair(current, compiled.quality);
   }
 
   if (needsRepair) {
-    const details = compiled.quality.issues.map(i => i.message).join(' | ') || 'Unknown quality issue.';
+    const errorIssues = compiled.quality.issues.filter(i => i.severity === 'error');
+    const details = errorIssues.map(i => i.message).join(' | ') || 'Unknown quality issue.';
     throw new PrdCompilerQualityError(
       `PRD compiler quality gate failed after ${repairAttempts.length} repair attempt(s): ${details}`,
       compiled.quality,
@@ -205,6 +269,7 @@ export async function finalizeWithCompilerGates(
     content: compiled.content,
     structure: compiled.structure,
     quality: compiled.quality,
+    qualityScore: bestScore,
     repairAttempts,
   };
 }

@@ -109,6 +109,9 @@ const DE_ACTION_MARKERS = new Set([
   'erstellen', 'anlegen', 'bearbeiten', 'aktualisieren', 'aendern', 'loeschen', 'entfernen',
   'anzeigen', 'auflisten', 'suchen', 'verwalten', 'importieren', 'exportieren', 'speichern',
   'laden', 'einreichen', 'freigeben', 'pruefen', 'nachverfolgen', 'synchronisieren', 'konfigurieren',
+  // German nouns commonly found in feature names
+  'verwaltung', 'erfassung', 'steuerung', 'uebersicht', 'konfiguration', 'einstellung',
+  'registrierung', 'authentifizierung', 'benachrichtigung', 'automatisierung', 'integration',
 ]);
 
 const TECH_ALLOWLIST = new Set([
@@ -126,26 +129,67 @@ const META_INLINE_TEST = /\b(?:iteration\s+\d+|questions\s+identified|best\s+pra
 const META_INLINE_REPLACE = /\b(?:iteration\s+\d+|questions\s+identified|best\s+practice\s+recommendations|original\s+prd|review\s+feedback|answer:|reasoning:|concrete\s+implementation:)\b/gi;
 
 const KNOWN_COMPILER_SCAFFOLD_PATTERNS: RegExp[] = [
+  // Section-level scaffold (EN)
   /is explicitly defined for this/i,
   /statements are implementation ready testable and binding for this version/i,
   /this section is concretized around prioritized user and delivery outcomes/i,
   /core scope centers on the feature workflows/i,
   /context priorities include/i,
+  // Section-level scaffold (DE)
   /ist fuer dieses .* explizit beschrieben/i,
   /die aussagen sind umsetzbar testbar und fuer diese version verbindlich/i,
   /kernfokus sind die feature workflows/i,
   /der kontext umfasst insbesondere/i,
+  // Feature-field scaffold (EN) — from buildFeatureFieldTemplate()
   /deliver(s)? a clearly scoped user capability with an observable outcome/i,
   /defines an independent testable workflow/i,
   /implemented as a deterministic functional unit with explicit behavior/i,
+  /primary.*end user invoking/i,
+  /actors include users triggering/i,
+  /users interact with .* while backend/i,
+  /user explicitly initiates .* through the interface/i,
+  /triggered by a concrete user action/i,
+  /ui event starts the .* workflow/i,
+  /required inputs are present and validated/i,
+  /authentication and authorization requirements/i,
+  /dependent services are reachable/i,
   /system receives the .* request and validates input/i,
   /business logic for .* executes deterministically/i,
   /relevant data is created or updated atomically/i,
-  /validation failure system returns a clear error and performs no partial write/i,
-  /transient failure system logs the issue and offers a retry path/i,
+  /ui reflects the result of .* and confirms completion/i,
+  /validation failure.*system returns a clear error and performs no partial write/i,
+  /transient failure.*system logs the issue and offers a retry path/i,
+  /after .* completes.*resulting state is consistent/i,
+  /reads and updates only.*in.scope entities/i,
+  /ui surfaces loading.*success.*and error states/i,
   /is verifiable by end users directly in the ui without manual reload/i,
   /error paths for .* provide clear user feedback and keep state consistent/i,
   /data mutations caused by .* are observable after execution/i,
+  // Feature-field scaffold (DE) — from buildFeatureFieldTemplate()
+  /liefert einen klar abgegrenzten nutzerwert/i,
+  /beschreibt einen eigenstaendigen.*testbaren anwendungsfall/i,
+  /wird als implementierbare funktionseinheit/i,
+  /primaer.*endnutzer im kontext/i,
+  /akteure sind nutzer.*die .* ausloesen/i,
+  /nutzer interagieren direkt mit/i,
+  /der nutzer startet .* explizit ueber die benutzeroberflaeche/i,
+  /wird durch eine konkrete nutzeraktion/i,
+  /ein ui.event initiiert den ablauf/i,
+  /alle benoetigten eingaben sind vorhanden und vorvalidiert/i,
+  /authentifizierung und berechtigungen/i,
+  /abhaengige dienste sind erreichbar/i,
+  /system nimmt die anfrage .* entgegen und validiert/i,
+  /geschaeftslogik fuer .* wird deterministisch ausgefuehrt/i,
+  /relevante daten werden atomar gespeichert/i,
+  /ui wird mit dem ergebnis von .* aktualisiert/i,
+  /validierung fehlgeschlagen.*system liefert eine klare fehlermeldung/i,
+  /temporaer.*fehler.*system protokolliert den fehler/i,
+  /nach abschluss von .* ist der resultierende zustand konsistent/i,
+  /liest und aktualisiert nur die relevanten entitaeten/i,
+  /oberflaeche zeigt lade.*erfolg.*und fehlerzustaende/i,
+  /ist fuer einen nutzer ohne manuelles nachladen in der ui verifizierbar/i,
+  /fehlerfaelle von .* liefern klare nutzerhinweise/i,
+  /die durch .* verursachten datenaenderungen sind.*nachvollziehbar/i,
 ];
 
 function hasText(value: unknown): boolean {
@@ -163,6 +207,12 @@ function normalizeText(value: string): string {
 
 function normalizeSentence(value: string): string {
   return normalizeText(value)
+    // ACHTUNG: Umlaut-Normalisierung kann zu Kollisionen führen (z.B. "Maße" vs "Masse")
+    // Dies ist akzeptabel für Boilerplate-Erkennung, da:
+    // 1. Nur interner Vergleich - keine Benutzerdaten werden verändert
+    // 2. Kollisionen sind selten und führen maximal zu falsch-positiven Boilerplate-Erkennungen
+    // 3. Die alternative (keine Normalisierung) würde deutsche Scaffold-Sätze nicht erkennen
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
     .replace(/\b\d+\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -425,7 +475,7 @@ function isLanguageMismatch(
 
   if (targetLanguage === 'de') {
     if (hasGermanUmlaut || hasGermanTransliterationSignals) return false;
-    if (allowShort) return markers.en >= 1 && markers.en > markers.de;
+    if (allowShort) return markers.en >= 3 && markers.en > markers.de;
     return markers.en >= 3 && markers.en > markers.de * 1.4;
   }
 
@@ -604,15 +654,12 @@ export function collectLanguageConsistencyIssues(
     });
   }
 
+  const featureNameMismatches: string[] = [];
   for (const feature of structure.features || []) {
     const featureId = String(feature.id || '').trim() || 'feature';
 
     if (isLanguageMismatch(String(feature.name || ''), targetLanguage, { allowShort: true })) {
-      issues.push({
-        code: 'language_mismatch_feature_name',
-        message: `Feature ${featureId} name is not consistently written in target language "${targetLanguage}".`,
-        severity: 'error',
-      });
+      featureNameMismatches.push(featureId);
     }
 
     for (const field of FEATURE_STRING_FIELDS) {
@@ -632,6 +679,27 @@ export function collectLanguageConsistencyIssues(
         code: `language_mismatch_feature_field_${String(field)}`,
         message: `Feature ${featureId} field "${String(field)}" contains mixed language content.`,
         severity: 'error',
+      });
+    }
+  }
+
+  // Ratio-based aggregation for feature name mismatches
+  const totalFeatures = (structure.features || []).length;
+  if (featureNameMismatches.length > 0 && totalFeatures > 0) {
+    const ratio = featureNameMismatches.length / totalFeatures;
+    if (ratio > 0.5) {
+      // Majority of features in wrong language → blocking error
+      issues.push({
+        code: 'language_mismatch_feature_names_majority',
+        message: `${featureNameMismatches.length}/${totalFeatures} feature names are not consistently written in target language "${targetLanguage}".`,
+        severity: 'error',
+      });
+    } else {
+      // Minority → warning only (informational, not blocking)
+      issues.push({
+        code: 'language_mismatch_feature_name',
+        message: `Feature ${featureNameMismatches.join(', ')} name(s) not consistently in target language "${targetLanguage}".`,
+        severity: 'warning',
       });
     }
   }
@@ -658,7 +726,7 @@ export function collectBoilerplateRepetitionIssues(structure: PRDStructure): Qua
   }
 
   const globalRepeats = Array.from(sentenceCounts.entries())
-    .filter(([, data]) => data.count >= 4)
+    .filter(([, data]) => data.count >= 7)
     .sort((a, b) => b[1].count - a[1].count);
 
   const acceptanceValues: Array<{ featureId: string; value: string }> = [];
@@ -682,7 +750,7 @@ export function collectBoilerplateRepetitionIssues(structure: PRDStructure): Qua
   }
 
   const acceptanceRepeats = Array.from(acceptanceCounts.entries())
-    .filter(([, featureIds]) => featureIds.size >= 3)
+    .filter(([, featureIds]) => featureIds.size >= 4)
     .sort((a, b) => b[1].size - a[1].size);
 
   const issues: QualityIssue[] = [];

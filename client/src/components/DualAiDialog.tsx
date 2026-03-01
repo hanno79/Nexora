@@ -81,6 +81,9 @@ export function DualAiDialog({
         if (settings.useFinalReview !== undefined) {
           setUseFinalReview(settings.useFinalReview);
         }
+        // Pre-load model names so they appear in the status display immediately
+        if (settings.generatorModel) setGeneratorModel(settings.generatorModel);
+        if (settings.reviewerModel) setReviewerModel(settings.reviewerModel);
       }
     } catch (err) {
       console.error('Failed to load AI settings:', err);
@@ -479,6 +482,21 @@ export function DualAiDialog({
                 </div>
               )}
             </div>
+            {/* Modellinformationen — direkt unter der Statusleiste */}
+            {(generatorModel || reviewerModel) && (
+              <div className="flex gap-2 flex-wrap px-1">
+                {generatorModel && (
+                  <Badge variant="outline" className="text-xs">
+                    {t.dualAi.generator}: {generatorModel.split('/')[1] || generatorModel}
+                  </Badge>
+                )}
+                {reviewerModel && (
+                  <Badge variant="outline" className="text-xs">
+                    {t.dualAi.reviewer}: {reviewerModel.split('/')[1] || reviewerModel}
+                  </Badge>
+                )}
+              </div>
+            )}
             {/* Live-Statistiken für den Iterationsmodus */}
             {currentStep === 'iterating' && (
               <div className="flex items-center gap-4 px-3 text-xs text-muted-foreground">
@@ -501,22 +519,6 @@ export function DualAiDialog({
               </div>
             )}
           </div>
-
-          {/* Modellinformationen */}
-          {(generatorModel || reviewerModel) && (
-            <div className="flex gap-2 flex-wrap">
-              {generatorModel && (
-                <Badge variant="outline" className="text-xs">
-                  {t.dualAi.generator}: {generatorModel.split('/')[1] || generatorModel}
-                </Badge>
-              )}
-              {reviewerModel && (
-                <Badge variant="outline" className="text-xs">
-                  {t.dualAi.reviewer}: {reviewerModel.split('/')[1] || reviewerModel}
-                </Badge>
-              )}
-            </div>
-          )}
 
           {/* Benutzereingabe */}
           <div className="space-y-2">

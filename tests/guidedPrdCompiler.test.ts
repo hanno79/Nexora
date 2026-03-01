@@ -689,4 +689,97 @@ describe('prdCompiler', () => {
       compiled.quality.issues.some(issue => issue.code === 'missing_feature_catalogue')
     ).toBe(false);
   });
+
+  it('warns about structural incompleteness when catalogue heading present but no features', () => {
+    const prd = [
+      '## System Vision',
+      'A system for collaborative planning.',
+      '',
+      '## Functional Feature Catalogue',
+      'The following features define the system capabilities.',
+      '',
+      '## Non-Functional Requirements',
+      '- Performance under load.',
+    ].join('\n');
+
+    const result = compilePrdDocument(prd, { mode: 'generate', language: 'en' });
+    expect(
+      result.quality.issues.some(i => i.code === 'structural_incompleteness')
+    ).toBe(true);
+  });
+
+  it('rejects empty input with empty_input error', () => {
+    const result = compilePrdDocument('', { mode: 'generate', language: 'en' });
+    expect(result.quality.valid).toBe(false);
+    expect(result.quality.issues.some(i => i.code === 'empty_input')).toBe(true);
+    expect(result.content).toBe('');
+  });
+
+  it('rejects whitespace-only input', () => {
+    const result = compilePrdDocument('   \n\n  \t  ', { mode: 'generate', language: 'en' });
+    expect(result.quality.valid).toBe(false);
+    expect(result.quality.issues.some(i => i.code === 'empty_input')).toBe(true);
+  });
+
+  it('accepts German PRD with English canonical headings without language mismatch', () => {
+    const germanPrd = [
+      '## System Vision',
+      'Das System bietet eine kollaborative Plattform fuer Produktplanung mit KI-Unterstuetzung.',
+      '',
+      '## System Boundaries',
+      'Webanwendung mit authentifizierten Benutzern und REST-API.',
+      '',
+      '## Domain Model',
+      '- Benutzer, PRD, Feature, Version.',
+      '',
+      '## Global Business Rules',
+      '- Feature-IDs bleiben ueber Verfeinerungslaeufe hinweg stabil.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      '### F-01: Benutzerregistrierung',
+      '1. Purpose',
+      'Nutzer koennen sich mit E-Mail und Passwort registrieren.',
+      '10. Acceptance Criteria',
+      '- Nach Registrierung erhaelt der Nutzer eine Bestaetigungsmail.',
+      '',
+      '## Non-Functional Requirements',
+      '- Antwortzeiten unter zwei Sekunden fuer alle API-Aufrufe.',
+      '',
+      '## Error Handling & Recovery',
+      '- Fehlgeschlagene Registrierungen werden protokolliert und dem Nutzer angezeigt.',
+      '',
+      '## Deployment & Infrastructure',
+      '- Node-Service mit PostgreSQL und Docker-Deployment.',
+      '',
+      '## Definition of Done',
+      '- Alle Pflichtabschnitte und Akzeptanzkriterien sind vollstaendig.',
+      '',
+      '## Out of Scope',
+      '- Native Mobile-Apps sind nicht Teil dieses Releases.',
+      '',
+      '## Timeline & Milestones',
+      '- Phase 1: Kernfunktionen, Phase 2: Erweiterungen.',
+      '',
+      '## Success Criteria & Acceptance Testing',
+      '- 95% der Laeufe erzeugen ein gueltiges Dokument ohne manuellen Eingriff.',
+    ].join('\n');
+
+    const result = compilePrdDocument(germanPrd, {
+      mode: 'generate',
+      language: 'de',
+      strictLanguageConsistency: true,
+    });
+
+    expect(result.quality.valid).toBe(true);
+    expect(
+      result.quality.issues.some(i => i.code.startsWith('language_mismatch_section_'))
+    ).toBe(false);
+  });
+
+  it('rejects input shorter than 20 characters', () => {
+    const result = compilePrdDocument('Short text.', { mode: 'generate', language: 'en' });
+    expect(result.quality.valid).toBe(false);
+    expect(result.quality.issues.some(i => i.code === 'empty_input')).toBe(true);
+  });
 });

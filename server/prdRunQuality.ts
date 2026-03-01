@@ -2,7 +2,7 @@ import type { CompilerDiagnostics } from './dualAiPrompts';
 import type { PrdQualityIssue, PrdQualityReport } from './prdCompiler';
 import { PrdCompilerQualityError } from './prdCompilerFinalizer';
 
-export type PrdQualityStatus = 'passed' | 'failed_quality' | 'failed_runtime' | 'cancelled';
+export type PrdQualityStatus = 'passed' | 'degraded' | 'failed_quality' | 'failed_runtime' | 'cancelled';
 export type PrdFinalizationStage = 'intermediate' | 'final';
 
 export interface CompilerRunDiagnostics extends CompilerDiagnostics {

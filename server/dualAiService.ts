@@ -1,6 +1,9 @@
 // Dual-AI Service - Orchestrates Generator & Reviewer based on HRP-17
-import { getOpenRouterClient, MODEL_TIERS, getDefaultFallbackModelForTier, sanitizeConfiguredModel, resolveModelTier } from './openrouter';
+import { createClientWithUserPreferences } from './openrouter';
 import type { OpenRouterClient } from './openrouter';
+import { detectContentLanguage } from './prdLanguageDetector';
+import { runFeatureExpansionPipeline, extractVisionFromContent } from './prdFeatureExpansion';
+import { runPostCompilerPreservation } from './prdFeaturePreservation';
 import type { TokenUsage } from "@shared/schema";
 import {
   GENERATOR_SYSTEM_PROMPT,
@@ -18,8 +21,7 @@ import {
   type IterationData,
   type CompilerDiagnostics
 } from './dualAiPrompts';
-import { generateFeatureList } from './services/llm/generateFeatureList';
-import { expandAllFeatures, expandFeature } from './services/llm/expandFeature';
+import { expandFeature } from './services/llm/expandFeature';
 import { parsePRDToStructure, logStructureValidation, normalizeFeatureId } from './prdParser';
 import { compareStructures, logStructuralDrift, restoreRemovedFeatures } from './prdStructureDiff';
 import { assembleStructureToMarkdown } from './prdAssembler';
@@ -28,14 +30,12 @@ import { detectTargetSection, regenerateSection } from './prdSectionRegenerator'
 import { regenerateSectionAsJson } from './prdSectionJsonRegenerator';
 import type { PRDStructure, FeatureSpec } from './prdStructure';
 import { mergeExpansionIntoStructure } from './prdStructureMerger';
-import { finalizeWithCompilerGates } from './prdCompilerFinalizer';
-import { compilePrdDocument } from './prdCompiler';
+import { finalizeWithCompilerGates, PrdCompilerQualityError } from './prdCompilerFinalizer';
+import { pickNextFallbackModel, pickBestDegradedResult } from './prdQualityFallback';
+import { compilePrdDocument, ensurePrdRequiredSections } from './prdCompiler';
 import { isHighConfidenceFeatureDuplicate } from './prdQualitySignals';
 import { resolvePrdWorkflowMode } from './prdWorkflowMode';
 import { buildTemplateInstruction } from './prdTemplateIntent';
-import { db } from './db';
-import { users } from '@shared/schema';
-import { eq } from 'drizzle-orm';
 import fs from 'fs';
 import path from 'path';
 
@@ -123,11 +123,11 @@ interface IterationCallResult {
 export class DualAiService {
   async generatePRD(request: DualAiRequest, userId?: string): Promise<DualAiResponse> {
     // Create fresh client per request to prevent cross-user contamination
-    const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
+    const { client, contentLanguage } = await createClientWithUserPreferences(userId, dualAiLog);
     dualAiLog(`🎯 Simple run models: generator=${client.getPreferredModel('generator') || '(tier default)'}, reviewer=${client.getPreferredModel('reviewer') || '(tier default)'}, fallback=${client.getPreferredModel('fallback') || '(none)'}`);
     
     const { userInput, existingContent, mode, templateCategory } = request;
-    const resolvedLanguage = this.resolveScaffoldLanguage(
+    const resolvedLanguage = detectContentLanguage(
       contentLanguage,
       `${userInput || ''}\n${existingContent || ''}`
     );
@@ -156,10 +156,11 @@ export class DualAiService {
     let improvedVersion: GeneratorResponse | undefined;
 
     // Step 1: Generate initial PRD (skip if review-only)
+    // ÄNDERUNG 01.03.2026: generatorPrompt außerhalb definieren für Fallback-Scope
+    let generatorPrompt: string | undefined;
     if (effectiveMode !== 'review-only') {
       dualAiLog('🤖 Step 1: Generating PRD with AI Generator...');
       
-      let generatorPrompt: string;
       if (effectiveMode === 'improve' && existingContent) {
         // IMPROVEMENT MODE: Explicitly instruct to preserve and build upon existing content
         generatorPrompt = `IMPORTANT: You are IMPROVING an existing PRD. Do NOT start from scratch!
@@ -214,49 +215,30 @@ Create an improved version that incorporates the new requirements while keeping 
     let enrichedStructure: PRDStructure | undefined;
     const shouldRunFeatureExpansion = effectiveMode === 'generate';
     if (shouldRunFeatureExpansion) {
-      try {
-        dualAiLog('🧩 Feature Identification Layer: Extracting atomic features...');
-        const vision = this.extractVisionFromContent(generatorResponse.content);
-        const featureResult = await generateFeatureList(userInput, vision, client);
-        const topLevelFeatureLines = featureResult.featureList
-          .split('\n')
-          .filter((line) => line.trim().startsWith('- '))
-          .length;
-        dualAiLog(
-          `🧩 Feature List generated (model: ${featureResult.model}, retried: ${featureResult.retried}, ` +
-          `${topLevelFeatureLines} lines, ${featureResult.featureList.length} chars)`
-        );
-
-        // Feature Expansion Engine (modular, parallel to monolithic PRD — testing phase)
-        try {
-          dualAiLog('🏗️ Feature Expansion Engine: Starting modular expansion...');
-          const expansionResult = await expandAllFeatures(
-            userInput,
-            vision,
-            featureResult.featureList,
-            client,
-            resolvedLanguage
-          );
-          dualAiLog(`🏗️ Feature Expansion complete: ${expansionResult.expandedFeatures.length} features, ${expansionResult.totalTokens} tokens`);
-
-          // Merge expansion into structured representation for persistence
-          if (expansionResult.expandedFeatures.length > 0) {
-            try {
-              const baseStructure = parsePRDToStructure(generatorResponse.content);
-              enrichedStructure = mergeExpansionIntoStructure(baseStructure, expansionResult.expandedFeatures);
-              dualAiLog(`📦 Structure enriched: ${enrichedStructure.features.length} features with structured fields`);
-            } catch (mergeError: any) {
-              dualAiWarn('⚠️ Structure merge failed (non-blocking):', mergeError.message);
-            }
-          }
-        } catch (expansionError: any) {
-          dualAiWarn('⚠️ Feature Expansion Engine failed (non-blocking):', expansionError.message);
-        }
-      } catch (error: any) {
-        dualAiWarn('⚠️ Feature Identification Layer failed (non-blocking):', error.message);
+      const expansion = await runFeatureExpansionPipeline({
+        inputText: userInput,
+        draftContent: generatorResponse.content,
+        client,
+        language: resolvedLanguage,
+        log: dualAiLog,
+        warn: dualAiWarn,
+      });
+      enrichedStructure = expansion.enrichedStructure;
+      // Feed enriched structure back into content pipeline so the Reviewer and
+      // Compiler Finalizer operate on the full feature set.
+      if (expansion.assembledContent && expansion.assembledContent.length > generatorResponse.content.length) {
+        dualAiLog(`📝 Replacing generator content with enriched structure (${expansion.expandedFeatureCount} features, ${expansion.assembledContent.length} chars)`);
+        generatorResponse.content = expansion.assembledContent;
       }
+    } else if (effectiveMode === 'improve' && existingContent) {
+      // Improve mode: parse existing content as baseline for post-compiler preservation.
+      // Feature Expansion is skipped (too expensive, discovers NEW features instead of protecting
+      // existing ones), but we still need a baseline so runPostCompilerPreservation() can detect
+      // and restore features lost during compilation.
+      enrichedStructure = parsePRDToStructure(existingContent);
+      dualAiLog(`🛡️ Improve baseline loaded: ${enrichedStructure.features.length} features as preservation target`);
     } else if (mode !== 'review-only') {
-      dualAiLog('🧩 Feature Identification Layer skipped for improve mode (deterministic preserve-first path)');
+      dualAiLog('🧩 Feature Identification Layer skipped (no baseline available)');
     }
 
     // Step 2: Review with AI Reviewer
@@ -316,19 +298,15 @@ Create an improved version that incorporates the new requirements while keeping 
       ? IMPROVEMENT_SYSTEM_PROMPT
       : GENERATOR_SYSTEM_PROMPT) + langInstruction;
 
-    const compilerFinalized = await finalizeWithCompilerGates({
-      initialResult: {
-        content: cleanedFinalContent,
-        model: improvedVersion?.model || generatorResponse.model || 'generator',
-        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-      },
+    const primaryGenerator = client.getPreferredModel('generator') || '';
+    const finalizerOpts = {
       mode: compileMode,
       existingContent: compileMode === 'improve' ? existingContent : undefined,
       language: resolvedLanguage,
       templateCategory,
       originalRequest: userInput || reviewContent || cleanedFinalContent.slice(0, 400),
       maxRepairPasses: 3,
-      repairGenerator: async (repairPrompt) => {
+      repairGenerator: async (repairPrompt: string) => {
         const repairResult = await client.callWithFallback(
           'generator',
           repairSystemPrompt,
@@ -342,13 +320,80 @@ Create an improved version that incorporates the new requirements while keeping 
           finishReason: repairResult.finishReason,
         };
       },
-    });
+    } as const;
+
+    let compilerFinalized;
+    let qualityFallbackUsed = false;
+    try {
+      compilerFinalized = await finalizeWithCompilerGates({
+        initialResult: {
+          content: cleanedFinalContent,
+          model: improvedVersion?.model || generatorResponse.model || 'generator',
+          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        },
+        ...finalizerOpts,
+      });
+    } catch (error) {
+      if (!(error instanceof PrdCompilerQualityError)) throw error;
+
+      const triedModels = error.repairAttempts.map(a => a.model);
+      const fallbackModel = pickNextFallbackModel(client, primaryGenerator, triedModels);
+      if (!fallbackModel) throw error;
+
+      dualAiLog(`⚡ Quality fallback: ${primaryGenerator} → ${fallbackModel}`);
+      client.setPreferredModel('generator', fallbackModel);
+      qualityFallbackUsed = true;
+
+      try {
+        // Re-generate draft with stronger fallback model
+        const fallbackDraft = await client.callWithFallback(
+          'generator',
+          GENERATOR_SYSTEM_PROMPT + langInstruction,
+          generatorPrompt || `Erstelle ein vollständiges PRD basierend auf:\n\n${userInput}`,
+          8000
+        );
+        compilerFinalized = await finalizeWithCompilerGates({
+          initialResult: {
+            content: this.extractCleanPRD(fallbackDraft.content),
+            model: fallbackDraft.model,
+            usage: fallbackDraft.usage,
+            finishReason: fallbackDraft.finishReason,
+          },
+          ...finalizerOpts,
+        });
+        dualAiLog(`✅ Quality fallback succeeded with ${fallbackModel}`);
+      } catch (fallbackError) {
+        const degraded = pickBestDegradedResult(error, fallbackError);
+        if (degraded) {
+          dualAiLog(`⚠️ Both models failed quality gates — returning best degraded result`);
+          compilerFinalized = degraded;
+        } else {
+          throw error;
+        }
+      } finally {
+        client.setPreferredModel('generator', primaryGenerator);
+      }
+    }
 
     const compilerRepairTokens = compilerFinalized.repairAttempts.reduce(
       (sum, attempt) => sum + attempt.usage.total_tokens,
       0
     );
     const compilerRepairModels = compilerFinalized.repairAttempts.map(attempt => attempt.model);
+
+    // Post-compiler feature preservation (shared helper)
+    if (enrichedStructure && compilerFinalized.structure) {
+      const preserved = runPostCompilerPreservation(
+        enrichedStructure,
+        { content: compilerFinalized.content, structure: compilerFinalized.structure },
+        dualAiLog,
+        dualAiWarn,
+      );
+      if (preserved.changed) {
+        compilerFinalized.content = preserved.content;
+        compilerFinalized.structure = preserved.structure;
+      }
+    }
 
     // Calculate totals
     const totalTokens =
@@ -364,8 +409,10 @@ Create an improved version that incorporates the new requirements while keeping 
       ...compilerRepairModels,
     ].filter(Boolean))) as string[];
 
-    // Structured PRD representation from unified compiler finalization
-    let finalStructuredContent: PRDStructure | undefined = compilerFinalized.structure;
+    // Structured PRD representation — prefer enriched structure from Feature
+    // Expansion Engine when available, as it contains the full feature set with
+    // all 10 fields expanded per feature.
+    let finalStructuredContent: PRDStructure | undefined = enrichedStructure || compilerFinalized.structure;
     try {
       logStructureValidation(finalStructuredContent);
     } catch (parseError: any) {
@@ -387,8 +434,8 @@ Create an improved version that incorporates the new requirements while keeping 
 
   async reviewOnly(prdContent: string, userId?: string): Promise<ReviewerResponse> {
     // Create fresh client per request to prevent cross-user contamination
-    const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
-    const resolvedLanguage = this.resolveScaffoldLanguage(contentLanguage, prdContent);
+    const { client, contentLanguage } = await createClientWithUserPreferences(userId, dualAiLog);
+    const resolvedLanguage = detectContentLanguage(contentLanguage, prdContent);
     const langInstruction = getLanguageInstruction(resolvedLanguage);
     
     dualAiLog('🔍 Reviewing existing PRD...');
@@ -425,9 +472,9 @@ Create an improved version that incorporates the new requirements while keeping 
     templateCategory?: string
   ): Promise<IterativeResponse> {
     // Create fresh client per request to prevent cross-user contamination
-    const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
+    const { client, contentLanguage } = await createClientWithUserPreferences(userId, dualAiLog);
     const workflowInputText = additionalRequirements || existingContent || '';
-    const resolvedLanguage = this.resolveScaffoldLanguage(
+    const resolvedLanguage = detectContentLanguage(
       contentLanguage,
       `${workflowInputText}\n${existingContent || ''}`
     );
@@ -1030,73 +1077,55 @@ Your task:
       } catch (firstIterationParseError: any) {
         dualAiWarn('⚠️ Unable to parse first iteration PRD for freeze seeding:', firstIterationParseError.message);
       }
-      try {
-        dualAiLog('🧩 Feature Identification Layer (iterative): Extracting atomic features...');
-        const vision = this.extractVisionFromContent(genResult.content);
-        opts.throwIfCancelled(`iteration ${i} feature list generation`);
-        const featureResult = await generateFeatureList(opts.workflowInputText, vision, opts.client);
-        const topLevelFeatureLines = featureResult.featureList
-          .split('\n')
-          .filter((line) => line.trim().startsWith('- '))
-          .length;
-        dualAiLog(
-          `🧩 Feature List generated (model: ${featureResult.model}, retried: ${featureResult.retried}, ` +
-          `${topLevelFeatureLines} lines, ${featureResult.featureList.length} chars)`
+
+      opts.throwIfCancelled(`iteration ${i} feature expansion`);
+      const expansion = await runFeatureExpansionPipeline({
+        inputText: opts.workflowInputText,
+        draftContent: genResult.content,
+        client: opts.client,
+        language: opts.resolvedLanguage,
+        log: dualAiLog,
+        warn: dualAiWarn,
+      });
+
+      if (expansion.expandedFeatureCount > 0) {
+        opts.onProgress?.({ type: 'features_expanded', count: expansion.expandedFeatureCount, tokensUsed: expansion.expansionTokens });
+
+        // FEATURE FREEZE: Activate freeze after first successful compilation
+        const compiledCount = expansion.expandedFeatures.filter(
+          (f: any) => f.compiled === true || f.valid === true
+        ).length;
+        const expansionBaseline = this.buildFreezeBaselineFromExpansion(
+          { expandedFeatures: expansion.expandedFeatures, totalTokens: expansion.expansionTokens },
+          firstIterationStructure || state.previousStructure
         );
-
-        // Feature Expansion Engine (modular, parallel to monolithic PRD — testing phase)
-        try {
-          dualAiLog('🏗️ Feature Expansion Engine (iterative): Starting modular expansion...');
-          opts.throwIfCancelled(`iteration ${i} feature expansion`);
-          const expansionResult = await expandAllFeatures(
-            opts.workflowInputText,
-            vision,
-            featureResult.featureList,
-            opts.client,
-            opts.resolvedLanguage
-          );
-          dualAiLog(`🏗️ Feature Expansion complete: ${expansionResult.expandedFeatures.length} features, ${expansionResult.totalTokens} tokens`);
-          opts.onProgress?.({ type: 'features_expanded', count: expansionResult.expandedFeatures.length, tokensUsed: expansionResult.totalTokens });
-
-          // FEATURE FREEZE: Activate freeze after first successful compilation
-          if (expansionResult && expansionResult.expandedFeatures.length > 0) {
-            const compiledCount = expansionResult.expandedFeatures.filter(
-              (f: any) => f.compiled === true || f.valid === true
-            ).length;
-            const expansionBaseline = this.buildFreezeBaselineFromExpansion(
-              expansionResult,
-              firstIterationStructure || state.previousStructure
-            );
-            if (expansionBaseline) {
-              state.freezeBaselineStructure = expansionBaseline;
-            }
-            if (compiledCount > 0 && !state.freezeActivated) {
-              state.featuresFrozen = true;
-              state.freezeActivated = true;
-              state.diagnostics.freezeSeedSource = 'compiledExpansion';
-              dualAiLog('🧊 FEATURE CATALOGUE FROZEN – First compilation detected');
-              dualAiLog('   ' + compiledCount + ' feature(s) in compiled state');
-              if (state.freezeBaselineStructure?.features.length) {
-                dualAiLog('   Baseline catalogue size: ' + state.freezeBaselineStructure.features.length);
-              }
-              dualAiLog('   Full regeneration will be blocked from next iteration');
-            }
-          }
-
-          // Merge expansion into structured representation for persistence
-          if (expansionResult.expandedFeatures.length > 0 && firstIterationStructure) {
-            try {
-              state.iterativeEnrichedStructure = mergeExpansionIntoStructure(firstIterationStructure, expansionResult.expandedFeatures);
-              dualAiLog(`📦 Iterative structure enriched: ${state.iterativeEnrichedStructure.features.length} features with structured fields`);
-            } catch (mergeError: any) {
-              dualAiWarn('⚠️ Iterative structure merge failed (non-blocking):', mergeError.message);
-            }
-          }
-        } catch (expansionError: any) {
-          dualAiWarn('⚠️ Feature Expansion Engine failed (non-blocking):', expansionError.message);
+        if (expansionBaseline) {
+          state.freezeBaselineStructure = expansionBaseline;
         }
-      } catch (error: any) {
-        dualAiWarn('⚠️ Feature Identification Layer failed (non-blocking):', error.message);
+        if (compiledCount > 0 && !state.freezeActivated) {
+          state.featuresFrozen = true;
+          state.freezeActivated = true;
+          state.diagnostics.freezeSeedSource = 'compiledExpansion';
+          dualAiLog('🧊 FEATURE CATALOGUE FROZEN – First compilation detected');
+          dualAiLog('   ' + compiledCount + ' feature(s) in compiled state');
+          if (state.freezeBaselineStructure?.features.length) {
+            dualAiLog('   Baseline catalogue size: ' + state.freezeBaselineStructure.features.length);
+          }
+          dualAiLog('   Full regeneration will be blocked from next iteration');
+        }
+
+        // Merge expansion into structured representation for persistence
+        if (expansion.enrichedStructure) {
+          state.iterativeEnrichedStructure = expansion.enrichedStructure;
+          dualAiLog(`📦 Iterative structure enriched: ${expansion.enrichedStructure.features.length} features with structured fields`);
+        } else if (firstIterationStructure && expansion.expandedFeatures.length > 0) {
+          try {
+            state.iterativeEnrichedStructure = mergeExpansionIntoStructure(firstIterationStructure, expansion.expandedFeatures);
+            dualAiLog(`📦 Iterative structure enriched: ${state.iterativeEnrichedStructure.features.length} features with structured fields`);
+          } catch (mergeError: any) {
+            dualAiWarn('⚠️ Iterative structure merge failed (non-blocking):', mergeError.message);
+          }
+        }
       }
     }
   }
@@ -1371,7 +1400,7 @@ Your task:
         const deltaResult = await this.compileFeatureDelta({
           currentStructure,
           freezeBaseline: state.freezeBaselineStructure,
-          visionContext: this.extractVisionFromContent(state.currentPRD || cleanPRD),
+          visionContext: extractVisionFromContent(state.currentPRD || cleanPRD),
           workflowInputText: opts.workflowInputText,
           structuredDelta,
           enforceStructuredDeltaOnly: state.featuresFrozen && i >= 2,
@@ -1551,20 +1580,16 @@ Your task:
         ? IMPROVEMENT_SYSTEM_PROMPT
         : GENERATOR_SYSTEM_PROMPT) + opts.langInstruction;
       const initialModel = Array.from(state.modelsUsed).at(-1) || 'iterative-generator';
+      const primaryGenerator = opts.client.getPreferredModel('generator') || '';
 
-      const compilerFinalized = await finalizeWithCompilerGates({
-        initialResult: {
-          content: currentPRD,
-          model: initialModel,
-          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-        },
-        mode: opts.isImprovement ? 'improve' : 'generate',
+      const iterFinalizerOpts = {
+        mode: (opts.isImprovement ? 'improve' : 'generate') as 'improve' | 'generate',
         existingContent: opts.isImprovement ? opts.existingContent : undefined,
         language: opts.resolvedLanguage,
         templateCategory: opts.templateCategory,
         originalRequest: opts.workflowInputText || currentPRD.slice(0, 400),
         maxRepairPasses: 3,
-        repairGenerator: async (repairPrompt) => {
+        repairGenerator: async (repairPrompt: string) => {
           const repairResult = await opts.client.callWithFallback(
             'generator',
             repairSystemPrompt,
@@ -1578,7 +1603,52 @@ Your task:
             finishReason: repairResult.finishReason,
           };
         },
-      });
+      };
+
+      let compilerFinalized;
+      try {
+        compilerFinalized = await finalizeWithCompilerGates({
+          initialResult: {
+            content: currentPRD,
+            model: initialModel,
+            usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+          },
+          ...iterFinalizerOpts,
+        });
+      } catch (error) {
+        if (!(error instanceof PrdCompilerQualityError)) throw error;
+
+        const triedModels = error.repairAttempts.map(a => a.model);
+        const fallbackModel = pickNextFallbackModel(opts.client, primaryGenerator, triedModels);
+        if (!fallbackModel) throw error;
+
+        dualAiLog(`⚡ Iterative quality fallback: ${primaryGenerator} → ${fallbackModel}`);
+        opts.client.setPreferredModel('generator', fallbackModel);
+
+        try {
+          // For iterative mode, retry finalization with fallback repair model
+          // (re-generating the full iterative output is too expensive)
+          compilerFinalized = await finalizeWithCompilerGates({
+            initialResult: {
+              content: currentPRD,
+              model: initialModel,
+              usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+            },
+            ...iterFinalizerOpts,
+          });
+          dualAiLog(`✅ Iterative quality fallback succeeded with ${fallbackModel}`);
+        } catch (fallbackError) {
+          const degraded = pickBestDegradedResult(error, fallbackError);
+          if (degraded) {
+            dualAiLog(`⚠️ Both models failed quality gates — returning best degraded result`);
+            compilerFinalized = degraded;
+          } else {
+            throw error;
+          }
+        } finally {
+          opts.client.setPreferredModel('generator', primaryGenerator);
+        }
+      }
 
       currentPRD = this.sanitizeFinalMarkdown(compilerFinalized.content);
       finalHardenedStructure = compilerFinalized.structure;
@@ -2004,189 +2074,14 @@ Your task:
   private ensureRequiredSections(
     structure: PRDStructure,
     context: { workflowInputText: string; iterationNumber: number; contentLanguage?: string | null }
-  ): { structure: PRDStructure; addedSections: Array<keyof PRDStructure> } {
-    const { workflowInputText, iterationNumber, contentLanguage } = context;
-    const updated: PRDStructure = {
-      ...structure,
-      otherSections: { ...structure.otherSections },
-    };
-    const addedSections: Array<keyof PRDStructure> = [];
-    const inputSummary = this.safeTruncateAtWord(workflowInputText, 260);
-    const language = this.resolveScaffoldLanguage(contentLanguage, workflowInputText);
-    const isGerman = language === 'de';
-
-    const templates: Array<{ key: keyof PRDStructure; content: string }> = [
-      {
-        key: 'domainModel',
-        content: isGerman
-          ? [
-              '- Kern-Entitaeten: Nutzer/Besucher, Feature, Anforderung und Iteration.',
-              '- Beziehungen: Eine Anforderung aggregiert Features; jede Iteration verfeinert bestehende Features und kann neue ueber ein strukturiertes Delta hinzufuegen.',
-              '- Datenkonsistenz: Feature-IDs bleiben ueber Iterationen stabil und gelten als unveraenderliche Kennungen.',
-              inputSummary ? `- Quellkontext (Iteration ${iterationNumber}): ${inputSummary}` : '',
-            ].filter(Boolean).join('\n')
-          : [
-              '- Core entities: User/Visitor, Feature, Requirement, and Iteration.',
-              '- Relations: A Requirement aggregates Features; each Iteration refines existing Features and may add new ones via structured delta.',
-              '- Data consistency: feature IDs remain stable across iterations and are treated as immutable identifiers.',
-              inputSummary ? `- Source context (iteration ${iterationNumber}): ${inputSummary}` : '',
-            ].filter(Boolean).join('\n'),
-      },
-      {
-        key: 'globalBusinessRules',
-        content: isGerman
-          ? [
-              '- Bestehende Features duerfen waehrend der iterativen Verfeinerung nicht entfernt werden.',
-              '- Neue Features werden nur ueber validiertes Feature-Delta-JSON akzeptiert.',
-              '- Doppelte Features (gleiche Intention/Bezeichnung) werden deterministisch verworfen.',
-              '- Akzeptanzkriterien aller Features muessen testbar und beobachtbar bleiben.',
-            ].join('\n')
-          : [
-              '- Existing features must not be removed during iterative refinement.',
-              '- New features are only accepted through validated Feature Delta JSON.',
-              '- Duplicate features (same intent/name) are rejected deterministically.',
-              '- Acceptance criteria for all features must stay testable and observable.',
-            ].join('\n'),
-      },
-      {
-        key: 'nonFunctional',
-        content: isGerman
-          ? [
-              '- Zuverlaessigkeit: Ein iterativer Lauf muss ohne Verlust bereits akzeptierter Features abschliessen.',
-              '- Determinismus: Freeze-Baseline und Feature-IDs bleiben ueber Iterationen stabil.',
-              '- Performance: In Freeze-Mode wird Section-Patching gegenueber Vollregeneration bevorzugt.',
-              '- Beobachtbarkeit: Diagnostics muessen Feature-Anzahl, blockierte Versuche und Integritaetsereignisse ausweisen.',
-            ].join('\n')
-          : [
-              '- Reliability: iterative run must complete without losing previously accepted features.',
-              '- Determinism: freeze baseline and feature IDs remain stable across iterations.',
-              '- Performance: iteration patching is preferred over full regeneration in freeze mode.',
-              '- Observability: diagnostics must report feature count, blocked attempts, and structural integrity events.',
-            ].join('\n'),
-      },
-      {
-        key: 'errorHandling',
-        content: isGerman
-          ? [
-              '- Ungueltiges oder fehlendes strukturiertes Delta erzwingt einen strikten Fallback auf den vorherigen stabilen PRD-Zustand.',
-              '- Fehler bei Section-Regeneration im Freeze-Mode fallen sicher zurueck, ohne Feature-Verlust.',
-              '- Parse-Fehler gelten nur dann als non-blocking, wenn Integritaet weiterhin garantiert ist.',
-              '- Alle Fallback-Pfade werden mit explizitem Grund und Iterationsnummer protokolliert.',
-            ].join('\n')
-          : [
-              '- Invalid or missing structured delta triggers strict fallback to previous stable PRD state.',
-              '- Section regeneration failures in freeze mode fall back safely without feature loss.',
-              '- Parsing failures are treated as non-blocking only when integrity can still be guaranteed.',
-              '- All fallback paths must be logged with explicit reason and iteration number.',
-            ].join('\n'),
-      },
-      {
-        key: 'deployment',
-        content: isGerman
-          ? [
-              '- Runtime: Node.js-Service mit Endpunkten fuer den iterativen Compiler.',
-              '- Umgebung: Dockerisierte Local/Dev-Ausfuehrung mit reproduzierbarem Build und Health-Endpoint.',
-              '- Abhaengigkeiten: LLM-Provider-Integration mit Model-Fallback-Strategie.',
-              '- Auslieferung: Aenderungen werden mit TypeScript-Check und End-to-End-API-Smoke-Run validiert.',
-            ].join('\n')
-          : [
-              '- Runtime: Node.js service with iterative compiler endpoints.',
-              '- Environment: Dockerized local/dev execution with reproducible build and health endpoint.',
-              '- Dependencies: LLM provider integration with model fallback strategy.',
-              '- Delivery: changes are validated with TypeScript check and end-to-end API smoke run.',
-            ].join('\n'),
-      },
-      {
-        key: 'definitionOfDone',
-        content: isGerman
-          ? [
-              '- Erforderliche PRD-Sektionen sind vorhanden und nicht leer.',
-              '- Die Feature-Anzahl faellt nicht unter die gefrorene Baseline.',
-              '- Es bleiben keine doppelten Feature-IDs oder doppelten Feature-Namen bestehen.',
-              '- Der iterative Lauf schliesst mit gueltigem finalen PRD und Diagnostics ab.',
-            ].join('\n')
-          : [
-              '- Required PRD sections are present and non-empty.',
-              '- Feature count does not drop below the frozen baseline.',
-              '- No duplicate feature IDs or duplicate feature names remain.',
-              '- Iterative run completes with valid final PRD and diagnostics.',
-            ].join('\n'),
-      },
-      {
-        key: 'outOfScope',
-        content: isGerman
-          ? [
-              '- Keine Implementierung von Features ausserhalb des definierten Kern-Scopes in dieser Version.',
-              '- Keine Integrationen, die nicht explizit in den Anforderungen priorisiert wurden.',
-              '- Keine vollstaendige Automatisierung von Folgeprozessen, sofern nicht als Must-Have definiert.',
-            ].join('\n')
-          : [
-              '- No implementation of features outside the defined core scope in this version.',
-              '- No integrations that were not explicitly prioritized in the requirements.',
-              '- No full automation of follow-up workflows unless explicitly defined as must-have.',
-            ].join('\n'),
-      },
-      {
-        key: 'timelineMilestones',
-        content: isGerman
-          ? [
-              '- Phase 1 (Woche 1-2): Scope-Fixierung, Informationsarchitektur und Feature-Freeze-Baseline.',
-              '- Phase 2 (Woche 3-4): Umsetzung der Must-Have-Features inkl. Akzeptanzkriterien und Review-Schleifen.',
-              '- Phase 3 (Woche 5): Stabilisierung, Endabnahme und Vorbereitung der naechsten Iteration.',
-            ].join('\n')
-          : [
-              '- Phase 1 (Week 1-2): Scope lock, information architecture, and feature-freeze baseline.',
-              '- Phase 2 (Week 3-4): Implement must-have features including acceptance criteria and review loops.',
-              '- Phase 3 (Week 5): Stabilization, final acceptance, and preparation for the next iteration.',
-            ].join('\n'),
-      },
-      {
-        key: 'successCriteria',
-        content: isGerman
-          ? [
-              '- Alle Must-Have-Features sind anhand ihrer Akzeptanzkriterien manuell testbar und bestanden.',
-              '- Teil D ist vollstaendig ausgefuellt (Out of Scope, Timeline, Success Criteria).',
-              '- Es existiert mindestens eine neue lauffaehige Version im Versionssystem ohne Feature-Verlust.',
-            ].join('\n')
-          : [
-              '- All must-have features are manually testable against their acceptance criteria and pass.',
-              '- Part D is fully populated (Out of Scope, Timeline, Success Criteria).',
-              '- At least one new runnable version exists in version history without feature loss.',
-            ].join('\n'),
-      },
-    ];
-
-    for (const template of templates) {
-      const existing = updated[template.key];
-      if (typeof existing === 'string' && existing.trim().length > 0) continue;
-      (updated as any)[template.key] = template.content;
-      addedSections.push(template.key);
-    }
-
-    return { structure: updated, addedSections };
+  ): { structure: PRDStructure; addedSections: string[] } {
+    const language = detectContentLanguage(context.contentLanguage, context.workflowInputText);
+    return ensurePrdRequiredSections(structure, language, {
+      contextHint: this.safeTruncateAtWord(context.workflowInputText, 260),
+    });
   }
 
-  private resolveScaffoldLanguage(contentLanguage: string | null | undefined, text: string): 'de' | 'en' {
-    if (contentLanguage === 'de') return 'de';
-    if (contentLanguage === 'en') return 'en';
-
-    const sample = (text || '').toLowerCase();
-    const germanHints = [
-      ' und ',
-      ' mit ',
-      ' fuer ',
-      ' für ',
-      ' bitte ',
-      ' erstelle ',
-      ' landingpage',
-      'kontaktformular',
-      'kursuebersicht',
-      'kursübersicht',
-    ];
-    const hasGermanUmlaut = /[äöüß]/i.test(sample);
-    const hasGermanHint = germanHints.some(h => sample.includes(h));
-    return hasGermanUmlaut || hasGermanHint ? 'de' : 'en';
-  }
+  // resolveScaffoldLanguage replaced by shared detectContentLanguage() from prdLanguageDetector.ts
 
   private pickFallbackPatchSection(structure: PRDStructure): keyof PRDStructure | null {
     const orderedCandidates: (keyof PRDStructure)[] = [
@@ -2238,7 +2133,7 @@ Your task:
       contentLanguage,
       client
     } = params;
-    const resolvedLanguage = this.resolveScaffoldLanguage(
+    const resolvedLanguage = detectContentLanguage(
       contentLanguage,
       `${workflowInputText || ''}\n${visionContext || ''}`
     );
@@ -2630,7 +2525,7 @@ Your task:
   }
 
   private enforceCanonicalFeatureStructure(structure: PRDStructure, contentLanguage?: string | null): PRDStructure {
-    const lang = this.resolveScaffoldLanguage(contentLanguage, structure.systemVision || structure.systemBoundaries || '');
+    const lang = detectContentLanguage(contentLanguage, structure.systemVision || structure.systemBoundaries || '');
     const isGerman = lang === 'de';
     const deduped = new Map<string, FeatureSpec>();
 
@@ -3214,7 +3109,7 @@ Your task:
     structure: PRDStructure,
     contentLanguage?: string | null
   ): { structure: PRDStructure; globalCategoryAdds: number; featureCriteriaAdds: number } {
-    const lang = this.resolveScaffoldLanguage(contentLanguage, structure.nonFunctional || structure.systemVision || '');
+    const lang = detectContentLanguage(contentLanguage, structure.nonFunctional || structure.systemVision || '');
     const isGerman = lang === 'de';
     const updated: PRDStructure = {
       ...structure,
@@ -3514,82 +3409,8 @@ Return JSON only.`;
     };
   }
 
-  private extractVisionFromContent(content: string): string {
-    const visionPatterns = [
-      /##\s*(?:1\.\s*)?System Vision\s*\n([\s\S]*?)(?=\n##\s)/i,
-      /##\s*(?:1\.\s*)?Executive Summary\s*\n([\s\S]*?)(?=\n##\s)/i,
-      /##\s*Vision\s*\n([\s\S]*?)(?=\n##\s)/i,
-    ];
-
-    for (const pattern of visionPatterns) {
-      const match = content.match(pattern);
-      if (match && match[1]?.trim().length > 20) {
-        return match[1].trim();
-      }
-    }
-
-    const firstParagraphs = content.split('\n').filter(l => l.trim().length > 0).slice(0, 5).join('\n');
-    return firstParagraphs || content.substring(0, 500);
-  }
-
-  private async createClientWithUserPreferences(userId?: string): Promise<{ client: OpenRouterClient; contentLanguage: string | null }> {
-    const client = getOpenRouterClient();
-    let contentLanguage: string | null = null;
-
-    if (userId) {
-      const userPrefs = await db.select({ 
-        aiPreferences: users.aiPreferences,
-        defaultContentLanguage: users.defaultContentLanguage
-      })
-        .from(users)
-        .where(eq(users.id, userId))
-        .limit(1);
-      
-      if (userPrefs[0]) {
-        // Get content language preference
-        contentLanguage = userPrefs[0].defaultContentLanguage || null;
-        
-        // Get AI model preferences
-        if (userPrefs[0].aiPreferences) {
-          const prefs = userPrefs[0].aiPreferences as any;
-          const tier = resolveModelTier(prefs.tier);
-          const activeTierModels = prefs.tierModels?.[tier] || {};
-          const tierDefaults = MODEL_TIERS[tier] || MODEL_TIERS.development;
-          const resolvedGeneratorModel =
-            sanitizeConfiguredModel(activeTierModels.generatorModel || prefs.generatorModel) ||
-            tierDefaults.generator;
-          const resolvedReviewerModel =
-            sanitizeConfiguredModel(activeTierModels.reviewerModel || prefs.reviewerModel) ||
-            tierDefaults.reviewer;
-          const resolvedFallbackModel =
-            sanitizeConfiguredModel(activeTierModels.fallbackModel || prefs.fallbackModel) ||
-            getDefaultFallbackModelForTier(tier);
-
-          dualAiLog(`🤖 User AI preferences loaded:`, {
-            tier,
-            tierGenerator: activeTierModels.generatorModel || '(not set)',
-            tierReviewer: activeTierModels.reviewerModel || '(not set)',
-            globalGenerator: prefs.generatorModel || '(not set)',
-            globalReviewer: prefs.reviewerModel || '(not set)',
-            resolvedGenerator: resolvedGeneratorModel,
-            resolvedReviewer: resolvedReviewerModel,
-            resolvedFallback: resolvedFallbackModel || '(none)',
-          });
-
-          if (resolvedGeneratorModel) {
-            client.setPreferredModel('generator', resolvedGeneratorModel);
-          }
-          if (resolvedReviewerModel) {
-            client.setPreferredModel('reviewer', resolvedReviewerModel);
-          }
-          client.setPreferredModel('fallback', resolvedFallbackModel);
-          client.setPreferredTier(tier);
-        }
-      }
-    }
-
-    return { client, contentLanguage };
-  }
+  // extractVisionFromContent replaced by shared extractVisionFromContent() from prdFeatureExpansion.ts
+  // createClientWithUserPreferences replaced by shared createClientWithUserPreferences() from openrouter.ts
 
   private extractQuestions(reviewText: string): string[] {
     const questions: string[] = [];

@@ -1,6 +1,5 @@
 // Guided AI Service - User-involved PRD Generation Workflow
-import { getOpenRouterClient } from './openrouter';
-import { MODEL_TIERS, getDefaultFallbackModelForTier, sanitizeConfiguredModel, resolveModelTier } from './openrouter';
+import { getOpenRouterClient, createClientWithUserPreferences } from './openrouter';
 import {
   FEATURE_ANALYSIS_PROMPT,
   USER_QUESTION_PROMPT,
@@ -20,9 +19,15 @@ import { users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
 import { GuidedSessionStore } from './guidedSessionStore';
 import { logger } from './logger';
-import { finalizeWithCompilerGates } from './prdCompilerFinalizer';
+import { finalizeWithCompilerGates, PrdCompilerQualityError } from './prdCompilerFinalizer';
+import { pickNextFallbackModel, pickBestDegradedResult } from './prdQualityFallback';
 import { resolvePrdWorkflowMode } from './prdWorkflowMode';
 import { buildTemplateInstruction } from './prdTemplateIntent';
+import { detectContentLanguage } from './prdLanguageDetector';
+import { runFeatureExpansionPipeline } from './prdFeatureExpansion';
+import { runPostCompilerPreservation } from './prdFeaturePreservation';
+import { parsePRDToStructure } from './prdParser';
+import type { PRDStructure } from './prdStructure';
 
 interface ConversationContext {
   projectIdea: string;
@@ -38,6 +43,7 @@ interface GuidedGenerationResult {
   content: string;
   totalTokens: number;
   modelsUsed: string[];
+  enrichedStructure?: PRDStructure;
 }
 
 const SESSION_NOT_AVAILABLE_MESSAGE = 'Session not found or expired. Please start a new guided workflow.';
@@ -55,11 +61,11 @@ export class GuidedAiService {
     }
   ): Promise<GuidedStartResponse & { sessionId: string }> {
     const authenticatedUserId = this.requireAuthenticatedUserId(userId);
-    const { client, contentLanguage } = await this.createClientWithUserPreferences(authenticatedUserId);
+    const { client, contentLanguage } = await createClientWithUserPreferences(authenticatedUserId);
     const normalizedExistingContent = typeof options?.existingContent === 'string'
       ? options.existingContent.trim()
       : '';
-    const resolvedLanguage = this.resolveContentLanguage(
+    const resolvedLanguage = detectContentLanguage(
       contentLanguage,
       `${projectIdea || ''}\n${normalizedExistingContent}`
     );
@@ -154,8 +160,8 @@ Analyze what should be preserved and what should be improved. Focus on concrete 
     const authenticatedUserId = this.requireAuthenticatedUserId(userId);
     const context = this.getSessionContextOrThrow(sessionId, authenticatedUserId);
 
-    const { client, contentLanguage } = await this.createClientWithUserPreferences(authenticatedUserId);
-    const resolvedLanguage = this.resolveContentLanguage(
+    const { client, contentLanguage } = await createClientWithUserPreferences(authenticatedUserId);
+    const resolvedLanguage = detectContentLanguage(
       contentLanguage,
       `${context.projectIdea || ''}\n${context.featureOverview || ''}`
     );
@@ -298,8 +304,8 @@ ${buildTemplateInstruction(context.templateCategory, resolvedLanguage)}`;
     const authenticatedUserId = this.requireAuthenticatedUserId(userId);
     const context = this.consumeSessionContextOrThrow(sessionId, authenticatedUserId);
 
-    const { client, contentLanguage } = await this.createClientWithUserPreferences(authenticatedUserId);
-    const resolvedLanguage = this.resolveContentLanguage(
+    const { client, contentLanguage } = await createClientWithUserPreferences(authenticatedUserId);
+    const resolvedLanguage = detectContentLanguage(
       contentLanguage,
       `${context.projectIdea || ''}\n${context.featureOverview || ''}\n${context.existingContent || ''}`
     );
@@ -389,11 +395,11 @@ Generate a complete, professional PRD that incorporates all gathered requirement
       templateCategory?: string;
     }
   ): Promise<GuidedFinalizeResponse> {
-    const { client, contentLanguage } = await this.createClientWithUserPreferences(userId);
+    const { client, contentLanguage } = await createClientWithUserPreferences(userId);
     const normalizedExistingContent = typeof options?.existingContent === 'string'
       ? options.existingContent.trim()
       : '';
-    const resolvedLanguage = this.resolveContentLanguage(
+    const resolvedLanguage = detectContentLanguage(
       contentLanguage,
       `${projectIdea || ''}\n${normalizedExistingContent}`
     );
@@ -487,7 +493,7 @@ Generate a complete, professional PRD.`;
     templateCategory?: string;
   }): Promise<GuidedGenerationResult> {
     const { client, systemPrompt, userPrompt, mode, existingContent, contentLanguage, templateCategory } = params;
-    const language = this.resolveContentLanguage(contentLanguage, `${userPrompt}\n${existingContent || ''}`);
+    const language = detectContentLanguage(contentLanguage, `${userPrompt}\n${existingContent || ''}`);
     const modelsUsed = new Set<string>();
     let totalTokens = 0;
 
@@ -499,20 +505,42 @@ Generate a complete, professional PRD.`;
     );
     modelsUsed.add(generationResult.model);
     totalTokens += generationResult.usage.total_tokens;
-    const finalized = await finalizeWithCompilerGates({
-      initialResult: {
-        content: generationResult.content,
-        model: generationResult.model,
-        usage: generationResult.usage,
-        finishReason: generationResult.finishReason,
-      },
+
+    // Feature Expansion (generate mode only — same pipeline as Simple/Iterative)
+    let enrichedStructure: PRDStructure | undefined;
+    if (mode === 'generate') {
+      const expansion = await runFeatureExpansionPipeline({
+        inputText: userPrompt,
+        draftContent: generationResult.content,
+        client,
+        language,
+        log: (msg) => logger.debug(msg),
+        warn: (msg) => logger.warn(msg),
+      });
+      enrichedStructure = expansion.enrichedStructure;
+      totalTokens += expansion.expansionTokens;
+      if (expansion.featureListModel) modelsUsed.add(expansion.featureListModel);
+      if (expansion.assembledContent && expansion.assembledContent.length > generationResult.content.length) {
+        logger.debug(`📝 Guided: Replacing generator content with enriched structure (${expansion.expandedFeatureCount} features)`);
+        generationResult.content = expansion.assembledContent;
+      }
+    } else if (mode === 'improve' && existingContent) {
+      // Improve mode: parse existing content as baseline for post-compiler preservation.
+      // Feature Expansion is skipped (too expensive), but we need a baseline so
+      // runPostCompilerPreservation() can detect and restore features lost during compilation.
+      enrichedStructure = parsePRDToStructure(existingContent);
+      logger.debug(`🛡️ Guided improve baseline: ${enrichedStructure.features.length} features as preservation target`);
+    }
+
+    const primaryGenerator = client.getPreferredModel('generator') || '';
+    const guidedFinalizerOpts = {
       mode,
       existingContent,
       language,
       templateCategory,
       originalRequest: userPrompt,
       maxRepairPasses: 3,
-      repairGenerator: async (repairPrompt) => {
+      repairGenerator: async (repairPrompt: string) => {
         logger.warn('Guided compiler quality gate failed; starting repair pass');
         const repairResult = await client.callWithFallback(
           'generator',
@@ -527,29 +555,91 @@ Generate a complete, professional PRD.`;
           finishReason: repairResult.finishReason,
         };
       },
-    });
+    } as const;
+
+    let finalized;
+    try {
+      finalized = await finalizeWithCompilerGates({
+        initialResult: {
+          content: generationResult.content,
+          model: generationResult.model,
+          usage: generationResult.usage,
+          finishReason: generationResult.finishReason,
+        },
+        ...guidedFinalizerOpts,
+      });
+    } catch (error) {
+      if (!(error instanceof PrdCompilerQualityError)) throw error;
+
+      const triedModels = error.repairAttempts.map(a => a.model);
+      const fallbackModel = pickNextFallbackModel(client, primaryGenerator, triedModels);
+      if (!fallbackModel) throw error;
+
+      logger.warn(`Guided quality fallback: ${primaryGenerator} → ${fallbackModel}`);
+      client.setPreferredModel('generator', fallbackModel);
+
+      try {
+        const fallbackDraft = await client.callWithFallback(
+          'generator',
+          systemPrompt,
+          userPrompt,
+          10000
+        );
+        modelsUsed.add(fallbackDraft.model);
+        totalTokens += fallbackDraft.usage.total_tokens;
+
+        finalized = await finalizeWithCompilerGates({
+          initialResult: {
+            content: fallbackDraft.content,
+            model: fallbackDraft.model,
+            usage: fallbackDraft.usage,
+            finishReason: fallbackDraft.finishReason,
+          },
+          ...guidedFinalizerOpts,
+        });
+        logger.info(`Guided quality fallback succeeded with ${fallbackModel}`);
+      } catch (fallbackError) {
+        const degraded = pickBestDegradedResult(error, fallbackError);
+        if (degraded) {
+          logger.warn('Both models failed quality gates — returning best degraded result');
+          finalized = degraded;
+        } else {
+          throw error;
+        }
+      } finally {
+        client.setPreferredModel('generator', primaryGenerator);
+      }
+    }
 
     for (const attempt of finalized.repairAttempts) {
       modelsUsed.add(attempt.model);
       totalTokens += attempt.usage.total_tokens;
     }
 
+    // Post-compiler feature preservation (same as Simple flow)
+    let finalContent = finalized.content;
+    if (enrichedStructure && finalized.structure) {
+      const preserved = runPostCompilerPreservation(
+        enrichedStructure,
+        { content: finalized.content, structure: finalized.structure },
+        (msg) => logger.debug(msg),
+        (msg) => logger.warn(msg),
+      );
+      if (preserved.changed) {
+        finalContent = preserved.content;
+        enrichedStructure = preserved.structure;
+      }
+    }
+
     return {
-      content: finalized.content,
+      content: finalContent,
       totalTokens,
       modelsUsed: Array.from(modelsUsed),
+      enrichedStructure,
     };
   }
 
-  private resolveContentLanguage(contentLanguage: string | null | undefined, text: string): 'de' | 'en' {
-    if (contentLanguage === 'de') return 'de';
-    if (contentLanguage === 'en') return 'en';
-
-    const sample = (text || '').toLowerCase();
-    if (/[äöüß]/i.test(sample)) return 'de';
-    if (/\b(und|oder|mit|fuer|für|bitte|erstelle|anforderung|nutzer)\b/i.test(sample)) return 'de';
-    return 'en';
-  }
+  // resolveContentLanguage replaced by shared detectContentLanguage() from prdLanguageDetector.ts
 
   private parseQuestionsResponse(content: string): { preliminaryPlan?: string; questions: GuidedQuestion[] } {
     try {
@@ -678,48 +768,7 @@ Generate a complete, professional PRD.`;
     return session.context;
   }
 
-  private async createClientWithUserPreferences(userId?: string) {
-    const client = getOpenRouterClient();
-    let contentLanguage: string | null = null;
-
-    if (userId) {
-      const userPrefs = await db.select({ 
-        aiPreferences: users.aiPreferences,
-        defaultContentLanguage: users.defaultContentLanguage
-      })
-        .from(users)
-        .where(eq(users.id, userId))
-        .limit(1);
-      
-      if (userPrefs[0]) {
-        contentLanguage = userPrefs[0].defaultContentLanguage || null;
-        
-        if (userPrefs[0].aiPreferences) {
-          const prefs = userPrefs[0].aiPreferences as any;
-          const tierKey = resolveModelTier(prefs.tier);
-          const tierDefaults = MODEL_TIERS[tierKey] || MODEL_TIERS.development;
-          const activeTierModels = prefs.tierModels?.[tierKey] || {};
-
-          const resolvedGeneratorModel =
-            sanitizeConfiguredModel(activeTierModels.generatorModel || prefs.generatorModel) ||
-            tierDefaults.generator;
-          const resolvedReviewerModel =
-            sanitizeConfiguredModel(activeTierModels.reviewerModel || prefs.reviewerModel) ||
-            tierDefaults.reviewer;
-          const resolvedFallbackModel =
-            sanitizeConfiguredModel(activeTierModels.fallbackModel || prefs.fallbackModel) ||
-            getDefaultFallbackModelForTier(tierKey);
-
-          client.setPreferredModel('generator', resolvedGeneratorModel);
-          client.setPreferredModel('reviewer', resolvedReviewerModel);
-          client.setPreferredModel('fallback', resolvedFallbackModel);
-          client.setPreferredTier(tierKey);
-        }
-      }
-    }
-
-    return { client, contentLanguage };
-  }
+  // createClientWithUserPreferences replaced by shared createClientWithUserPreferences() from openrouter.ts
 
   private async getUserPreferences(userId?: string): Promise<{ guidedQuestionRounds?: number } | null> {
     if (!userId) return null;

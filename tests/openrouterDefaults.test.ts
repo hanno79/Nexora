@@ -4,6 +4,10 @@ import {
   getDefaultFallbackModelForTier,
   getOpenRouterClient,
   resolveModelTier,
+  DEFAULT_FREE_FALLBACK_CHAIN,
+  clearGlobalCooldown,
+  getAllActiveCooldowns,
+  setGlobalCooldown,
 } from '../server/openrouter';
 
 describe('openrouter safe defaults', () => {
@@ -111,5 +115,96 @@ describe('openrouter safe defaults', () => {
     expect(attemptedModels.every((m) => m.endsWith(':free'))).toBe(true);
     expect(attemptedModels.some((m) => m.includes('gemini-2.5-flash'))).toBe(false);
     expect(attemptedModels.some((m) => m.includes('claude-sonnet-4'))).toBe(false);
+  });
+
+  it('DEFAULT_FREE_FALLBACK_CHAIN contains at least 4 free models', () => {
+    expect(DEFAULT_FREE_FALLBACK_CHAIN.length).toBeGreaterThanOrEqual(4);
+    for (const model of DEFAULT_FREE_FALLBACK_CHAIN) {
+      // All must end in :free or be the openrouter/free auto-router
+      expect(model).toMatch(/:free$|^openrouter\/free$/);
+    }
+  });
+
+  it('iterates the full fallback chain when set on client', async () => {
+    // Clean up any stale cooldowns
+    for (const model of DEFAULT_FREE_FALLBACK_CHAIN) {
+      clearGlobalCooldown(model);
+    }
+    clearGlobalCooldown('nvidia/nemotron-3-nano-30b-a3b:free');
+
+    const client = new OpenRouterClient('test-key', 'development');
+    const chain = ['model-a:free', 'model-b:free', 'model-c:free'];
+    client.setFallbackChain(chain);
+    client.setPreferredModel('generator', 'nvidia/nemotron-3-nano-30b-a3b:free');
+
+    const attemptedModels: string[] = [];
+    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer') => {
+      const currentModel = String((client as any).preferredModels?.[modelType] || '');
+      attemptedModels.push(currentModel);
+      if (currentModel === 'model-c:free') {
+        return { content: 'ok', usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }, model: currentModel };
+      }
+      throw new Error('forced failure');
+    });
+
+    const result = await client.callWithFallback('generator', 'system', 'user', 64);
+
+    expect(result.model).toBe('model-c:free');
+    expect(result.usedFallback).toBe(true);
+    // Should try: primary (nemotron), then chain[0], chain[1], chain[2]
+    expect(attemptedModels).toContain('nvidia/nemotron-3-nano-30b-a3b:free');
+    expect(attemptedModels).toContain('model-a:free');
+    expect(attemptedModels).toContain('model-b:free');
+    expect(attemptedModels).toContain('model-c:free');
+
+    // Clean up
+    for (const m of attemptedModels) clearGlobalCooldown(m);
+  });
+
+  it('global cooldown store persists across client instances', () => {
+    setGlobalCooldown('test-model:free', 60_000, 'rate limited');
+    const cooldowns = getAllActiveCooldowns();
+    expect(cooldowns['test-model:free']).toBeDefined();
+    expect(cooldowns['test-model:free'].reason).toBe('rate limited');
+
+    clearGlobalCooldown('test-model:free');
+    const afterClear = getAllActiveCooldowns();
+    expect(afterClear['test-model:free']).toBeUndefined();
+  });
+
+  it('skips models with active global cooldown in fallback chain', async () => {
+    // Clean slate
+    clearGlobalCooldown('model-x:free');
+    clearGlobalCooldown('model-y:free');
+    clearGlobalCooldown('nvidia/nemotron-3-nano-30b-a3b:free');
+
+    // Put model-x on cooldown
+    setGlobalCooldown('model-x:free', 60_000, 'rate limited');
+
+    const client = new OpenRouterClient('test-key', 'development');
+    client.setFallbackChain(['model-x:free', 'model-y:free']);
+    client.setPreferredModel('generator', 'nvidia/nemotron-3-nano-30b-a3b:free');
+
+    const attemptedModels: string[] = [];
+    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer') => {
+      const currentModel = String((client as any).preferredModels?.[modelType] || '');
+      attemptedModels.push(currentModel);
+      if (currentModel === 'model-y:free') {
+        return { content: 'ok', usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }, model: currentModel };
+      }
+      throw new Error('forced failure');
+    });
+
+    const result = await client.callWithFallback('generator', 'system', 'user', 64);
+
+    expect(result.model).toBe('model-y:free');
+    // model-x should be skipped because it's on cooldown
+    expect(attemptedModels).not.toContain('model-x:free');
+    expect(attemptedModels).toContain('model-y:free');
+
+    // Clean up
+    clearGlobalCooldown('model-x:free');
+    clearGlobalCooldown('model-y:free');
+    for (const m of attemptedModels) clearGlobalCooldown(m);
   });
 });

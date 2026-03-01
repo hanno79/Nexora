@@ -94,6 +94,7 @@
     "zod-validation-error": "^3.4.0"
   },
   "devDependencies": {
+    "@clerk/testing": "^1.14.3",
     "@playwright/test": "^1.58.2",
     "@replit/vite-plugin-cartographer": "^0.3.1",
     "@replit/vite-plugin-dev-banner": "^0.1.1",
@@ -120,5 +121,8 @@
     "typescript": "5.6.3",
     "vite": "^5.4.20",
     "vitest": "^4.0.18"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-win32-x64-msvc": "^4.59.0"
   }
 }

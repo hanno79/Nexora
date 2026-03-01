@@ -37,7 +37,7 @@ export default function Settings() {
   const [defaultContentLanguage, setDefaultContentLanguage] = useState("auto");
   const [generatorModel, setGeneratorModel] = useState("nvidia/nemotron-3-nano-30b-a3b:free");
   const [reviewerModel, setReviewerModel] = useState("arcee-ai/trinity-large-preview:free");
-  const [fallbackModel, setFallbackModel] = useState("google/gemma-3-27b-it:free");
+  const [fallbackChain, setFallbackChain] = useState<string[]>(["google/gemma-3-27b-it:free"]);
   const [aiTier, setAiTier] = useState<"development" | "production" | "premium">("development");
   const [modelFilter, setModelFilter] = useState<'all' | 'free' | 'paid'>('all');
   const [modelSearch, setModelSearch] = useState('');
@@ -46,7 +46,7 @@ export default function Settings() {
     production?: { generator?: string; reviewer?: string };
     premium?: { generator?: string; reviewer?: string };
   }>({});
-  const [savedTierModels, setSavedTierModels] = useState<Record<string, { generatorModel?: string; reviewerModel?: string; fallbackModel?: string }>>({});
+  const [savedTierModels, setSavedTierModels] = useState<Record<string, { generatorModel?: string; reviewerModel?: string; fallbackChain?: string[] }>>({});
   const [iterativeMode, setIterativeMode] = useState(false);
   const [iterationCount, setIterationCount] = useState(3);
   const [iterativeTimeoutMinutes, setIterativeTimeoutMinutes] = useState(30);
@@ -94,8 +94,9 @@ export default function Settings() {
     generatorModel?: string;
     reviewerModel?: string;
     fallbackModel?: string;
+    fallbackChain?: string[];
     tier?: "development" | "production" | "premium";
-    tierModels?: Record<string, { generatorModel?: string; reviewerModel?: string; fallbackModel?: string }>;
+    tierModels?: Record<string, { generatorModel?: string; reviewerModel?: string; fallbackModel?: string; fallbackChain?: string[] }>;
     tierDefaults?: {
       development?: { generator?: string; reviewer?: string };
       production?: { generator?: string; reviewer?: string };
@@ -110,6 +111,19 @@ export default function Settings() {
     queryKey: ["/api/settings/ai"],
   });
 
+  const { data: modelStatusData } = useQuery<{
+    modelStatus: Record<string, {
+      status: 'ok' | 'cooldown';
+      cooldownSecondsLeft?: number;
+      reason?: string;
+    }>;
+    checkedAt: number;
+  }>({
+    queryKey: ["/api/openrouter/model-status"],
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
   const lastSavedModelKeyRef = useRef<string>('');
   const aiPrefsLoadedRef = useRef(false);
 
@@ -119,7 +133,10 @@ export default function Settings() {
       setSavedTierModels(tm);
       setGeneratorModel(aiPreferences.generatorModel || "nvidia/nemotron-3-nano-30b-a3b:free");
       setReviewerModel(aiPreferences.reviewerModel || "arcee-ai/trinity-large-preview:free");
-      setFallbackModel(aiPreferences.fallbackModel || "google/gemma-3-27b-it:free");
+      const chain = aiPreferences.fallbackChain
+        ?? (aiPreferences.fallbackModel ? [aiPreferences.fallbackModel] : null)
+        ?? ["google/gemma-3-27b-it:free"];
+      setFallbackChain(chain);
       setAiTier(aiPreferences.tier || "development");
       setTierDefaults(aiPreferences.tierDefaults || {});
       setIterativeMode(aiPreferences.iterativeMode || false);
@@ -132,7 +149,7 @@ export default function Settings() {
       lastSavedModelKeyRef.current = JSON.stringify({
         generatorModel: aiPreferences.generatorModel || "nvidia/nemotron-3-nano-30b-a3b:free",
         reviewerModel: aiPreferences.reviewerModel || "arcee-ai/trinity-large-preview:free",
-        fallbackModel: aiPreferences.fallbackModel || "google/gemma-3-27b-it:free",
+        fallbackChain: chain,
         aiTier: aiPreferences.tier || "development",
       });
       aiPrefsLoadedRef.current = true;
@@ -140,7 +157,7 @@ export default function Settings() {
   }, [aiPreferences]);
 
   // Auto-save AI model settings with debounce
-  const aiModelSettingsKey = JSON.stringify({ generatorModel, reviewerModel, fallbackModel, aiTier });
+  const aiModelSettingsKey = JSON.stringify({ generatorModel, reviewerModel, fallbackChain, aiTier });
   const debouncedModelSettings = useDebounce(aiModelSettingsKey, 1500);
   const blockedModelIds = new Set(['deepseek/deepseek-r1-0528:free']);
 
@@ -155,31 +172,36 @@ export default function Settings() {
     return matchesFilter && matchesSearch;
   });
 
-  const tierFallbackDefaults: Record<string, string> = {
-    development: "google/gemma-3-27b-it:free",
-    production: "google/gemma-3-27b-it:free",
-    premium: "google/gemma-3-27b-it:free",
-  };
+  // TODO: Diese Datei hat 1182 Zeilen und verstoesst gegen das 500-Zeilen-Limit.
+  // Refactoring in kleinere Komponenten (AiModelSettingsSection, ProfileSettingsSection, etc.)
+  // ist fuer die naechste Iteration geplant.
+  const DEFAULT_FALLBACK_CHAIN = [
+    'google/gemma-3-27b-it:free',
+    'meta-llama/llama-3.3-70b-instruct:free',
+    'mistralai/mistral-small-3.1-24b-instruct:free',
+    'qwen/qwen3-coder:free',
+    'openai/gpt-oss-120b:free',
+  ];
 
   const handleTierChange = (value: "development" | "production" | "premium") => {
     const nextSaved = {
       ...savedTierModels,
-      [aiTier]: { generatorModel, reviewerModel, fallbackModel },
+      [aiTier]: { generatorModel, reviewerModel, fallbackChain },
     };
     setSavedTierModels(nextSaved);
 
     setAiTier(value);
 
     const saved = nextSaved[value];
-    if (saved?.generatorModel || saved?.reviewerModel || saved?.fallbackModel) {
+    if (saved?.generatorModel || saved?.reviewerModel || saved?.fallbackChain) {
       if (saved.generatorModel) setGeneratorModel(saved.generatorModel);
       if (saved.reviewerModel) setReviewerModel(saved.reviewerModel);
-      if (saved.fallbackModel) setFallbackModel(saved.fallbackModel);
+      if (saved.fallbackChain) setFallbackChain(saved.fallbackChain);
     } else {
       const systemDefaults = openRouterData?.tierDefaults?.[value];
       if (systemDefaults?.generator) setGeneratorModel(systemDefaults.generator);
       if (systemDefaults?.reviewer) setReviewerModel(systemDefaults.reviewer);
-      setFallbackModel(tierFallbackDefaults[value] || "google/gemma-3-27b-it:free");
+      setFallbackChain([...DEFAULT_FALLBACK_CHAIN]);
     }
   };
 
@@ -227,26 +249,27 @@ export default function Settings() {
         ? JSON.parse(modelSettingsKey) as {
             generatorModel?: string;
             reviewerModel?: string;
-            fallbackModel?: string;
+            fallbackChain?: string[];
             aiTier?: "development" | "production" | "premium";
           }
         : {};
       const generatorModelToSave = modelSettings.generatorModel || generatorModel;
       const reviewerModelToSave = modelSettings.reviewerModel || reviewerModel;
-      const fallbackModelToSave = modelSettings.fallbackModel || fallbackModel;
+      const fallbackChainToSave = modelSettings.fallbackChain || fallbackChain;
       const tierToSave = modelSettings.aiTier || aiTier;
       const currentTierModels = {
         ...savedTierModels,
         [tierToSave]: {
           generatorModel: generatorModelToSave,
           reviewerModel: reviewerModelToSave,
-          fallbackModel: fallbackModelToSave,
+          fallbackChain: fallbackChainToSave,
         },
       };
       return await apiRequest("PATCH", "/api/settings/ai", {
         generatorModel: generatorModelToSave,
         reviewerModel: reviewerModelToSave,
-        fallbackModel: fallbackModelToSave,
+        fallbackModel: fallbackChainToSave[0] || "google/gemma-3-27b-it:free",
+        fallbackChain: fallbackChainToSave,
         tier: tierToSave,
         tierModels: currentTierModels,
         tierDefaults,
@@ -260,7 +283,7 @@ export default function Settings() {
     onSuccess: () => {
       setSavedTierModels(prev => ({
         ...prev,
-        [aiTier]: { generatorModel, reviewerModel, fallbackModel },
+        [aiTier]: { generatorModel, reviewerModel, fallbackChain },
       }));
       queryClient.invalidateQueries({ queryKey: ["/api/settings/ai"] });
       toast({
@@ -613,18 +636,77 @@ export default function Settings() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="fallback-model">{t.settings.fallbackModel}</Label>
-                  <Select value={fallbackModel} onValueChange={setFallbackModel}>
-                    <SelectTrigger id="fallback-model" data-testid="select-fallback-model">
-                      <SelectValue placeholder={modelsLoading ? t.settings.loadingModels : t.settings.selectModel} />
+                  <Label>{t.settings.fallbackChain}</Label>
+                  <p className="text-xs text-muted-foreground">
+                    {t.settings.fallbackChainDesc}
+                  </p>
+
+                  <div className="space-y-1">
+                    {fallbackChain.map((modelId, idx) => {
+                      const modelMeta = openRouterData?.models?.find(m => m.id === modelId);
+                      const statusEntry = modelStatusData?.modelStatus?.[modelId];
+                      const statusColor = (!statusEntry || statusEntry.status === 'ok')
+                        ? 'bg-green-500'
+                        : 'bg-yellow-400';
+                      const statusTitle = (!statusEntry || statusEntry.status === 'ok')
+                        ? t.settings.modelAvailable
+                        : `${t.settings.modelCooldown}: ${statusEntry?.reason || '?'} (${statusEntry?.cooldownSecondsLeft || '?'}s)`;
+                      return (
+                        <div key={modelId} className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm">
+                          <span className="text-muted-foreground w-5 text-center text-xs">{idx + 1}</span>
+                          <span title={statusTitle} className={`w-2 h-2 rounded-full ${statusColor} flex-shrink-0`} />
+                          <span className="flex-1 truncate">
+                            {modelMeta?.name ?? modelId}
+                            {modelMeta?.isFree && <span className="ml-1 text-xs text-green-600">(Free)</span>}
+                          </span>
+                          <Button variant="ghost" size="icon" className="h-6 w-6" disabled={idx === 0}
+                            onClick={() => setFallbackChain(prev => {
+                              const next = [...prev];
+                              [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                              return next;
+                            })}>
+                            <span className="text-xs">▲</span>
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-6 w-6" disabled={idx === fallbackChain.length - 1}
+                            onClick={() => setFallbackChain(prev => {
+                              const next = [...prev];
+                              [next[idx + 1], next[idx]] = [next[idx], next[idx + 1]];
+                              return next;
+                            })}>
+                            <span className="text-xs">▼</span>
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-6 w-6" disabled={fallbackChain.length <= 1}
+                            onClick={() => setFallbackChain(prev => prev.filter((_, i) => i !== idx))}>
+                            <span className="text-xs">✕</span>
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <Select value="" onValueChange={(id) => {
+                    if (id && !fallbackChain.includes(id)) {
+                      setFallbackChain(prev => [...prev, id]);
+                    }
+                  }}>
+                    <SelectTrigger data-testid="select-fallback-model">
+                      <SelectValue placeholder={t.settings.addFallbackModel} />
                     </SelectTrigger>
                     <SelectContent>
                       {modelsLoading ? (
                         <SelectItem value="loading" disabled>{t.settings.loadingModels}</SelectItem>
-                      ) : filteredModels.length === 0 ? (
+                      ) : (openRouterData?.models || []).filter(m =>
+                        !blockedModelIds.has(m.id) && !fallbackChain.includes(m.id) &&
+                        (modelFilter === 'all' || (modelFilter === 'free' && m.isFree) || (modelFilter === 'paid' && !m.isFree)) &&
+                        (!modelSearch || m.name.toLowerCase().includes(modelSearch.toLowerCase()) || m.id.toLowerCase().includes(modelSearch.toLowerCase()))
+                      ).length === 0 ? (
                         <SelectItem value="none" disabled>{t.settings.noModelsFound}</SelectItem>
                       ) : (
-                        filteredModels.map(m => (
+                        (openRouterData?.models || []).filter(m =>
+                          !blockedModelIds.has(m.id) && !fallbackChain.includes(m.id) &&
+                          (modelFilter === 'all' || (modelFilter === 'free' && m.isFree) || (modelFilter === 'paid' && !m.isFree)) &&
+                          (!modelSearch || m.name.toLowerCase().includes(modelSearch.toLowerCase()) || m.id.toLowerCase().includes(modelSearch.toLowerCase()))
+                        ).map(m => (
                           <SelectItem key={m.id} value={m.id}>
                             {m.name}{m.isFree ? ' (Free)' : ''}
                           </SelectItem>
@@ -632,9 +714,12 @@ export default function Settings() {
                       )}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">
-                    {t.settings.fallbackModelDescFull}
-                  </p>
+
+                  <Button variant="outline" size="sm"
+                    onClick={() => setFallbackChain([...DEFAULT_FALLBACK_CHAIN])}>
+                    <RefreshCw className="h-3 w-3 mr-1" />
+                    {t.settings.resetFallbackChain}
+                  </Button>
                 </div>
 
                 <div className="p-3 rounded-lg border bg-muted/30 space-y-2">

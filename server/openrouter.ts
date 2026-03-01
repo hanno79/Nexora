@@ -20,6 +20,20 @@ const DEFAULT_FREE_GENERATOR_MODEL = 'nvidia/nemotron-3-nano-30b-a3b:free';
 const DEFAULT_FREE_REVIEWER_MODEL = 'arcee-ai/trinity-large-preview:free';
 const DEFAULT_FREE_FALLBACK_MODEL = 'google/gemma-3-27b-it:free';
 
+// Ordered list of free fallback candidates for development tier.
+// Earlier entries are preferred. Users can override this list in Settings.
+// HINWEIS: openrouter/free wurde entfernt, da nicht-deterministisch.
+// Das Auto-Router-Modell kann zu unterschiedlichen Providern/Modellen führen,
+// was Debugging und Fehleranalyse erschwert. Stattdessen nutzen wir eine
+// deterministische Kette bekannter, stabiler Free-Modelle.
+const DEFAULT_FREE_FALLBACK_CHAIN: readonly string[] = [
+  'google/gemma-3-27b-it:free',                           // current single fallback
+  'meta-llama/llama-3.3-70b-instruct:free',                // GPT-4 level, 128K
+  'mistralai/mistral-small-3.1-24b-instruct:free',         // EU-hosted, 128K
+  'qwen/qwen3-coder:free',                                 // 262K context
+  'openai/gpt-oss-120b:free',                              // 131K context
+];
+
 const DEPRECATED_MODEL_IDS = new Set<string>([
   'deepseek/deepseek-r1-0528:free',
 ]);
@@ -53,6 +67,42 @@ function extractOpenRouterErrorMessage(errorData: any, fallbackText: string): st
     fallbackText ||
     ''
   ).trim();
+}
+
+// --- Global cooldown registry ---
+// Shared across all OpenRouterClient instances within the process.
+// Persists for the process lifetime; lost on server restart (acceptable: transient state).
+const globalModelCooldowns = new Map<string, { until: number; reason: string }>();
+
+function getGlobalCooldownStatus(model: string): { until: number; reason: string } | null {
+  const entry = globalModelCooldowns.get(model);
+  if (!entry) return null;
+  if (Date.now() >= entry.until) {
+    globalModelCooldowns.delete(model);
+    return null;
+  }
+  return entry;
+}
+
+function setGlobalCooldown(model: string, cooldownMs: number, reason: string): void {
+  globalModelCooldowns.set(model, { until: Date.now() + cooldownMs, reason });
+}
+
+function clearGlobalCooldown(model: string): void {
+  globalModelCooldowns.delete(model);
+}
+
+function getAllActiveCooldowns(): Record<string, { until: number; reason: string }> {
+  const result: Record<string, { until: number; reason: string }> = {};
+  const now = Date.now();
+  for (const [model, entry] of globalModelCooldowns) {
+    if (now < entry.until) {
+      result[model] = entry;
+    } else {
+      globalModelCooldowns.delete(model);
+    }
+  }
+  return result;
 }
 
 // Model configuration with currently available models (verified Feb 2026)
@@ -107,7 +157,7 @@ class OpenRouterClient {
   private baseUrl = 'https://openrouter.ai/api/v1';
   private tier: keyof ModelConfig;
   private preferredModels: { generator?: string; reviewer?: string; fallback?: string } = {};
-  private modelCooldowns = new Map<string, { until: number; reason: string }>();
+  private preferredFallbackChain: string[] = [];
 
   constructor(apiKey?: string, tier: keyof ModelConfig = DEFAULT_SAFE_TIER) {
     this.apiKey = apiKey || process.env.OPENROUTER_API_KEY || '';
@@ -138,14 +188,19 @@ class OpenRouterClient {
     this.tier = tier;
   }
 
+  setFallbackChain(models: string[]): void {
+    const MAX_CHAIN_LENGTH = 10;
+    this.preferredFallbackChain = models
+      .filter(m => !!sanitizeConfiguredModel(m))
+      .slice(0, MAX_CHAIN_LENGTH);
+  }
+
+  getFallbackChain(): string[] {
+    return this.preferredFallbackChain;
+  }
+
   private getActiveCooldown(model: string): { until: number; reason: string } | null {
-    const entry = this.modelCooldowns.get(model);
-    if (!entry) return null;
-    if (Date.now() >= entry.until) {
-      this.modelCooldowns.delete(model);
-      return null;
-    }
-    return entry;
+    return getGlobalCooldownStatus(model);
   }
 
   private applyFailureCooldown(model: string, errorMessage: string): void {
@@ -168,7 +223,7 @@ class OpenRouterClient {
     }
 
     if (cooldownMs > 0) {
-      this.modelCooldowns.set(model, { until: Date.now() + cooldownMs, reason });
+      setGlobalCooldown(model, cooldownMs, reason);
     }
   }
 
@@ -360,7 +415,10 @@ class OpenRouterClient {
     };
 
     const primary = this.preferredModels[modelType];
-    const fallback = this.preferredModels.fallback;
+    // Support both new fallback chain and legacy single fallback
+    const fallbackChain = this.preferredFallbackChain.length > 0
+      ? this.preferredFallbackChain
+      : (this.preferredModels.fallback ? [this.preferredModels.fallback] : []);
     const tierModels = MODEL_TIERS[this.tier];
     const roleDefault = modelType === 'generator' ? tierModels.generator : tierModels.reviewer;
     const crossRolePreferred = this.preferredModels[modelType === 'generator' ? 'reviewer' : 'generator'];
@@ -368,7 +426,9 @@ class OpenRouterClient {
     const allowCrossRoleFallback = process.env.ALLOW_CROSS_ROLE_MODEL_FALLBACK === 'true';
 
     addIfNew(primary, true);
-    addIfNew(fallback, false);
+    for (const fb of fallbackChain) {
+      addIfNew(fb, false);
+    }
     addIfNew(roleDefault, false);
 
     // Optional legacy behavior: allow using the other role's model as last-resort fallback.
@@ -400,7 +460,7 @@ class OpenRouterClient {
 
         try {
           const result = await this.callModel(modelType, systemPrompt, userPrompt, maxTokens, temperature ?? 0.7, responseFormat);
-          this.modelCooldowns.delete(attemptModel);
+          clearGlobalCooldown(attemptModel);
           const usedFallback = !isPrimary;
           if (usedFallback) {
             console.log(`⚠️ Fallback used: ${attemptModel} instead of ${primary || 'none'}`);
@@ -535,5 +595,87 @@ export {
   DEFAULT_FREE_REVIEWER_MODEL,
   DEFAULT_FREE_FALLBACK_MODEL,
   DEFAULT_FALLBACK_MODEL_BY_TIER,
+  DEFAULT_FREE_FALLBACK_CHAIN,
+  getAllActiveCooldowns,
+  getGlobalCooldownStatus,
+  setGlobalCooldown,
+  clearGlobalCooldown,
 };
 export type { ModelTier, ModelConfig };
+
+/**
+ * Shared factory: create an OpenRouterClient configured with user's AI preferences.
+ * Single source of truth for DualAiService and GuidedAiService.
+ */
+export async function createClientWithUserPreferences(
+  userId: string | undefined,
+  log?: (msg: string, data?: any) => void,
+): Promise<{ client: OpenRouterClient; contentLanguage: string | null }> {
+  // Lazy import to avoid circular dependency at module-load time
+  const { db } = await import('./db');
+  const { users } = await import('@shared/schema');
+  const { eq } = await import('drizzle-orm');
+
+  const client = getOpenRouterClient();
+  let contentLanguage: string | null = null;
+
+  if (userId) {
+    const userPrefs = await db.select({
+      aiPreferences: users.aiPreferences,
+      defaultContentLanguage: users.defaultContentLanguage,
+    })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (userPrefs[0]) {
+      contentLanguage = userPrefs[0].defaultContentLanguage || null;
+
+      if (userPrefs[0].aiPreferences) {
+        const prefs = userPrefs[0].aiPreferences as any;
+        const tier = resolveModelTier(prefs.tier);
+        const activeTierModels = prefs.tierModels?.[tier] || {};
+        const tierDefaults = MODEL_TIERS[tier] || MODEL_TIERS.development;
+        const resolvedGeneratorModel =
+          sanitizeConfiguredModel(activeTierModels.generatorModel || prefs.generatorModel) ||
+          tierDefaults.generator;
+        const resolvedReviewerModel =
+          sanitizeConfiguredModel(activeTierModels.reviewerModel || prefs.reviewerModel) ||
+          tierDefaults.reviewer;
+        const resolvedFallbackModel =
+          sanitizeConfiguredModel(activeTierModels.fallbackModel || prefs.fallbackModel) ||
+          getDefaultFallbackModelForTier(tier);
+        const resolvedFallbackChain: string[] =
+          activeTierModels.fallbackChain ??
+          (Array.isArray(prefs.fallbackChain) ? prefs.fallbackChain : undefined) ??
+          [...DEFAULT_FREE_FALLBACK_CHAIN];
+
+        if (log) {
+          log('🤖 User AI preferences loaded:', {
+            tier,
+            tierGenerator: activeTierModels.generatorModel || '(not set)',
+            tierReviewer: activeTierModels.reviewerModel || '(not set)',
+            globalGenerator: prefs.generatorModel || '(not set)',
+            globalReviewer: prefs.reviewerModel || '(not set)',
+            resolvedGenerator: resolvedGeneratorModel,
+            resolvedReviewer: resolvedReviewerModel,
+            resolvedFallback: resolvedFallbackModel || '(none)',
+            fallbackChainLength: resolvedFallbackChain.length,
+          });
+        }
+
+        if (resolvedGeneratorModel) {
+          client.setPreferredModel('generator', resolvedGeneratorModel);
+        }
+        if (resolvedReviewerModel) {
+          client.setPreferredModel('reviewer', resolvedReviewerModel);
+        }
+        client.setPreferredModel('fallback', resolvedFallbackChain[0] ?? resolvedFallbackModel);
+        client.setFallbackChain(resolvedFallbackChain);
+        client.setPreferredTier(tier);
+      }
+    }
+  }
+
+  return { client, contentLanguage };
+}

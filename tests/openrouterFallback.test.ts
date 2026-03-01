@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { OpenRouterClient } from '../server/openrouter';
+import { OpenRouterClient, clearGlobalCooldown } from '../server/openrouter';
 
 const usage = { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 };
 
 describe('OpenRouterClient fallback behavior', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    // Clear any global cooldowns from previous tests
+    clearGlobalCooldown('minimax/minimax-m2.5');
   });
 
   it('skips deprecated fallback models from the attempt list', async () => {

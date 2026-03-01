@@ -49,7 +49,7 @@ describe('prdCompilerFinalizer', () => {
     expect(result.content).toContain('## Timeline & Milestones');
   });
 
-  it('runs repair pass when initial output is truncated and returns valid content', async () => {
+  it('recovers valid structure from truncated source via fallback sections without repair', async () => {
     const truncated = [
       '## Functional Feature Catalogue',
       '',
@@ -58,48 +58,11 @@ describe('prdCompilerFinalizer', () => {
       '- A change by one user',
     ].join('\n');
 
-    const repaired = [
-      '## System Vision',
-      'Realtime collaboration across active users.',
-      '',
-      '## System Boundaries',
-      'Web client and API.',
-      '',
-      '## Domain Model',
-      '- Task, User, Project.',
-      '',
-      '## Global Business Rules',
-      '- Feature IDs remain stable.',
-      '',
-      '## Functional Feature Catalogue',
-      '',
-      '### F-01: Realtime Updates',
-      '1. Purpose',
-      'Synchronize updates in under one second.',
-      '10. Acceptance Criteria',
-      '- Updates are visible in all active sessions within one second.',
-      '',
-      '## Non-Functional Requirements',
-      '- Latency below one second for update propagation.',
-      '',
-      '## Error Handling & Recovery',
-      '- Recover from disconnected sessions.',
-      '',
-      '## Deployment & Infrastructure',
-      '- Node service with PostgreSQL.',
-      '',
-      '## Definition of Done',
-      '- All required sections are complete.',
-      '',
-      '## Out of Scope',
-      '- Native mobile app for this release.',
-      '',
-      '## Timeline & Milestones',
-      '- Milestone 1 and Milestone 2.',
-      '',
-      '## Success Criteria & Acceptance Testing',
-      '- 95% of updates delivered within one second.',
-    ].join('\n');
+    const repairGenerator = vi.fn(async () => ({
+      content: truncated,
+      model: 'mock/repair',
+      usage: usage(200),
+    }));
 
     const result = await finalizeWithCompilerGates({
       initialResult: {
@@ -112,16 +75,16 @@ describe('prdCompilerFinalizer', () => {
       language: 'en',
       originalRequest: 'Refine realtime updates section.',
       maxRepairPasses: 2,
-      repairGenerator: async () => ({
-        content: repaired,
-        model: 'mock/repair',
-        usage: usage(200),
-      }),
+      repairGenerator,
     });
 
-    expect(result.repairAttempts).toHaveLength(1);
+    // Compiler fills missing sections with fallbacks → valid without repair
+    expect(result.repairAttempts).toHaveLength(0);
+    expect(repairGenerator).not.toHaveBeenCalled();
     expect(result.quality.valid).toBe(true);
-    expect(result.content).toContain('## Success Criteria & Acceptance Testing');
+    // Source truncation is captured as a warning, not an error
+    const truncWarning = result.quality.issues.find(i => i.code === 'truncated_output');
+    expect(truncWarning?.severity).toBe('warning');
   });
 
   it('accepts compiler-valid output even when raw source heuristically looks truncated', async () => {
@@ -423,7 +386,7 @@ describe('prdCompilerFinalizer', () => {
     const repairGenerator = vi.fn(async (prompt: string) => {
       expect(prompt).toContain('Resolve repeated boilerplate phrasing');
       expect(prompt).toContain('Remove prompt/meta artifacts');
-      expect(prompt).toContain('Keep complete body content in target language');
+      expect(prompt).toContain('Target language: en');
       return {
         content: 'fixed-output',
         model: 'mock/repair',
@@ -447,5 +410,93 @@ describe('prdCompilerFinalizer', () => {
 
     expect(result.quality.valid).toBe(true);
     expect(repairGenerator).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves best result when repair degrades quality', async () => {
+    let callCount = 0;
+    const compileDocument = vi.fn((content: string) => {
+      callCount++;
+      // Initial: score ~80 (1 error, 1 feature)
+      if (callCount === 1) {
+        return {
+          content,
+          structure: { features: [{ id: 'F-01', name: 'A', rawContent: 'body' }], otherSections: {} },
+          quality: {
+            valid: false, truncatedLikely: false, missingSections: [],
+            featureCount: 1,
+            issues: [{ code: 'unknown_heading', message: 'Extra heading', severity: 'error' as const }],
+          },
+        };
+      }
+      // Repair 1: worse — score ~57 (3 errors, truncated, 0 features)
+      if (callCount === 2) {
+        return {
+          content,
+          structure: { features: [], otherSections: {} },
+          quality: {
+            valid: false, truncatedLikely: true, missingSections: [],
+            featureCount: 0,
+            issues: [
+              { code: 'boilerplate', message: 'Boilerplate', severity: 'error' as const },
+              { code: 'truncated', message: 'Truncated', severity: 'error' as const },
+              { code: 'language', message: 'Language', severity: 'error' as const },
+            ],
+          },
+        };
+      }
+      // Repair 2: even worse — abort should have triggered
+      return {
+        content,
+        structure: { features: [], otherSections: {} },
+        quality: {
+          valid: false, truncatedLikely: true, missingSections: ['System Vision'],
+          featureCount: 0,
+          issues: [
+            { code: 'a', message: 'a', severity: 'error' as const },
+            { code: 'b', message: 'b', severity: 'error' as const },
+            { code: 'c', message: 'c', severity: 'error' as const },
+            { code: 'd', message: 'd', severity: 'error' as const },
+          ],
+        },
+      };
+    });
+
+    const repairGenerator = vi.fn(async () => ({
+      content: 'repair-attempt',
+      model: 'mock/repair',
+      usage: usage(10),
+    }));
+
+    await expect(finalizeWithCompilerGates({
+      initialResult: { content: 'initial', model: 'mock', usage: usage(10) },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Test degradation guard.',
+      maxRepairPasses: 4,
+      repairGenerator,
+      compileDocument,
+    })).rejects.toThrow(/quality gate failed/i);
+
+    // Should abort after 2 consecutive degradations, not exhaust all 4 passes
+    expect(repairGenerator).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns qualityScore in result', async () => {
+    const complete = [
+      '## System Vision', 'Complete PRD output.',
+      '', '## Functional Feature Catalogue',
+      '', '### F-01: Core', '1. Purpose', 'Core feature.', '10. Acceptance Criteria', '- Works.',
+    ].join('\n');
+
+    const result = await finalizeWithCompilerGates({
+      initialResult: { content: complete, model: 'mock', usage: usage(50) },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Test score.',
+      repairGenerator: async () => ({ content: complete, model: 'mock', usage: usage(10) }),
+    });
+
+    expect(result.qualityScore).toBeTypeOf('number');
+    expect(result.qualityScore).toBeGreaterThan(0);
   });
 });

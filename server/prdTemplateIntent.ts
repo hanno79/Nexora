@@ -77,11 +77,12 @@ const TEMPLATE_PROFILES: Record<PrdTemplateCategory, TemplateProfile> = {
       requiredSections: ['systemVision', 'successCriteria'],
       minFeatureCount: 4,
       featureNameSignals: [
-        /\b(create|update|delete|view|list|manage|sync|validate|import|export|create|register|capture)\b/i,
-        /\b(erstellen|bearbeiten|loeschen|anzeigen|auflisten|verwalten|synchronisieren|validieren|import|export)\b/i,
-        /\b(user|nutzer|workflow|prozess|task|aufgabe|freigabe|approval|notification|benachrichtigung)\b/i,
+        /\b(create|update|delete|view|list|manage|sync|validate|import|export|register|capture|filter|sort|search|display|track|report)\b/i,
+        /(?:erstellen|bearbeiten|l[oö]schen|anzeigen|auflisten|verwalten|synchronisieren|validieren|import|export|anlegen|[aä]ndern|aktualisieren|konfigurieren|erfassen|registrieren|filtern|sortieren|suchen|speichern|laden)/i,
+        /(?:verwaltung|erfassung|steuerung|anzeige|[uü]bersicht|konfiguration|synchronisation|validierung|registrierung|integration|automatisierung|authentifizierung|autorisierung|darstellung|speicherung|filterung|sortierung|suche|eingabe|ausgabe|berechnung|[aä]nderung|aktualisierung|benachrichtigung)/i,
+        /\b(user|nutzer|workflow|prozess|task|aufgabe|freigabe|approval|notification|benachrichtigung|dashboard|profil|einstellung|daten|liste|tabelle|status|eintrag|bug|feature|idee)\b/i,
       ],
-      minFeatureSignalRatio: 0.45,
+      minFeatureSignalRatio: 0.20,
       disallowedFeatureNameSignals: [
         /\b(system\s*vision|problem\s*statement|goals?(?:\s*&\s*success\s*metrics?)?|target\s*audience|user\s*stories|timeline|out\s*of\s*scope|definition\s*of\s*done|success\s*criteria)\b/i,
         /\b(part\s*[a-d]|section\s*[a-d]|review\s*feedback|iteration\s*\d+)\b/i,
@@ -277,7 +278,9 @@ const FEATURE_ARRAY_FIELDS = [
   'acceptanceCriteria',
 ] as const;
 const HARD_PLACEHOLDER_PATTERNS: RegExp[] = [
-  /\b(?:todo|tbd|fixme)\b/gi,
+  /\bTODO\b/gi,
+  /\bTBD\b/gi,
+  /\bFIXME\b/gi,
   /\bto\s+be\s+defined\b/gi,
   /\bcoming\s+soon\b/gi,
   /\blorem\s+ipsum\b/gi,

@@ -51,12 +51,14 @@ const tierModelSetSchema = z.object({
   generatorModel: z.string().optional(),
   reviewerModel: z.string().optional(),
   fallbackModel: z.string().optional(),
+  fallbackChain: z.array(z.string()).optional(),
 });
 
 export const aiPreferencesSchema = z.object({
   generatorModel: z.string().optional(),
   reviewerModel: z.string().optional(),
   fallbackModel: z.string().optional(),
+  fallbackChain: z.array(z.string()).optional(),
   tier: z.enum(['development', 'production', 'premium']).optional(),
   tierModels: z.object({
     development: tierModelSetSchema.optional(),

@@ -46,7 +46,7 @@ import { canShareWithUser, planShareAction } from "./sharePolicy";
 import { logger } from "./logger";
 import { isIterativeClientDisconnected } from "./iterativeRequestGuard";
 import { splitTokenCount } from "./tokenMath";
-import { MODEL_TIERS, getDefaultFallbackModelForTier, sanitizeConfiguredModel, resolveModelTier } from "./openrouter";
+import { MODEL_TIERS, getDefaultFallbackModelForTier, sanitizeConfiguredModel, resolveModelTier, DEFAULT_FREE_FALLBACK_CHAIN } from "./openrouter";
 import { resolvePrdWorkflowMode } from "./prdWorkflowMode";
 import {
   buildCompilerRunDiagnostics,
@@ -228,6 +228,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       generatorModel?: string;
       reviewerModel?: string;
       fallbackModel?: string;
+      fallbackChain?: string[];
     }>;
     const tierModels = Object.fromEntries(
       Object.entries(rawTierModels).map(([tierName, modelSet]) => {
@@ -240,6 +241,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             generatorModel: sanitizeConfiguredModel(modelSet?.generatorModel) || defaults.generator,
             reviewerModel: sanitizeConfiguredModel(modelSet?.reviewerModel) || defaults.reviewer,
             fallbackModel: sanitizeConfiguredModel(modelSet?.fallbackModel) || getDefaultFallbackModelForTier(typedTier),
+            fallbackChain: Array.isArray(modelSet?.fallbackChain) ? modelSet.fallbackChain : undefined,
           },
         ];
       })
@@ -255,6 +257,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const resolvedFallbackModel =
       sanitizeConfiguredModel(activeTierModels.fallbackModel || stored.fallbackModel) ||
       getDefaultFallbackModelForTier(tierKey);
+    const resolvedFallbackChain: string[] =
+      (activeTierModels.fallbackChain?.length ? activeTierModels.fallbackChain : undefined) ??
+      (stored.fallbackChain?.length ? stored.fallbackChain as string[] : undefined) ??
+      [...DEFAULT_FREE_FALLBACK_CHAIN];
 
     const preferences = {
       ...stored,
@@ -263,6 +269,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       generatorModel: resolvedGeneratorModel,
       reviewerModel: resolvedReviewerModel,
       fallbackModel: resolvedFallbackModel,
+      fallbackChain: resolvedFallbackChain,
       iterativeTimeoutMinutes: stored.iterativeTimeoutMinutes || 30,
     };
 
@@ -292,6 +299,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       generatorModel?: string;
       reviewerModel?: string;
       fallbackModel?: string;
+      fallbackChain?: string[];
     } | undefined>;
     const sanitizedIncomingTierModels = Object.fromEntries(
       Object.entries(incomingTierModels).map(([tierName, modelSet]) => {
@@ -304,6 +312,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             generatorModel: normalizeIncomingModel(modelSet?.generatorModel, tierDefaults.generator) ?? modelSet?.generatorModel,
             reviewerModel: normalizeIncomingModel(modelSet?.reviewerModel, tierDefaults.reviewer) ?? modelSet?.reviewerModel,
             fallbackModel: normalizeIncomingModel(modelSet?.fallbackModel, getDefaultFallbackModelForTier(typedTier)) ?? modelSet?.fallbackModel,
+            ...(Array.isArray(modelSet?.fallbackChain)
+              ? { fallbackChain: modelSet!.fallbackChain.map(m => sanitizeConfiguredModel(m)).filter(Boolean) as string[] }
+              : {}),
           },
         ];
       })
@@ -312,7 +323,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Only override the active tier's models when fields are explicitly provided.
     // Without this guard, a PATCH with just {"tier":"development"} would overwrite
     // the development tier models with undefined → {}, losing the configuration.
-    const tierUpdate: Record<string, string> = {};
+    const tierUpdate: Record<string, any> = {};
     if (preferences.generatorModel) {
       tierUpdate.generatorModel = normalizeIncomingModel(preferences.generatorModel, activeTierDefaults.generator)!;
     }
@@ -321,6 +332,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     if (preferences.fallbackModel) {
       tierUpdate.fallbackModel = normalizeIncomingModel(preferences.fallbackModel, getDefaultFallbackModelForTier(activeTierKey))!;
+    }
+    if (Array.isArray(preferences.fallbackChain)) {
+      tierUpdate.fallbackChain = preferences.fallbackChain
+        .map(m => sanitizeConfiguredModel(m))
+        .filter(Boolean) as string[];
     }
 
     const updatedTierModels = {
@@ -338,6 +354,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ...(preferences.generatorModel ? { generatorModel: tierUpdate.generatorModel } : {}),
       ...(preferences.reviewerModel ? { reviewerModel: tierUpdate.reviewerModel } : {}),
       ...(preferences.fallbackModel ? { fallbackModel: tierUpdate.fallbackModel } : {}),
+      ...(Array.isArray(preferences.fallbackChain) ? { fallbackChain: tierUpdate.fallbackChain } : {}),
       tierModels: updatedTierModels,
     };
 
@@ -853,14 +870,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
 
   // OpenRouter models list endpoint
-  const { isOpenRouterConfigured, getOpenRouterConfigError, fetchOpenRouterModels } = await import('./openrouter');
-  
+  const { isOpenRouterConfigured, getOpenRouterConfigError, fetchOpenRouterModels, getAllActiveCooldowns } = await import('./openrouter');
+
   app.get('/api/openrouter/models', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
     if (!isOpenRouterConfigured()) {
       return res.status(503).json({ message: getOpenRouterConfigError() });
     }
     const models = await fetchOpenRouterModels();
     res.json({ models, tierDefaults: MODEL_TIERS });
+  }));
+
+  // Model status endpoint — returns in-memory cooldown state for pre-run checks
+  app.get('/api/openrouter/model-status', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const cooldowns = getAllActiveCooldowns();
+    const extraModels = typeof req.query.models === 'string'
+      ? req.query.models.split(',').map(m => m.trim()).filter(Boolean)
+      : [];
+    const candidates = [...new Set([...DEFAULT_FREE_FALLBACK_CHAIN, ...extraModels])];
+    const now = Date.now();
+
+    const modelStatus = Object.fromEntries(
+      candidates.map(id => {
+        const cd = cooldowns[id];
+        if (!cd) {
+          return [id, { status: 'ok' as const }];
+        }
+        return [id, {
+          status: 'cooldown' as const,
+          cooldownSecondsLeft: Math.ceil((cd.until - now) / 1000),
+          reason: cd.reason,
+        }];
+      })
+    );
+
+    res.json({ modelStatus, checkedAt: now });
   }));
 
   // Dual-AI generation routes (HRP-17)

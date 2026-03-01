@@ -35,6 +35,7 @@ describe('prdQualitySignals', () => {
     structure.systemBoundaries = repeated;
     structure.domainModel = repeated;
     structure.globalBusinessRules = repeated;
+    structure.nonFunctional = repeated;
     structure.features = [
       {
         id: 'F-01',
@@ -52,6 +53,12 @@ describe('prdQualitySignals', () => {
         id: 'F-03',
         name: 'Repair Retry',
         rawContent: 'Retry repairs.',
+        acceptanceCriteria: [repeated],
+      },
+      {
+        id: 'F-04',
+        name: 'Audit Trail',
+        rawContent: 'Trail audits.',
         acceptanceCriteria: [repeated],
       },
     ];
@@ -96,12 +103,12 @@ describe('prdQualitySignals', () => {
     expect(issues.some(issue => issue.code === 'language_mismatch_section_systemVision')).toBe(false);
   });
 
-  it('flags short feature names when they drift to the wrong language', () => {
+  it('flags short feature names when they drift to the wrong language (warning for minority)', () => {
     const structure = baseStructure();
     structure.features = [
       {
         id: 'F-01',
-        name: 'Add Entry',
+        name: 'Create All User Entries',
         rawContent: 'Neue Eintraege werden angelegt.',
       },
       {
@@ -112,7 +119,90 @@ describe('prdQualitySignals', () => {
     ];
 
     const issues = collectLanguageConsistencyIssues(structure, 'de', 'feature');
-    expect(issues.some(issue => issue.code === 'language_mismatch_feature_name')).toBe(true);
+    // 1/2 features mismatched (50%) → warning, not error
+    const nameIssue = issues.find(i => i.code === 'language_mismatch_feature_name');
+    expect(nameIssue).toBeDefined();
+    expect(nameIssue!.severity).toBe('warning');
+  });
+
+  it('does not flag feature names with only 2 EN markers (below threshold)', () => {
+    const structure = baseStructure();
+    structure.features = [
+      {
+        id: 'F-01',
+        name: 'User Search',
+        rawContent: 'Nutzer suchen.',
+      },
+      {
+        id: 'F-02',
+        name: 'Eintrag bearbeiten',
+        rawContent: 'Eintraege werden aktualisiert.',
+      },
+    ];
+
+    const issues = collectLanguageConsistencyIssues(structure, 'de', 'feature');
+    expect(issues.some(i => i.code === 'language_mismatch_feature_name')).toBe(false);
+    expect(issues.some(i => i.code === 'language_mismatch_feature_names_majority')).toBe(false);
+  });
+
+  it('escalates to error when majority of feature names are in wrong language', () => {
+    const structure = baseStructure();
+    structure.features = [
+      { id: 'F-01', name: 'Create All User Records', rawContent: 'content' },
+      { id: 'F-02', name: 'Delete All User Records', rawContent: 'content' },
+      { id: 'F-03', name: 'View Every User Profile', rawContent: 'content' },
+      { id: 'F-04', name: 'Eintrag bearbeiten', rawContent: 'content' },
+    ];
+
+    const issues = collectLanguageConsistencyIssues(structure, 'de', 'feature');
+    // 3/4 features mismatched (75%) → error
+    const majorityIssue = issues.find(i => i.code === 'language_mismatch_feature_names_majority');
+    expect(majorityIssue).toBeDefined();
+    expect(majorityIssue!.severity).toBe('error');
+  });
+
+  it('does not flag known compiler scaffold sentences as boilerplate', () => {
+    const scaffoldSentence = 'System receives the "Feature X" request and validates input.';
+    const structure = baseStructure();
+    structure.features = Array.from({ length: 6 }, (_, i) => ({
+      id: `F-0${i + 1}`,
+      name: `Feature ${i + 1}`,
+      rawContent: scaffoldSentence,
+      mainFlow: [scaffoldSentence],
+      acceptanceCriteria: [
+        `"Feature ${i + 1}" is verifiable by end users directly in the UI without manual reload.`,
+      ],
+    }));
+
+    const issues = collectBoilerplateRepetitionIssues(structure);
+    expect(issues.some(i => i.code === 'boilerplate_repetition_detected')).toBe(false);
+    expect(issues.some(i => i.code === 'boilerplate_feature_acceptance_repetition')).toBe(false);
+  });
+
+  it('does not flag German scaffold sentences with real umlauts as boilerplate', () => {
+    const germanScaffold = 'Temporärer Fehler: Das System protokolliert den Fehler und bietet einen Retry-Pfad an.';
+    const structure = baseStructure();
+    structure.features = Array.from({ length: 9 }, (_, i) => ({
+      id: `F-0${i + 1}`,
+      name: `Feature ${i + 1}`,
+      rawContent: 'content',
+      alternateFlows: [germanScaffold],
+    }));
+
+    const issues = collectBoilerplateRepetitionIssues(structure);
+    expect(issues.some(i => i.code === 'boilerplate_repetition_detected')).toBe(false);
+  });
+
+  it('does not flag sentences at exactly 4 repetitions (threshold is 5)', () => {
+    const repeated = 'A custom business sentence that repeats across multiple sections in the document.';
+    const structure = baseStructure();
+    structure.systemVision = repeated;
+    structure.systemBoundaries = repeated;
+    structure.domainModel = repeated;
+    structure.globalBusinessRules = repeated;
+
+    const issues = collectBoilerplateRepetitionIssues(structure);
+    expect(issues.some(i => i.code === 'boilerplate_repetition_detected')).toBe(false);
   });
 
   it('finds and applies conservative feature aggregation candidates', () => {

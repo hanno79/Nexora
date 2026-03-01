@@ -7,21 +7,29 @@ import type { TokenUsage } from "@shared/schema";
  * Get language instruction to prepend to system prompts
  * This ensures AI responds in the user's preferred language
  */
+export const FIXED_ENGLISH_HEADINGS = [
+  'System Vision', 'System Boundaries', 'Domain Model', 'Global Business Rules',
+  'Functional Feature Catalogue', 'Non-Functional Requirements',
+  'Error Handling & Recovery', 'Deployment & Infrastructure',
+  'Definition of Done', 'Out of Scope', 'Timeline & Milestones',
+  'Success Criteria & Acceptance Testing',
+].join(', ');
+
 export function getLanguageInstruction(language: string | null | undefined): string {
   if (!language || language === 'auto') {
-    return '\n\n**LANGUAGE INSTRUCTION**: Use the same language as the user-provided content for explanatory body text. Preserve all required heading labels exactly as specified by the prompt and do not translate fixed template headings.';
+    return `\n\n**LANGUAGE INSTRUCTION**: Detect the primary language of the user's project description (ignoring English section headings which are fixed template labels). Write ALL explanatory body text, feature descriptions, acceptance criteria, and narrative content in that detected language. The following H2 headings MUST remain in English exactly as written and MUST NOT be translated: ${FIXED_ENGLISH_HEADINGS}. Everything else (body text, bullet points, feature specs) must be in the detected language.`;
   }
-  
+
   if (language === 'de') {
-    return '\n\n**LANGUAGE INSTRUCTION**: Du MUSST alle erklaerenden Inhalte auf DEUTSCH schreiben. Behalte vorgegebene Abschnittstitel und feste Template-Headinglabels exakt in der vom Prompt geforderten Form (nicht uebersetzen).';
+    return `\n\n**LANGUAGE INSTRUCTION**: Du MUSST ALLE erklaerenden Inhalte, Feature-Beschreibungen, Akzeptanzkriterien und narrativen Text auf DEUTSCH schreiben. Die folgenden H2-Abschnittstitel MUESSEN exakt auf Englisch bleiben und DUERFEN NICHT uebersetzt werden: ${FIXED_ENGLISH_HEADINGS}. Alles andere (Fliesstext, Aufzaehlungen, Feature-Specs) MUSS auf Deutsch sein.`;
   }
-  
+
   if (language === 'en') {
-    return '\n\n**LANGUAGE INSTRUCTION**: You MUST write all explanatory body text in ENGLISH. Preserve required section headings exactly as specified in the prompt and do not translate fixed template heading labels.';
+    return `\n\n**LANGUAGE INSTRUCTION**: You MUST write ALL explanatory body text, feature descriptions, acceptance criteria, and narrative content in ENGLISH. The following H2 headings MUST remain exactly as written: ${FIXED_ENGLISH_HEADINGS}. All body content must be in English.`;
   }
-  
+
   // Fallback for other languages
-  return `\n\n**LANGUAGE INSTRUCTION**: Respond in ${language} language.`;
+  return `\n\n**LANGUAGE INSTRUCTION**: Write ALL body text in ${language}. The following H2 headings MUST remain in English exactly as written: ${FIXED_ENGLISH_HEADINGS}.`;
 }
 
 export const FEATURE_SPEC_TEMPLATE = `
