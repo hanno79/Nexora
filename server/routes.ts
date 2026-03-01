@@ -1507,7 +1507,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
   
   // Resume an existing guided session (e.g. after dialog close or page refresh)
-  app.post('/api/ai/guided-resume', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  app.post('/api/ai/guided-resume', isAuthenticated, aiRateLimiter, asyncHandler(async (req: AuthenticatedRequest, res) => {
     const { sessionId } = req.body;
     const userId = req.user.claims.sub;
 
@@ -1516,20 +1516,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     const service = getGuidedAiService();
-    const context = await service.getSessionState(sessionId, userId);
+    try {
+      const context = await service.getSessionState(sessionId, userId);
 
-    if (!context) {
-      return res.status(404).json({ message: "Session not found or expired" });
+      if (!context) {
+        return res.status(404).json({ message: "Session not found or expired" });
+      }
+
+      res.json({
+        sessionId,
+        roundNumber: context.roundNumber,
+        featureOverview: context.featureOverview,
+        workflowMode: context.workflowMode,
+        hasAnswers: context.answers.length > 0,
+        canFinalize: true,
+      });
+    } catch (error: any) {
+      if (error?.message?.includes('Forbidden')) {
+        return res.status(403).json({ message: "You do not have access to this session" });
+      }
+      throw error;
     }
-
-    res.json({
-      sessionId,
-      roundNumber: context.roundNumber,
-      featureOverview: context.featureOverview,
-      workflowMode: context.workflowMode,
-      hasAnswers: context.answers.length > 0,
-      canFinalize: true,
-    });
   }));
 
   // Process user answers - returns refined plan + optional follow-up questions
@@ -2065,25 +2072,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ÄNDERUNG 01.03.2026: Periodische Bereinigung mit Cleanup-Logik
   // Verhindert Memory Leaks bei Server-Restarts oder Hot-Reloads
   const GUIDED_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
-  const guidedCleanupIntervalId = setInterval(async () => {
+  const guidedCleanupTimer = setInterval(async () => {
     try {
       const service = getGuidedAiService();
       const removed = await service.cleanupExpiredSessions();
       if (removed > 0) {
-        console.log(`🧹 Cleaned up ${removed} expired guided sessions`);
+        logger.info(`🧹 Cleaned up ${removed} expired guided sessions`);
       }
     } catch (err) {
-      console.error('Guided session cleanup failed:', err);
+      logger.error('Guided session cleanup failed', { error: err });
     }
   }, GUIDED_CLEANUP_INTERVAL_MS);
 
   // Cleanup bei Server-Shutdown
   const cleanupGuidedInterval = () => {
-    clearInterval(guidedCleanupIntervalId);
-    console.log('🛑 Guided session cleanup interval stopped');
+    clearInterval(guidedCleanupTimer);
+    logger.info('🛑 Guided session cleanup interval stopped');
   };
-  process.on('SIGTERM', cleanupGuidedInterval);
-  process.on('SIGINT', cleanupGuidedInterval);
+  process.once('SIGTERM', cleanupGuidedInterval);
+  process.once('SIGINT', cleanupGuidedInterval);
 
   const httpServer = createServer(app);
   setupWebSocket(httpServer);

@@ -446,6 +446,7 @@ export const en = {
     resumeHint: "You have an unfinished guided session. Would you like to continue where you left off?",
     resumeButton: "Continue Session",
     startNew: "Start New",
+    elapsed: "elapsed",
   },
 
   onboarding: {

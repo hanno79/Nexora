@@ -1,11 +1,8 @@
 import { db } from './db';
 import { guidedSessions } from '@shared/schema';
-import { eq, and, lte, sql } from 'drizzle-orm';
+import { eq, and, lte, count } from 'drizzle-orm';
 
 export const DEFAULT_GUIDED_SESSION_TTL_MS = 30 * 60 * 1000;
-
-// ÄNDERUNG 01.03.2026: Context-Validator Typ fuer verbesserte Type Safety
-export type ContextValidator<TContext> = (value: unknown) => value is TContext;
 
 export type GuidedSessionAccessStatus = "ok" | "not_found" | "forbidden" | "expired";
 
@@ -208,14 +205,29 @@ export class DbGuidedSessionStore<TContext> implements GuidedSessionStorePort<TC
   }
 
   async cleanupExpired(): Promise<number> {
-    const result = await db.delete(guidedSessions)
+    // ÄNDERUNG 01.03.2026: Explizite Count-Query vor dem Löschen für treiber-unabhängige Zuverlässigkeit
+    const now = new Date();
+    const countResult = await db.select({ value: count() })
+      .from(guidedSessions)
       .where(
         and(
           eq(guidedSessions.status, 'active'),
-          lte(guidedSessions.expiresAt, new Date()),
+          lte(guidedSessions.expiresAt, now),
         )
       );
-    return (result as any).rowCount ?? 0;
+    const expiredCount = countResult[0]?.value ?? 0;
+
+    if (expiredCount > 0) {
+      await db.delete(guidedSessions)
+        .where(
+          and(
+            eq(guidedSessions.status, 'active'),
+            lte(guidedSessions.expiresAt, now),
+          )
+        );
+    }
+
+    return expiredCount;
   }
 
   private async access(

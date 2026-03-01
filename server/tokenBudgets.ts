@@ -7,15 +7,30 @@
  * Example: TOKEN_BUDGET_REPAIR_PASS=16000 overrides the default 12000.
  */
 
-// ÄNDERUNG 01.03.2026: Obergrenze fuer Token-Budgets hinzugefuegt
-// Verhindert unerwuenschte Konsequenzen bei falsch gesetzten Umgebungsvariablen
-const MAX_REASONABLE_BUDGET = 100000;
+import { logger } from './logger';
+
+// Maximale Obergrenze fuer Token-Budgets um unerwuenschte Konsequenzen
+// durch falsch gesetzte Umgebungsvariablen zu verhindern
+const MAX_REASONABLE_BUDGET = 50000;
 
 function budget(name: string, defaultValue: number): number {
-  const envVal = process.env[`TOKEN_BUDGET_${name}`];
+  const envVarName = `TOKEN_BUDGET_${name}`;
+  const envVal = process.env[envVarName];
   if (envVal) {
     const parsed = parseInt(envVal, 10);
-    if (!isNaN(parsed) && parsed > 0 && parsed <= MAX_REASONABLE_BUDGET) return parsed;
+    if (isNaN(parsed)) {
+      logger.warn(`[tokenBudgets] ${envVarName}="${envVal}" is not a valid number, using default ${defaultValue}`);
+      return defaultValue;
+    }
+    if (parsed <= 0) {
+      logger.warn(`[tokenBudgets] ${envVarName}=${parsed} is out of range (must be > 0), using default ${defaultValue}`);
+      return defaultValue;
+    }
+    if (parsed > MAX_REASONABLE_BUDGET) {
+      logger.warn(`[tokenBudgets] ${envVarName}=${parsed} exceeds MAX_REASONABLE_BUDGET (${MAX_REASONABLE_BUDGET}), using default ${defaultValue}`);
+      return defaultValue;
+    }
+    return parsed;
   }
   return defaultValue;
 }

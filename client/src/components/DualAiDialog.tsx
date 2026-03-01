@@ -12,6 +12,8 @@ import { Separator } from '@/components/ui/separator';
 import { GuidedAiDialog } from './GuidedAiDialog';
 import { useTranslation } from "@/lib/i18n";
 import { readSSEStream } from "@/lib/sseReader";
+import { formatElapsedTime } from "@/lib/utils";
+import { useElapsedTimer } from "@/hooks/useElapsedTimer";
 
 interface DualAiDialogProps {
   open: boolean;
@@ -51,9 +53,8 @@ export function DualAiDialog({
   const [totalIterations, setTotalIterations] = useState(0);
   const [showGuidedDialog, setShowGuidedDialog] = useState(false);
   const [progressDetail, setProgressDetail] = useState('');
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [totalTokensSoFar, setTotalTokensSoFar] = useState(0);
-  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const { elapsedSeconds, startTimer: startElapsedTimer, stopTimer: stopElapsedTimer, resetTimer: resetElapsedTimer } = useElapsedTimer();
 
   // KI-Benutzereinstellungen laden, um den Standard-Workflow-Modus zu setzen
   useEffect(() => {
@@ -137,39 +138,45 @@ export function DualAiDialog({
   };
 
   const handleSimpleGeneration = async () => {
-    const response = await fetchWithTimeout('/api/ai/generate-dual', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userInput: userInput.trim(),
-        existingContent: hasRealContent ? currentContent : undefined,
-        mode: hasRealContent ? 'improve' : 'generate',
-        prdId
-      }),
-      credentials: 'include',
-    }, iterativeTimeoutMinutes * 60 * 1000);
+    startElapsedTimer();
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || t.errors.generateFailed);
-    }
+    try {
+      const response = await fetchWithTimeout('/api/ai/generate-dual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userInput: userInput.trim(),
+          existingContent: hasRealContent ? currentContent : undefined,
+          mode: hasRealContent ? 'improve' : 'generate',
+          prdId
+        }),
+        credentials: 'include',
+      }, iterativeTimeoutMinutes * 60 * 1000);
 
-    const data = await response.json();
-    const finalContent = data.finalContent || data.mergedPRD || '';
-    if (!finalContent || !finalContent.trim()) {
-      throw new Error('AI returned no content. Please retry.');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || t.errors.generateFailed);
+      }
+
+      const data = await response.json();
+      const finalContent = data.finalContent || data.mergedPRD || '';
+      if (!finalContent || !finalContent.trim()) {
+        throw new Error('AI returned no content. Please retry.');
+      }
+
+      setGeneratorModel(data.generatorResponse.model);
+      setReviewerModel(data.reviewerResponse.model);
+      setCurrentStep('done');
+
+      onContentGenerated(finalContent, data);
+
+      setTimeout(() => {
+        onOpenChange(false);
+        resetState();
+      }, 1500);
+    } finally {
+      stopElapsedTimer();
     }
-    
-    setGeneratorModel(data.generatorResponse.model);
-    setReviewerModel(data.reviewerResponse.model);
-    setCurrentStep('done');
-    
-    onContentGenerated(finalContent, data);
-    
-    setTimeout(() => {
-      onOpenChange(false);
-      resetState();
-    }, 1500);
   };
 
   const handleIterativeGeneration = async () => {
@@ -179,12 +186,7 @@ export function DualAiDialog({
     setProgressDetail(t.dualAi.startingIterative);
     setCurrentStep('iterating');
 
-    // Timer für die verstrichene Zeit starten
-    const startTime = Date.now();
-    setElapsedSeconds(0);
-    elapsedTimerRef.current = setInterval(() => {
-      setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000));
-    }, 1000);
+    startElapsedTimer();
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -308,10 +310,7 @@ export function DualAiDialog({
         inactivityTimeout = null;
       }
       abortControllerRef.current = null;
-      if (elapsedTimerRef.current) {
-        clearInterval(elapsedTimerRef.current);
-        elapsedTimerRef.current = null;
-      }
+      stopElapsedTimer();
     }
   };
 
@@ -324,12 +323,8 @@ export function DualAiDialog({
     setCurrentIteration(0);
     setTotalIterations(0);
     setProgressDetail('');
-    setElapsedSeconds(0);
     setTotalTokensSoFar(0);
-    if (elapsedTimerRef.current) {
-      clearInterval(elapsedTimerRef.current);
-      elapsedTimerRef.current = null;
-    }
+    resetElapsedTimer();
   };
 
   const getStepIcon = () => {
@@ -497,11 +492,11 @@ export function DualAiDialog({
                 )}
               </div>
             )}
-            {/* Live-Statistiken für den Iterationsmodus */}
-            {currentStep === 'iterating' && (
+            {/* Live-Statistiken für den Simple Run und Iterationsmodus */}
+            {(currentStep === 'generating' || currentStep === 'iterating') && (
               <div className="flex items-center gap-4 px-3 text-xs text-muted-foreground">
                 {elapsedSeconds > 0 && (
-                  <span>{Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, '0')} {t.dualAi.elapsed}</span>
+                  <span>{formatElapsedTime(elapsedSeconds)} {t.dualAi.elapsed}</span>
                 )}
                 {totalTokensSoFar > 0 && (
                   <span>{totalTokensSoFar.toLocaleString()} {t.dualAi.tokens}</span>

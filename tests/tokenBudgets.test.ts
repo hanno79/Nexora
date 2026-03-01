@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 describe('tokenBudgets', () => {
-  const originalEnv = { ...process.env };
-
   afterEach(() => {
     // Restore environment
     for (const key of Object.keys(process.env)) {

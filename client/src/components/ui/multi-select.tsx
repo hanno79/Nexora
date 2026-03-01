@@ -33,9 +33,9 @@ export function MultiSelect({
   options,
   selected,
   onChange,
-  placeholder = "Auswählen...",
+  placeholder = "",
   label,
-  allLabel = "Alle",
+  allLabel = "",
   className,
   "data-testid": dataTestId,
 }: MultiSelectProps) {
@@ -48,15 +48,22 @@ export function MultiSelect({
     onChange(newSelected)
   }
 
-  const clearSelection = (e: React.MouseEvent) => {
+  const clearSelection = (e: React.MouseEvent | React.KeyboardEvent) => {
     e.stopPropagation()
     onChange([])
   }
 
+  const handleClearKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      clearSelection(e)
+    }
+  }
+
   const displayText = selected.length === 0
-    ? allLabel
+    ? allLabel || label
     : selected.length === 1
-      ? options.find((o) => o.value === selected[0])?.label || placeholder
+      ? options.find((o) => o.value === selected[0])?.label || placeholder || label
       : `${label} (${selected.length})`
 
   return (
@@ -78,8 +85,12 @@ export function MultiSelect({
             {selected.length > 0 && (
               <Badge
                 variant="secondary"
-                className="h-5 px-1.5 text-xs font-medium"
+                className="h-5 px-1.5 text-xs font-medium cursor-pointer hover:bg-secondary/80"
                 onClick={clearSelection}
+                onKeyDown={handleClearKeyDown}
+                tabIndex={0}
+                role="button"
+                aria-label={`${selected.length} ausgewählt - Klicken zum Zurücksetzen`}
               >
                 {selected.length}
                 <X className="ml-1 h-3 w-3" />
@@ -117,7 +128,7 @@ export function MultiSelect({
             )
           })}
         </div>
-        {selected.length > 0 && (
+        {selected.length > 0 && allLabel && (
           <Button
             variant="ghost"
             size="sm"

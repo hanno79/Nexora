@@ -90,30 +90,46 @@ test.describe("Dashboard Filter", () => {
     expect(statusFontSize).toBe(templateFontSize);
   });
 
-  test("Filter sollten zurueckgesetzt werden koennen", async ({ page }) => {
+  test("Filter sollte durch Badge-Klick zurueckgesetzt werden koennen", async ({ page }) => {
     // Waehle Status-Filter aus
     const statusFilter = page.locator('[data-testid="status-filter"]');
     await statusFilter.click();
     await page.getByText("Entwurf").first().click();
     await page.keyboard.press("Escape");
     
-    // Warte kurz auf UI-Update
-    await page.waitForTimeout(100);
+    // Warte bis das Badge erscheint (UI-Update nach Filter-Auswahl)
+    await page.waitForSelector('[data-testid="status-filter"] [class*="badge"]', { timeout: 5000 });
     
-    // Prüfe, dass etwas ausgewaehlt ist (Badge mit "1" sollte sichtbar sein)
+    // Prüfe, dass das Badge sichtbar ist
     const badge = statusFilter.locator('[class*="badge"]').first();
-    if (await badge.isVisible().catch(() => false)) {
-      // Klicke auf den Badge um zurückzusetzen
-      await badge.click();
-    } else {
-      // Oeffne Filter und waehle "Alle"
-      await statusFilter.click();
-      // Suche nach "Alle" im Dropdown
-      const alleOption = page.getByText("Alle").first();
-      if (await alleOption.isVisible().catch(() => false)) {
-        await alleOption.click();
-      }
-      await page.keyboard.press("Escape");
-    }
+    await expect(badge).toBeVisible();
+    
+    // Klicke auf den Badge um zurückzusetzen
+    await badge.click();
+    
+    // Prüfe, dass das Badge nicht mehr sichtbar ist (Filter wurde zurückgesetzt)
+    await expect(badge).not.toBeVisible();
+  });
+
+  test("Filter sollte durch Alle-Option zurueckgesetzt werden koennen", async ({ page }) => {
+    // Waehle Status-Filter aus
+    const statusFilter = page.locator('[data-testid="status-filter"]');
+    await statusFilter.click();
+    await page.getByText("Entwurf").first().click();
+    await page.keyboard.press("Escape");
+    
+    // Öffne Filter erneut
+    await statusFilter.click();
+    
+    // Suche nach "Alle" im Dropdown und prüfe Sichtbarkeit
+    const alleOption = page.getByText("Alle").first();
+    await expect(alleOption).toBeVisible();
+    
+    // Klicke auf "Alle" um zurückzusetzen
+    await alleOption.click();
+    await page.keyboard.press("Escape");
+    
+    // Prüfe, dass wieder "Alle" als Text angezeigt wird
+    await expect(statusFilter).toContainText("Alle");
   });
 });

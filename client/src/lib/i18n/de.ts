@@ -448,6 +448,7 @@ export const de: Translations = {
     resumeHint: "Sie haben eine unfertige geführte Sitzung. Möchten Sie dort weitermachen, wo Sie aufgehört haben?",
     resumeButton: "Sitzung fortsetzen",
     startNew: "Neu starten",
+    elapsed: "vergangen",
   },
 
   onboarding: {

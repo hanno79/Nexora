@@ -11,6 +11,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useTranslation } from "@/lib/i18n";
+import { formatElapsedTime } from "@/lib/utils";
+import { useElapsedTimer } from "@/hooks/useElapsedTimer";
 
 interface GuidedQuestion {
   id: string;
@@ -91,6 +93,7 @@ export function GuidedAiDialog({
   const [refinedPlan, setRefinedPlan] = useState('');
   const [modelsUsed, setModelsUsed] = useState<string[]>([]);
   const [resumableSessionId, setResumableSessionId] = useState<string | null>(null);
+  const { elapsedSeconds, startTimer: startElapsedTimer, stopTimer: stopElapsedTimer, resetTimer: resetElapsedTimer } = useElapsedTimer();
   const hasExistingContent = typeof existingContent === 'string' && existingContent.trim().length > 0;
   const minimumIdeaLength = hasExistingContent ? 3 : 10;
   const effectiveProjectIdea = (projectIdea.trim().length > 0 ? projectIdea : initialProjectIdea).trim();
@@ -121,12 +124,16 @@ export function GuidedAiDialog({
     setModelsUsed([]);
     setHasAutoStarted(false);
     setResumableSessionId(null);
+    resetElapsedTimer();
     clearSessionFromStorage();
   };
 
   const executeStart = async (idea: string) => {
     setStep('analyzing');
     setError('');
+
+    // Timer für die verstrichene Zeit starten
+    startElapsedTimer();
 
     try {
       const signal = createAbortSignal();
@@ -163,7 +170,10 @@ export function GuidedAiDialog({
       console.error('Error starting guided workflow:', err);
       setError(err.message || 'Failed to analyze project idea');
       setStep('input');
+      // Timer nur bei Fehler stoppen - läuft sonst bis Workflow-Ende
+      stopElapsedTimer();
     }
+    // Timer läuft weiter für processing/finalizing steps
   };
 
   const handleStartWithIdea = useCallback(async (idea: string) => {
@@ -200,6 +210,7 @@ export function GuidedAiDialog({
       });
       if (!response.ok) {
         // Session expired or not found — fall back to fresh start
+        setError('Previous session expired — starting a new session');
         clearSessionFromStorage();
         setResumableSessionId(null);
         setStep('input');
@@ -212,6 +223,7 @@ export function GuidedAiDialog({
       // Resume directly to finalize since we can't replay questions
       await handleFinalize(data.sessionId);
     } catch (err: any) {
+      setError('Previous session expired — starting a new session');
       clearSessionFromStorage();
       setResumableSessionId(null);
       setStep('input');
@@ -337,6 +349,7 @@ export function GuidedAiDialog({
 
       const data = await response.json();
       setStep('done');
+      stopElapsedTimer();
       clearSessionFromStorage();
       if (data.modelsUsed) setModelsUsed(data.modelsUsed);
 
@@ -388,6 +401,7 @@ export function GuidedAiDialog({
 
       const data = await response.json();
       setStep('done');
+      stopElapsedTimer();
       if (data.modelsUsed) setModelsUsed(data.modelsUsed);
       
       onContentGenerated(data.prdContent, {
@@ -512,6 +526,11 @@ export function GuidedAiDialog({
                   <div className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '0.2s' }} />
                   <div className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '0.4s' }} />
                 </div>
+                {elapsedSeconds > 0 && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {formatElapsedTime(elapsedSeconds)} {t.guidedAi.elapsed}
+                  </p>
+                )}
               </div>
             )}
 
@@ -603,6 +622,11 @@ export function GuidedAiDialog({
                   <div className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '0.2s' }} />
                   <div className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '0.4s' }} />
                 </div>
+                {elapsedSeconds > 0 && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {formatElapsedTime(elapsedSeconds)} {t.guidedAi.elapsed}
+                  </p>
+                )}
               </div>
             )}
 
@@ -617,6 +641,11 @@ export function GuidedAiDialog({
                   <div className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '0.2s' }} />
                   <div className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '0.4s' }} />
                 </div>
+                {elapsedSeconds > 0 && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {formatElapsedTime(elapsedSeconds)} {t.guidedAi.elapsed}
+                  </p>
+                )}
               </div>
             )}
 

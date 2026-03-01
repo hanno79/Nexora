@@ -66,7 +66,13 @@ export class GuidedAiService {
   async getSessionState(sessionId: string, userId: string): Promise<ConversationContext | null> {
     const authenticatedUserId = this.requireAuthenticatedUserId(userId);
     const session = await this.conversationContexts.get(sessionId, authenticatedUserId);
-    return session.status === 'ok' ? session.context ?? null : null;
+    if (session.status === 'ok') {
+      return session.context ?? null;
+    }
+    if (session.status === 'forbidden') {
+      throw new Error('Forbidden: You do not have access to this session');
+    }
+    return null;
   }
 
   async cleanupExpiredSessions(): Promise<number> {
