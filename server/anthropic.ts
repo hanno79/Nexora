@@ -1,6 +1,7 @@
 // Anthropic AI integration - from javascript_anthropic blueprint
 import Anthropic from '@anthropic-ai/sdk';
 import { logger } from "./logger";
+import { ANTHROPIC_PRD_GENERATION } from './tokenBudgets';
 
 /*
 <important_code_snippet_instructions>
@@ -36,7 +37,7 @@ When generating content:
 
   try {
     const message = await anthropic.messages.create({
-      max_tokens: 4000,
+      max_tokens: ANTHROPIC_PRD_GENERATION,
       messages: [
         { role: 'user', content: userPrompt }
       ],

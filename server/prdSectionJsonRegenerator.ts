@@ -1,6 +1,7 @@
 import type { PRDStructure } from './prdStructure';
 import type { SectionUpdateResult } from './prdJsonSchemas';
 import type { OpenRouterClient } from './openrouter';
+import { SECTION_REGENERATION } from './tokenBudgets';
 
 const MAX_JSON_RETRIES = 3;
 
@@ -109,7 +110,7 @@ Return JSON only.`;
         'reviewer',
         JSON_REGEN_SYSTEM_PROMPT + langInstruction,
         userPrompt,
-        2000,
+        SECTION_REGENERATION,
         { type: 'json_object' },
         temperature
       );

@@ -1,19 +1,17 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Plus, FileText, Search as SearchIcon, Clock, CheckCircle2, Send, Sparkles, ExternalLink, Filter } from "lucide-react";
+import { Plus, FileText, Search as SearchIcon, Clock, CheckCircle2, Send, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Checkbox } from "@/components/ui/checkbox";
 import { TopBar } from "@/components/TopBar";
 import { EmptyState } from "@/components/EmptyState";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { QueryError } from "@/components/QueryError";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Badge } from "@/components/ui/badge";
 import { OnboardingDialog } from "@/components/OnboardingDialog";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MultiSelect, type MultiSelectOption } from "@/components/ui/multi-select";
+import { Badge } from "@/components/ui/badge";
 import type { Prd } from "@shared/schema";
 import { formatDistance } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
@@ -33,8 +31,8 @@ interface DashboardStats {
 export default function Dashboard() {
   const [, navigate] = useLocation();
   const loginPath = getLoginPath();
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [selectedTemplateIds, setSelectedTemplateIds] = useState<Set<string>>(new Set());
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
+  const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [showOnboarding, setShowOnboarding] = useState(false);
   const { toast } = useToast();
@@ -73,11 +71,11 @@ export default function Dashboard() {
   }, [error, loginPath, toast]);
 
   const filteredPrds = prds?.filter((prd) => {
-    const matchesStatus = statusFilter === "all" || prd.status === statusFilter;
+    const matchesStatus = selectedStatuses.length === 0 || selectedStatuses.includes(prd.status);
     const matchesSearch = prd.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       prd.description?.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesTemplate = selectedTemplateIds.size === 0 ||
-      (prd.templateId ? selectedTemplateIds.has(prd.templateId) : selectedTemplateIds.has("__none__"));
+    const matchesTemplate = selectedTemplateIds.length === 0 ||
+      (prd.templateId ? selectedTemplateIds.includes(prd.templateId) : selectedTemplateIds.includes("__none__"));
     return matchesStatus && matchesSearch && matchesTemplate;
   });
 
@@ -226,81 +224,40 @@ export default function Dashboard() {
 
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-3 mb-8">
-          <Tabs value={statusFilter} onValueChange={setStatusFilter}>
-            <TabsList>
-              <TabsTrigger value="all" data-testid="tab-all">{t.dashboard.filters.all}</TabsTrigger>
-              <TabsTrigger value="draft" data-testid="tab-draft">{t.dashboard.filters.draft}</TabsTrigger>
-              <TabsTrigger value="in-progress" data-testid="tab-in-progress">{t.dashboard.filters.inProgress}</TabsTrigger>
-              <TabsTrigger value="review" data-testid="tab-review">{t.dashboard.filters.review}</TabsTrigger>
-              <TabsTrigger value="completed" data-testid="tab-completed">{t.dashboard.filters.completed}</TabsTrigger>
-            </TabsList>
-          </Tabs>
+          {/* Status Filter */}
+          <MultiSelect
+            options={[
+              { value: "draft", label: t.dashboard.filters.draft },
+              { value: "in-progress", label: t.dashboard.filters.inProgress },
+              { value: "review", label: t.dashboard.filters.review },
+              { value: "completed", label: t.dashboard.filters.completed },
+            ]}
+            selected={selectedStatuses}
+            onChange={setSelectedStatuses}
+            label={t.common.filter}
+            placeholder={t.common.filter}
+            allLabel={t.dashboard.filters.all}
+            data-testid="status-filter"
+          />
 
           {/* Template Filter */}
           {templates.length > 0 && (
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-2" data-testid="template-filter-trigger">
-                  <Filter className="w-4 h-4" />
-                  {t.dashboard.templateFilter}
-                  {selectedTemplateIds.size > 0 && (
-                    <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-xs">
-                      {selectedTemplateIds.size}
-                    </Badge>
-                  )}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-64 p-3" align="start">
-                <div className="space-y-1 max-h-64 overflow-y-auto">
-                  {templates.map((template) => {
-                    const Icon = getTemplateIcon(template.category);
-                    return (
-                      <label key={template.id} className="flex items-center gap-2 cursor-pointer py-1.5 px-1 rounded hover:bg-muted/50">
-                        <Checkbox
-                          checked={selectedTemplateIds.has(template.id)}
-                          onCheckedChange={(checked) => {
-                            setSelectedTemplateIds(prev => {
-                              const next = new Set(prev);
-                              if (checked) next.add(template.id);
-                              else next.delete(template.id);
-                              return next;
-                            });
-                          }}
-                        />
-                        <Icon className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                        <span className="text-sm truncate">{getTemplateName(template)}</span>
-                      </label>
-                    );
-                  })}
-                  <label className="flex items-center gap-2 cursor-pointer py-1.5 px-1 rounded hover:bg-muted/50">
-                    <Checkbox
-                      checked={selectedTemplateIds.has("__none__")}
-                      onCheckedChange={(checked) => {
-                        setSelectedTemplateIds(prev => {
-                          const next = new Set(prev);
-                          if (checked) next.add("__none__");
-                          else next.delete("__none__");
-                          return next;
-                        });
-                      }}
-                    />
-                    <span className="text-sm text-muted-foreground italic">
-                      {t.dashboard.noTemplate}
-                    </span>
-                  </label>
-                </div>
-                {selectedTemplateIds.size > 0 && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full mt-2"
-                    onClick={() => setSelectedTemplateIds(new Set())}
-                  >
-                    {t.dashboard.templateFilterAll}
-                  </Button>
-                )}
-              </PopoverContent>
-            </Popover>
+            <MultiSelect
+              options={[
+                ...templates.map((template) => ({
+                  value: template.id,
+                  label: getTemplateName(template),
+                  icon: getTemplateIcon(template.category),
+                })),
+                { value: "__none__", label: t.dashboard.noTemplate },
+              ]}
+              selected={selectedTemplateIds}
+              onChange={setSelectedTemplateIds}
+              label={t.dashboard.templateFilter}
+              placeholder={t.dashboard.templateFilter}
+              allLabel={t.dashboard.templateFilterAll}
+              data-testid="template-filter"
+            />
           )}
         </div>
 
@@ -308,7 +265,7 @@ export default function Dashboard() {
         {isLoading ? (
           <LoadingSpinner className="py-20" />
         ) : !filteredPrds || filteredPrds.length === 0 ? (
-          searchQuery || statusFilter !== "all" || selectedTemplateIds.size > 0 ? (
+          searchQuery || selectedStatuses.length > 0 || selectedTemplateIds.length > 0 ? (
             <EmptyState
               icon={SearchIcon}
               title={t.dashboard.noPrdsFound}

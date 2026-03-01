@@ -259,6 +259,24 @@ export const insertAiUsageSchema = createInsertSchema(aiUsage, {
 
 export type InsertAiUsage = z.infer<typeof insertAiUsageSchema>;
 
+// Guided AI Session persistence table
+export const guidedSessions = pgTable("guided_sessions", {
+  id: varchar("id").primaryKey(),
+  ownerUserId: varchar("owner_user_id").notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  context: jsonb("context").notNull(),
+  status: varchar("status").notNull().default('active'),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_guidedSessions_owner").on(table.ownerUserId),
+  index("idx_guidedSessions_status_expires").on(table.status, table.expiresAt),
+]);
+
+export type GuidedSession = typeof guidedSessions.$inferSelect;
+export type InsertGuidedSession = typeof guidedSessions.$inferInsert;
+
 // Define relations
 export const usersRelations = relations(users, ({ many }) => ({
   prds: many(prds),
@@ -266,6 +284,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   sharedPrds: many(sharedPrds),
   comments: many(comments),
   requestedApprovals: many(approvals),
+  guidedSessions: many(guidedSessions),
 }));
 
 export const prdsRelations = relations(prds, ({ one, many }) => ({
@@ -342,6 +361,13 @@ export const aiUsageRelations = relations(aiUsage, ({ one }) => ({
   }),
   user: one(users, {
     fields: [aiUsage.userId],
+    references: [users.id],
+  }),
+}));
+
+export const guidedSessionsRelations = relations(guidedSessions, ({ one }) => ({
+  owner: one(users, {
+    fields: [guidedSessions.ownerUserId],
     references: [users.id],
   }),
 }));

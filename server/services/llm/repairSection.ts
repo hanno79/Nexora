@@ -10,6 +10,7 @@
  */
 
 import type { OpenRouterClient } from '../../openrouter';
+import { FEATURE_REPAIR } from '../../tokenBudgets';
 
 // Die 10 kanonischen Sektionen in exakter Reihenfolge
 const REQUIRED_SECTIONS: { num: number; title: string }[] = [
@@ -234,7 +235,7 @@ export async function repairFeatureViaLLM(
       'reviewer',
       STRICT_STRUCTURE_PROMPT,
       'INPUT FEATURE:\n\n' + rawContent,
-      3000
+      FEATURE_REPAIR
     );
 
     return result.content.trim();

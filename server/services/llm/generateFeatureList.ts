@@ -1,5 +1,6 @@
 import type { OpenRouterClient } from '../../openrouter';
 import type { TokenUsage } from "@shared/schema";
+import { FEATURE_LIST_GENERATION } from '../../tokenBudgets';
 
 const FEATURE_IDENTIFICATION_PROMPT = `You are part of the Nexora Requirements Compiler.
 
@@ -105,7 +106,7 @@ export async function generateFeatureList(
       'generator',
       systemPrompt,
       userPrompt,
-      4000
+      FEATURE_LIST_GENERATION
     );
 
     const validation = validateFeatureList(result.content);

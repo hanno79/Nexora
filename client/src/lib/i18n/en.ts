@@ -442,6 +442,10 @@ export const en = {
     continue: "Continue",
     done: "Done",
     round: "Round",
+    resumeSession: "Resume Previous Session",
+    resumeHint: "You have an unfinished guided session. Would you like to continue where you left off?",
+    resumeButton: "Continue Session",
+    startNew: "Start New",
   },
 
   onboarding: {

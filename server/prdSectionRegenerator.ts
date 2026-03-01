@@ -1,6 +1,7 @@
 import type { PRDStructure } from './prdStructure';
 import type { OpenRouterClient } from './openrouter';
 import { logger } from './logger';
+import { SECTION_REGENERATION } from './tokenBudgets';
 
 interface SectionPattern {
   regex: RegExp;
@@ -226,7 +227,7 @@ Regenerate ONLY the "${displayName}" section content. Incorporate the feedback. 
     'reviewer',
     SECTION_REGEN_SYSTEM_PROMPT + langInstruction,
     userPrompt,
-    2000
+    SECTION_REGENERATION
   );
 
   const content = result.content.trim();

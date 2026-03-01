@@ -17,7 +17,7 @@ import { getLanguageInstruction } from './dualAiPrompts';
 import { db } from './db';
 import { users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
-import { GuidedSessionStore } from './guidedSessionStore';
+import { DbGuidedSessionStore, type GuidedSessionStorePort } from './guidedSessionStore';
 import { logger } from './logger';
 import { finalizeWithCompilerGates, PrdCompilerQualityError } from './prdCompilerFinalizer';
 import { pickNextFallbackModel, pickBestDegradedResult } from './prdQualityFallback';
@@ -28,6 +28,14 @@ import { runFeatureExpansionPipeline } from './prdFeatureExpansion';
 import { runPostCompilerPreservation } from './prdFeaturePreservation';
 import { parsePRDToStructure } from './prdParser';
 import type { PRDStructure } from './prdStructure';
+import {
+  FEATURE_ANALYSIS,
+  GUIDED_QUESTIONS,
+  GUIDED_REFINEMENT,
+  GUIDED_FOLLOWUP,
+  PRD_FINAL_GENERATION,
+  REPAIR_PASS,
+} from './tokenBudgets';
 
 interface ConversationContext {
   projectIdea: string;
@@ -49,7 +57,21 @@ interface GuidedGenerationResult {
 const SESSION_NOT_AVAILABLE_MESSAGE = 'Session not found or expired. Please start a new guided workflow.';
 
 export class GuidedAiService {
-  private conversationContexts: GuidedSessionStore<ConversationContext> = new GuidedSessionStore();
+  private conversationContexts: GuidedSessionStorePort<ConversationContext>;
+
+  constructor(store?: GuidedSessionStorePort<ConversationContext>) {
+    this.conversationContexts = store ?? new DbGuidedSessionStore();
+  }
+
+  async getSessionState(sessionId: string, userId: string): Promise<ConversationContext | null> {
+    const authenticatedUserId = this.requireAuthenticatedUserId(userId);
+    const session = await this.conversationContexts.get(sessionId, authenticatedUserId);
+    return session.status === 'ok' ? session.context ?? null : null;
+  }
+
+  async cleanupExpiredSessions(): Promise<number> {
+    return this.conversationContexts.cleanupExpired();
+  }
 
   async startGuidedWorkflow(
     projectIdea: string,
@@ -103,7 +125,7 @@ Analyze what should be preserved and what should be improved. Focus on concrete 
       'generator',
       FEATURE_ANALYSIS_PROMPT + langInstruction,
       analysisInput,
-      3000
+      FEATURE_ANALYSIS
     );
 
     const featureOverview = analysisResult.content;
@@ -121,7 +143,7 @@ Analyze what should be preserved and what should be improved. Focus on concrete 
       'reviewer',
       USER_QUESTION_PROMPT + langInstruction,
       questionContext,
-      2500
+      GUIDED_QUESTIONS
     );
 
     logger.debug('Guided workflow questions generated', {
@@ -133,7 +155,7 @@ Analyze what should be preserved and what should be improved. Focus on concrete 
 
     // Create session ID and store context
     const sessionId = this.generateSessionId();
-    this.conversationContexts.create(sessionId, authenticatedUserId, {
+    await this.conversationContexts.create(sessionId, authenticatedUserId, {
       projectIdea,
       featureOverview,
       answers: [],
@@ -158,7 +180,7 @@ Analyze what should be preserved and what should be improved. Focus on concrete 
     userId: string
   ): Promise<GuidedAnswerResponse> {
     const authenticatedUserId = this.requireAuthenticatedUserId(userId);
-    const context = this.getSessionContextOrThrow(sessionId, authenticatedUserId);
+    const context = await this.getSessionContextOrThrow(sessionId, authenticatedUserId);
 
     const { client, contentLanguage } = await createClientWithUserPreferences(authenticatedUserId);
     const resolvedLanguage = detectContentLanguage(
@@ -240,7 +262,7 @@ ${buildTemplateInstruction(context.templateCategory, resolvedLanguage)}`;
       'generator',
       FEATURE_REFINEMENT_PROMPT + langInstruction,
       refinementInput,
-      4000
+      GUIDED_REFINEMENT
     );
 
     context.featureOverview = refinementResult.content;
@@ -253,6 +275,9 @@ ${buildTemplateInstruction(context.templateCategory, resolvedLanguage)}`;
     const maxRounds = userPrefs?.guidedQuestionRounds || 3;
     context.roundNumber++;
 
+    // Persist mutated context back to store (answers, featureOverview, roundNumber)
+    await this.conversationContexts.update(sessionId, authenticatedUserId, context);
+
     if (context.roundNumber <= maxRounds) {
       // Generate follow-up questions
       logger.debug('Guided workflow generating follow-up questions');
@@ -261,7 +286,7 @@ ${buildTemplateInstruction(context.templateCategory, resolvedLanguage)}`;
         'reviewer',
         GENERATE_FOLLOWUP_QUESTIONS_PROMPT + langInstruction,
         `Current refined plan:\n${refinementResult.content}\n\nPrevious answers:\n${formattedAnswers}\n\nGenerate 2-3 follow-up questions to further refine the product.`,
-        2000
+        GUIDED_FOLLOWUP
       );
 
       const parsedFollowUp = this.parseQuestionsResponse(followUpResult.content);
@@ -302,7 +327,7 @@ ${buildTemplateInstruction(context.templateCategory, resolvedLanguage)}`;
     }
   ): Promise<GuidedFinalizeResponse> {
     const authenticatedUserId = this.requireAuthenticatedUserId(userId);
-    const context = this.consumeSessionContextOrThrow(sessionId, authenticatedUserId);
+    const context = await this.consumeSessionContextOrThrow(sessionId, authenticatedUserId);
 
     const { client, contentLanguage } = await createClientWithUserPreferences(authenticatedUserId);
     const resolvedLanguage = detectContentLanguage(
@@ -381,7 +406,7 @@ Generate a complete, professional PRD that incorporates all gathered requirement
       };
     } catch (error) {
       // Restore session context on failure so users can retry finalize.
-      this.conversationContexts.create(sessionId, authenticatedUserId, context);
+      await this.conversationContexts.create(sessionId, authenticatedUserId, context);
       throw error;
     }
   }
@@ -427,7 +452,7 @@ ${normalizedExistingContent}`
       'generator',
       FEATURE_ANALYSIS_PROMPT + langInstruction,
       analysisInput,
-      3000
+      FEATURE_ANALYSIS
     );
 
     // Then generate the full PRD
@@ -501,7 +526,7 @@ Generate a complete, professional PRD.`;
       'generator',
       systemPrompt,
       userPrompt,
-      10000
+      PRD_FINAL_GENERATION
     );
     modelsUsed.add(generationResult.model);
     totalTokens += generationResult.usage.total_tokens;
@@ -546,7 +571,7 @@ Generate a complete, professional PRD.`;
           'generator',
           systemPrompt,
           repairPrompt,
-          12000
+          REPAIR_PASS
         );
         return {
           content: repairResult.content,
@@ -583,7 +608,7 @@ Generate a complete, professional PRD.`;
           'generator',
           systemPrompt,
           userPrompt,
-          10000
+          PRD_FINAL_GENERATION
         );
         modelsUsed.add(fallbackDraft.model);
         totalTokens += fallbackDraft.usage.total_tokens;
@@ -752,16 +777,16 @@ Generate a complete, professional PRD.`;
     return userId;
   }
 
-  private getSessionContextOrThrow(sessionId: string, userId: string): ConversationContext {
-    const session = this.conversationContexts.get(sessionId, userId);
+  private async getSessionContextOrThrow(sessionId: string, userId: string): Promise<ConversationContext> {
+    const session = await this.conversationContexts.get(sessionId, userId);
     if (session.status !== 'ok' || !session.context) {
       throw new Error(SESSION_NOT_AVAILABLE_MESSAGE);
     }
     return session.context;
   }
 
-  private consumeSessionContextOrThrow(sessionId: string, userId: string): ConversationContext {
-    const session = this.conversationContexts.consume(sessionId, userId);
+  private async consumeSessionContextOrThrow(sessionId: string, userId: string): Promise<ConversationContext> {
+    const session = await this.conversationContexts.consume(sessionId, userId);
     if (session.status !== 'ok' || !session.context) {
       throw new Error(SESSION_NOT_AVAILABLE_MESSAGE);
     }

@@ -1506,6 +1506,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(result);
   }));
   
+  // Resume an existing guided session (e.g. after dialog close or page refresh)
+  app.post('/api/ai/guided-resume', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const { sessionId } = req.body;
+    const userId = req.user.claims.sub;
+
+    if (!sessionId || typeof sessionId !== 'string') {
+      return res.status(400).json({ message: "Session ID is required" });
+    }
+
+    const service = getGuidedAiService();
+    const context = await service.getSessionState(sessionId, userId);
+
+    if (!context) {
+      return res.status(404).json({ message: "Session not found or expired" });
+    }
+
+    res.json({
+      sessionId,
+      roundNumber: context.roundNumber,
+      featureOverview: context.featureOverview,
+      workflowMode: context.workflowMode,
+      hasAnswers: context.answers.length > 0,
+      canFinalize: true,
+    });
+  }));
+
   // Process user answers - returns refined plan + optional follow-up questions
   app.post('/api/ai/guided-answer', isAuthenticated, aiRateLimiter, asyncHandler(async (req: AuthenticatedRequest, res) => {
     if (!isOpenRouterConfigured()) {
@@ -2035,6 +2061,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     res.json(result);
   }));
+
+  // Periodically clean up expired guided sessions (every 15 minutes)
+  const GUIDED_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
+  setInterval(async () => {
+    try {
+      const service = getGuidedAiService();
+      const removed = await service.cleanupExpiredSessions();
+      if (removed > 0) {
+        console.log(`🧹 Cleaned up ${removed} expired guided sessions`);
+      }
+    } catch (err) {
+      console.error('Guided session cleanup failed:', err);
+    }
+  }, GUIDED_CLEANUP_INTERVAL_MS);
 
   const httpServer = createServer(app);
   setupWebSocket(httpServer);

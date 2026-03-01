@@ -3,6 +3,17 @@ import { createClientWithUserPreferences } from './openrouter';
 import type { OpenRouterClient } from './openrouter';
 import { detectContentLanguage } from './prdLanguageDetector';
 import { runFeatureExpansionPipeline, extractVisionFromContent } from './prdFeatureExpansion';
+import {
+  PRD_GENERATION,
+  PRD_IMPROVEMENT,
+  REVIEW_STANDARD,
+  REVIEW_FINAL,
+  REPAIR_PASS,
+  ITERATIVE_ANSWERER,
+  ITERATIVE_ANSWERER_RETRY,
+  ITERATIVE_CLARIFYING_Q,
+  ITERATIVE_STRUCTURED_DELTA,
+} from './tokenBudgets';
 import { runPostCompilerPreservation } from './prdFeaturePreservation';
 import type { TokenUsage } from "@shared/schema";
 import {
@@ -190,7 +201,7 @@ Create an improved version that incorporates the new requirements while keeping 
         'generator',
         GENERATOR_SYSTEM_PROMPT + langInstruction,
         generatorPrompt,
-        8000  // Increased for comprehensive PRDs
+        PRD_GENERATION
       );
 
       generatorResponse = {
@@ -250,7 +261,7 @@ Create an improved version that incorporates the new requirements while keeping 
       'reviewer',
       REVIEWER_SYSTEM_PROMPT + langInstruction,
       reviewerPrompt,
-      3000  // Increased for detailed review with 5-10 questions
+      REVIEW_STANDARD
     );
 
     // Parse review response
@@ -277,7 +288,7 @@ Create an improved version that incorporates the new requirements while keeping 
         'generator',
         IMPROVEMENT_SYSTEM_PROMPT + langInstruction,
         improvementPrompt,
-        10000  // Increased significantly for complete PRD improvements (2-3x original length)
+        PRD_IMPROVEMENT
       );
 
       improvedVersion = {
@@ -311,7 +322,7 @@ Create an improved version that incorporates the new requirements while keeping 
           'generator',
           repairSystemPrompt,
           repairPrompt,
-          12000
+          REPAIR_PASS
         );
         return {
           content: repairResult.content,
@@ -350,7 +361,7 @@ Create an improved version that incorporates the new requirements while keeping 
           'generator',
           GENERATOR_SYSTEM_PROMPT + langInstruction,
           generatorPrompt || `Erstelle ein vollständiges PRD basierend auf:\n\n${userInput}`,
-          8000
+          PRD_GENERATION
         );
         compilerFinalized = await finalizeWithCompilerGates({
           initialResult: {
@@ -446,7 +457,7 @@ Create an improved version that incorporates the new requirements while keeping 
       'reviewer',
       REVIEWER_SYSTEM_PROMPT + langInstruction,
       reviewerPrompt,
-      3000  // Increased for detailed review with 5-10 questions
+      REVIEW_STANDARD
     );
 
     const questions = this.extractQuestions(reviewResult.content);
@@ -1016,7 +1027,7 @@ Your task:
         'generator',
         ITERATIVE_GENERATOR_PROMPT + opts.langInstruction,
         generatorPrompt,
-        8000
+        PRD_GENERATION
       );
 
       state.modelsUsed.add(genResult.model);
@@ -1191,7 +1202,7 @@ Your task:
       'reviewer',  // Using reviewer model for answerer role
       BEST_PRACTICE_ANSWERER_PROMPT + opts.langInstruction,
       answererPrompt,
-      5500  // Larger budget to reduce truncation risk
+      ITERATIVE_ANSWERER
     );
 
     state.modelsUsed.add(answerResult.model);
@@ -1205,7 +1216,7 @@ Your task:
         'reviewer',
         BEST_PRACTICE_ANSWERER_PROMPT + opts.langInstruction,
         retryPrompt,
-        7000
+        ITERATIVE_ANSWERER_RETRY
       );
       state.modelsUsed.add(retryResult.model);
       const retryTruncated = this.looksLikeTruncatedOutput(retryResult.content);
@@ -1494,7 +1505,7 @@ Your task:
         'reviewer',
         FINAL_REVIEWER_PROMPT + opts.langInstruction,
         finalReviewerPrompt,
-        6000
+        REVIEW_FINAL
       );
 
       state.modelsUsed.add(reviewResult.model);
@@ -1881,7 +1892,7 @@ Your task:
         'reviewer',
         REVIEWER_SYSTEM_PROMPT + langInstruction,
         prompt,
-        1500
+        ITERATIVE_CLARIFYING_Q
       );
       const lines = result.content.split('\n').map(l => l.trim()).filter(Boolean);
       const parsed: string[] = [];
@@ -3231,7 +3242,7 @@ Return JSON only.`;
         'reviewer',
         systemPrompt + langInstruction,
         userPrompt,
-        1200
+        ITERATIVE_STRUCTURED_DELTA
       );
 
       const parsed = this.parseLooseJsonObject(result.content);

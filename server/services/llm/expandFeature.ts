@@ -1,6 +1,7 @@
 import type { OpenRouterClient } from '../../openrouter';
 import type { TokenUsage } from "@shared/schema";
 import { enforceStructure } from './repairSection';
+import { FEATURE_EXPANSION } from '../../tokenBudgets';
 
 type SupportedContentLanguage = 'de' | 'en';
 
@@ -269,7 +270,7 @@ export async function expandFeature(
       'generator',
       systemPrompt,
       userPrompt,
-      4200
+      FEATURE_EXPANSION
     );
 
     const validation = validateExpandedFeature(result.content);

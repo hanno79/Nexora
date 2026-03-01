@@ -5,7 +5,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Input } from '@/components/ui/input';
-import { Sparkles, Brain, CheckCircle2, AlertCircle, ArrowRight, ArrowLeft, Zap, MessageSquare, SkipForward } from 'lucide-react';
+import { Sparkles, Brain, CheckCircle2, AlertCircle, ArrowRight, ArrowLeft, Zap, MessageSquare, SkipForward, RotateCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -32,13 +32,41 @@ interface GuidedAiDialogProps {
   prdId?: string;
 }
 
-type Step = 'input' | 'analyzing' | 'questions' | 'processing' | 'finalizing' | 'done';
+type Step = 'input' | 'resuming' | 'analyzing' | 'questions' | 'processing' | 'finalizing' | 'done';
 
 interface AnswerState {
   [questionId: string]: {
     selectedOptionId: string;
     customText?: string;
   };
+}
+
+const GUIDED_SESSION_STORAGE_KEY = 'nexora_guided_session';
+const GUIDED_SESSION_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
+
+function saveSessionToStorage(sessionId: string) {
+  try {
+    localStorage.setItem(GUIDED_SESSION_STORAGE_KEY, JSON.stringify({ sessionId, timestamp: Date.now() }));
+  } catch { /* localStorage unavailable */ }
+}
+
+function loadSessionFromStorage(): string | null {
+  try {
+    const raw = localStorage.getItem(GUIDED_SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const { sessionId, timestamp } = JSON.parse(raw);
+    if (Date.now() - timestamp > GUIDED_SESSION_MAX_AGE_MS) {
+      localStorage.removeItem(GUIDED_SESSION_STORAGE_KEY);
+      return null;
+    }
+    return sessionId;
+  } catch {
+    return null;
+  }
+}
+
+function clearSessionFromStorage() {
+  try { localStorage.removeItem(GUIDED_SESSION_STORAGE_KEY); } catch { /* noop */ }
 }
 
 export function GuidedAiDialog({
@@ -62,6 +90,7 @@ export function GuidedAiDialog({
   const [error, setError] = useState('');
   const [refinedPlan, setRefinedPlan] = useState('');
   const [modelsUsed, setModelsUsed] = useState<string[]>([]);
+  const [resumableSessionId, setResumableSessionId] = useState<string | null>(null);
   const hasExistingContent = typeof existingContent === 'string' && existingContent.trim().length > 0;
   const minimumIdeaLength = hasExistingContent ? 3 : 10;
   const effectiveProjectIdea = (projectIdea.trim().length > 0 ? projectIdea : initialProjectIdea).trim();
@@ -91,6 +120,8 @@ export function GuidedAiDialog({
     setRefinedPlan('');
     setModelsUsed([]);
     setHasAutoStarted(false);
+    setResumableSessionId(null);
+    clearSessionFromStorage();
   };
 
   const executeStart = async (idea: string) => {
@@ -118,6 +149,7 @@ export function GuidedAiDialog({
 
       const data = await response.json();
       setSessionId(data.sessionId);
+      saveSessionToStorage(data.sessionId);
       setFeatureOverview(data.featureOverview);
       setQuestions(data.questions || []);
 
@@ -141,6 +173,56 @@ export function GuidedAiDialog({
     }
     await executeStart(idea);
   }, [minimumIdeaLength, minLengthError, hasExistingContent, existingContent]);
+
+  // Check for resumable session when dialog opens
+  useEffect(() => {
+    if (open && step === 'input' && !hasAutoStarted) {
+      const storedSessionId = loadSessionFromStorage();
+      if (storedSessionId) {
+        setResumableSessionId(storedSessionId);
+        setStep('resuming');
+        return;
+      }
+    }
+    if (!open) {
+      setResumableSessionId(null);
+    }
+  }, [open]);
+
+  const handleResumeSession = async () => {
+    if (!resumableSessionId) return;
+    setError('');
+    try {
+      const response = await fetch('/api/ai/guided-resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: resumableSessionId }),
+      });
+      if (!response.ok) {
+        // Session expired or not found — fall back to fresh start
+        clearSessionFromStorage();
+        setResumableSessionId(null);
+        setStep('input');
+        return;
+      }
+      const data = await response.json();
+      setSessionId(data.sessionId);
+      setRoundNumber(data.roundNumber);
+      setFeatureOverview(data.featureOverview || '');
+      // Resume directly to finalize since we can't replay questions
+      await handleFinalize(data.sessionId);
+    } catch (err: any) {
+      clearSessionFromStorage();
+      setResumableSessionId(null);
+      setStep('input');
+    }
+  };
+
+  const handleDismissResume = () => {
+    clearSessionFromStorage();
+    setResumableSessionId(null);
+    setStep('input');
+  };
 
   // Sync project idea and auto-start when dialog opens with initial value
   useEffect(() => {
@@ -255,8 +337,9 @@ export function GuidedAiDialog({
 
       const data = await response.json();
       setStep('done');
+      clearSessionFromStorage();
       if (data.modelsUsed) setModelsUsed(data.modelsUsed);
-      
+
       onContentGenerated(data.prdContent, {
         guided: true,
         tokensUsed: data.tokensUsed,
@@ -336,6 +419,7 @@ export function GuidedAiDialog({
   const getProgressPercentage = () => {
     switch (step) {
       case 'input': return 0;
+      case 'resuming': return 10;
       case 'analyzing': return 20;
       case 'questions': return 40 + (roundNumber - 1) * 15;
       case 'processing': return 70;
@@ -348,6 +432,7 @@ export function GuidedAiDialog({
   const getStepTitle = () => {
     switch (step) {
       case 'input': return t.guidedAi.describeProject;
+      case 'resuming': return t.guidedAi.resumeSession;
       case 'analyzing': return t.guidedAi.analyzing;
       case 'questions': return `${t.guidedAi.clarifyingQuestions} (${t.guidedAi.round} ${roundNumber})`;
       case 'processing': return t.guidedAi.processingAnswers;
@@ -367,6 +452,7 @@ export function GuidedAiDialog({
           </DialogTitle>
           <DialogDescription className="text-xs sm:text-sm">
             {step === 'input' && t.guidedAi.describeHint}
+            {step === 'resuming' && t.guidedAi.resumeHint}
             {step === 'analyzing' && t.guidedAi.analyzingHint}
             {step === 'questions' && t.guidedAi.questionsHint}
             {step === 'processing' && t.guidedAi.processingHint}
@@ -395,6 +481,23 @@ export function GuidedAiDialog({
                   <p className="text-xs text-muted-foreground">
                     {t.guidedAi.detailHint}
                   </p>
+                </div>
+              </div>
+            )}
+
+            {/* Step: Resume existing session */}
+            {step === 'resuming' && (
+              <div className="flex flex-col items-center justify-center py-12 space-y-4">
+                <RotateCcw className="w-12 h-12 text-primary" />
+                <p className="text-muted-foreground text-center">{t.guidedAi.resumeHint}</p>
+                <div className="flex gap-3">
+                  <Button variant="outline" onClick={handleDismissResume} data-testid="button-start-new">
+                    {t.guidedAi.startNew}
+                  </Button>
+                  <Button onClick={handleResumeSession} data-testid="button-resume-session">
+                    <RotateCcw className="w-4 h-4 mr-2" />
+                    {t.guidedAi.resumeButton}
+                  </Button>
                 </div>
               </div>
             )}
@@ -612,7 +715,7 @@ export function GuidedAiDialog({
             </>
           )}
 
-          {(step === 'analyzing' || step === 'processing' || step === 'finalizing') && (
+          {(step === 'analyzing' || step === 'processing' || step === 'finalizing' || step === 'resuming') && (
             <Button
               variant="outline"
               onClick={() => {
