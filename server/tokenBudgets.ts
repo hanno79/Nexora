@@ -7,11 +7,15 @@
  * Example: TOKEN_BUDGET_REPAIR_PASS=16000 overrides the default 12000.
  */
 
+// ÄNDERUNG 01.03.2026: Obergrenze fuer Token-Budgets hinzugefuegt
+// Verhindert unerwuenschte Konsequenzen bei falsch gesetzten Umgebungsvariablen
+const MAX_REASONABLE_BUDGET = 100000;
+
 function budget(name: string, defaultValue: number): number {
   const envVal = process.env[`TOKEN_BUDGET_${name}`];
   if (envVal) {
     const parsed = parseInt(envVal, 10);
-    if (!isNaN(parsed) && parsed > 0) return parsed;
+    if (!isNaN(parsed) && parsed > 0 && parsed <= MAX_REASONABLE_BUDGET) return parsed;
   }
   return defaultValue;
 }

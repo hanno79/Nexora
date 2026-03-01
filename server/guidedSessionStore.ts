@@ -4,6 +4,9 @@ import { eq, and, lte, sql } from 'drizzle-orm';
 
 export const DEFAULT_GUIDED_SESSION_TTL_MS = 30 * 60 * 1000;
 
+// ÄNDERUNG 01.03.2026: Context-Validator Typ fuer verbesserte Type Safety
+export type ContextValidator<TContext> = (value: unknown) => value is TContext;
+
 export type GuidedSessionAccessStatus = "ok" | "not_found" | "forbidden" | "expired";
 
 export interface GuidedSessionAccessResult<TContext> {
@@ -129,6 +132,20 @@ export class InMemoryGuidedSessionStore<TContext> implements GuidedSessionStoreP
 
 // ── Database-backed Implementation ──────────────────────────────────────────
 
+// ÄNDERUNG 01.03.2026: Hilfsfunktion zur sicheren Serialisierung des Context
+// Verhindert Datenbank-Corruption durch ungueltige Daten
+function serializeContext<TContext>(context: TContext): unknown {
+  // Da jsonb PostgreSQL-Typ nur JSON-kompatible Werte akzeptiert,
+  // stellen wir sicher, dass der Context serialisierbar ist
+  try {
+    const serialized = JSON.stringify(context);
+    const parsed = JSON.parse(serialized);
+    return parsed;
+  } catch (error) {
+    throw new Error(`Context ist nicht JSON-serialisierbar: ${error}`);
+  }
+}
+
 /**
  * PostgreSQL-backed session store via Drizzle ORM.
  * Survives server restarts and supports sliding expiration.
@@ -140,16 +157,18 @@ export class DbGuidedSessionStore<TContext> implements GuidedSessionStorePort<TC
 
   async create(sessionId: string, ownerUserId: string, context: TContext): Promise<void> {
     const expiresAt = new Date(Date.now() + this.ttlMs);
+    // ÄNDERUNG 01.03.2026: Sichere Serialisierung statt unsicherem 'as any'
+    const serializedContext = serializeContext(context);
     await db.insert(guidedSessions).values({
       id: sessionId,
       ownerUserId,
-      context: context as any,
+      context: serializedContext,
       status: 'active',
       expiresAt,
     }).onConflictDoUpdate({
       target: guidedSessions.id,
       set: {
-        context: context as any,
+        context: serializedContext,
         status: 'active',
         expiresAt,
         updatedAt: new Date(),
@@ -167,9 +186,11 @@ export class DbGuidedSessionStore<TContext> implements GuidedSessionStorePort<TC
 
   async update(sessionId: string, requestingUserId: string, context: TContext): Promise<void> {
     const newExpiry = new Date(Date.now() + this.ttlMs);
+    // ÄNDERUNG 01.03.2026: Sichere Serialisierung statt unsicherem 'as any'
+    const serializedContext = serializeContext(context);
     await db.update(guidedSessions)
       .set({
-        context: context as any,
+        context: serializedContext,
         expiresAt: newExpiry,
         updatedAt: new Date(),
       })

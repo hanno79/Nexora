@@ -2062,9 +2062,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(result);
   }));
 
-  // Periodically clean up expired guided sessions (every 15 minutes)
+  // ÄNDERUNG 01.03.2026: Periodische Bereinigung mit Cleanup-Logik
+  // Verhindert Memory Leaks bei Server-Restarts oder Hot-Reloads
   const GUIDED_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
-  setInterval(async () => {
+  const guidedCleanupIntervalId = setInterval(async () => {
     try {
       const service = getGuidedAiService();
       const removed = await service.cleanupExpiredSessions();
@@ -2075,6 +2076,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error('Guided session cleanup failed:', err);
     }
   }, GUIDED_CLEANUP_INTERVAL_MS);
+
+  // Cleanup bei Server-Shutdown
+  const cleanupGuidedInterval = () => {
+    clearInterval(guidedCleanupIntervalId);
+    console.log('🛑 Guided session cleanup interval stopped');
+  };
+  process.on('SIGTERM', cleanupGuidedInterval);
+  process.on('SIGINT', cleanupGuidedInterval);
 
   const httpServer = createServer(app);
   setupWebSocket(httpServer);
