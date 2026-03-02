@@ -12,6 +12,8 @@ export const en = {
     filter: "Filter",
     error: "Error",
     success: "Success",
+    back: "Back",
+    next: "Next",
   },
 
   nav: {
@@ -447,6 +449,10 @@ export const en = {
     resumeButton: "Continue Session",
     startNew: "Start New",
     elapsed: "elapsed",
+    multipleChoiceHint: "Multiple answers possible",
+    otherOption: "Other",
+    otherOptionDescription: "Enter custom answer...",
+    questionCounter: "Question {current} of {total}",
   },
 
   onboarding: {

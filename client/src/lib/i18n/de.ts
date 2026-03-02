@@ -14,6 +14,8 @@ export const de: Translations = {
     filter: "Filtern",
     error: "Fehler",
     success: "Erfolg",
+    back: "Zurück",
+    next: "Weiter",
   },
 
   nav: {
@@ -449,6 +451,10 @@ export const de: Translations = {
     resumeButton: "Sitzung fortsetzen",
     startNew: "Neu starten",
     elapsed: "vergangen",
+    multipleChoiceHint: "Mehrere Antworten möglich",
+    otherOption: "Andere",
+    otherOptionDescription: "Eigene Antwort eingeben...",
+    questionCounter: "Frage {current} von {total}",
   },
 
   onboarding: {

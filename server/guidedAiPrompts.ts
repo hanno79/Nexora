@@ -67,6 +67,7 @@ OUTPUT FORMAT (JSON):
       "id": "q1",
       "question": "[Clear, non-technical question]",
       "context": "[Why this question matters - 1 sentence]",
+      "selectionMode": "single" | "multiple",
       "options": [
         {"id": "a", "label": "[Short label]", "description": "[What this choice means for the product]"},
         {"id": "b", "label": "[Short label]", "description": "[What this choice means for the product]"},
@@ -76,6 +77,10 @@ OUTPUT FORMAT (JSON):
     }
   ]
 }
+
+SELECTION MODE GUIDELINES:
+- Use "single" when options are mutually exclusive (e.g., "Which shortcut?", "Which priority?")
+- Use "multiple" when multiple options can be selected (e.g., "Which features?", "What content types?")
 
 QUESTION EXAMPLES (non-technical):
 ✅ "Who is the primary user of this product?"
@@ -156,6 +161,7 @@ OUTPUT FORMAT (JSON):
       "id": "q1",
       "question": "[Follow-up question based on previous answers]",
       "context": "[Why this is important now]",
+      "selectionMode": "single" | "multiple",
       "options": [
         {"id": "a", "label": "[Option]", "description": "[What this means]"},
         {"id": "b", "label": "[Option]", "description": "[What this means]"},
@@ -308,6 +314,7 @@ export interface GuidedQuestion {
   id: string;
   question: string;
   context: string;
+  selectionMode?: 'single' | 'multiple';
   options: {
     id: string;
     label: string;
@@ -323,7 +330,7 @@ export interface GuidedStartResponse {
 
 export interface GuidedAnswerInput {
   questionId: string;
-  selectedOptionId: string;
+  selectedOptionIds: string[];
   customText?: string;
 }
 

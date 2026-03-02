@@ -45,6 +45,8 @@ interface ConversationContext {
   workflowMode: 'generate' | 'improve';
   existingContent?: string;
   templateCategory?: string;
+  // ÄNDERUNG 02.03.2025: Gespeicherte Fragen für Security-Validierung
+  lastQuestions?: GuidedQuestion[];
 }
 
 interface GuidedGenerationResult {
@@ -169,6 +171,8 @@ Analyze what should be preserved and what should be improved. Focus on concrete 
       workflowMode,
       existingContent: normalizedExistingContent || undefined,
       templateCategory: options?.templateCategory,
+      // ÄNDERUNG 02.03.2025: Initiale Fragen in Session speichern
+      lastQuestions: parsedQuestions.questions,
     });
 
     return {
@@ -197,39 +201,40 @@ Analyze what should be preserved and what should be improved. Focus on concrete 
 
     logger.debug('Guided workflow processing answers', { answerCount: answers.length });
 
+    // SECURITY: Client-provided questions are untrusted.
+    // We store trusted questions from AI responses in the session context.
+    // If none exist, we use the client-provided ones as fallback (first round only).
+    // ÄNDERUNG 02.03.2025: Sicherheitsfix - Fragen aus Session laden wenn verfügbar
+    const trustedQuestions = context.lastQuestions || questions;
+
+    // Validate that answer questionIds match the trusted questions
+    const validQuestionIds = new Set(trustedQuestions.map(q => q.id));
+    const invalidAnswers = answers.filter(a => !validQuestionIds.has(a.questionId));
+    if (invalidAnswers.length > 0) {
+      logger.warn('Invalid answers received - question IDs not in trusted set', {
+        invalidQuestionIds: invalidAnswers.map(a => a.questionId),
+      });
+      throw new Error('Invalid question references in answers');
+    }
+
     // Create a map of questions for lookup
-    const questionMap = new Map(questions.map(q => [q.id, q]));
+    const questionMap = new Map(trustedQuestions.map(q => [q.id, q]));
 
     // Format answers for the AI with proper labels, not just IDs
     const formattedAnswers = answers.map(a => {
       const question = questionMap.get(a.questionId);
       const questionText = question?.question || a.questionId;
-      
-      // Get the actual option label/description, not just the ID
-      let answerText: string;
-      if (a.customText) {
-        answerText = a.customText;
-      } else if (question) {
-        const selectedOption = question.options.find(opt => opt.id === a.selectedOptionId);
-        answerText = selectedOption 
-          ? `${selectedOption.label}: ${selectedOption.description}`
-          : a.selectedOptionId;
-      } else {
-        answerText = a.selectedOptionId;
-      }
-      
+      const answerText = this.formatAnswerText(a, question);
       return `Q: ${questionText}\nA: ${answerText}`;
     }).join('\n\n');
 
     // Store answers in context with full question text
     answers.forEach(a => {
       const question = questionMap.get(a.questionId);
-      const selectedOption = question?.options.find(opt => opt.id === a.selectedOptionId);
-      
       context.answers.push({
         questionId: a.questionId,
         question: question?.question || a.questionId,
-        answer: a.customText || (selectedOption ? `${selectedOption.label}: ${selectedOption.description}` : a.selectedOptionId),
+        answer: this.formatAnswerText(a, question),
       });
     });
 
@@ -299,6 +304,12 @@ ${buildTemplateInstruction(context.templateCategory, resolvedLanguage)}`;
       logger.debug('Guided workflow follow-up questions generated', {
         completionTokens: followUpResult.usage.completion_tokens,
       });
+
+      // ÄNDERUNG 02.03.2025: Fragen in Session speichern für Security-Validierung
+      if (parsedFollowUp.questions && parsedFollowUp.questions.length > 0) {
+        context.lastQuestions = parsedFollowUp.questions;
+        await this.conversationContexts.update(sessionId, authenticatedUserId, context);
+      }
 
       // If no valid questions, mark as complete
       if (!parsedFollowUp.questions || parsedFollowUp.questions.length === 0) {
@@ -803,22 +814,37 @@ Generate a complete, professional PRD.`;
 
   private async getUserPreferences(userId?: string): Promise<{ guidedQuestionRounds?: number } | null> {
     if (!userId) return null;
-    
-    const userPrefs = await db.select({ 
+
+    const userPrefs = await db.select({
       aiPreferences: users.aiPreferences
     })
       .from(users)
       .where(eq(users.id, userId))
       .limit(1);
-    
+
     if (userPrefs[0]?.aiPreferences) {
       const prefs = userPrefs[0].aiPreferences as any;
       return {
         guidedQuestionRounds: prefs.guidedQuestionRounds || 3
       };
     }
-    
+
     return null;
+  }
+
+  // ÄNDERUNG 02.03.2025: formatAnswerText als private Methode für DRY-Prinzip
+  private formatAnswerText(answer: GuidedAnswerInput, question?: GuidedQuestion): string {
+    if (answer.customText && answer.selectedOptionIds?.includes('custom')) {
+      return answer.customText;
+    }
+    if (question && answer.selectedOptionIds?.length) {
+      return answer.selectedOptionIds
+        .map(id => question.options.find(opt => opt.id === id))
+        .filter((opt): opt is NonNullable<typeof opt> => opt !== undefined)
+        .map(opt => `${opt.label}: ${opt.description}`)
+        .join('; ');
+    }
+    return answer.selectedOptionIds?.join(', ') || '';
   }
 }
 
