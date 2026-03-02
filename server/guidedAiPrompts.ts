@@ -67,7 +67,7 @@ OUTPUT FORMAT (JSON):
       "id": "q1",
       "question": "[Clear, non-technical question]",
       "context": "[Why this question matters - 1 sentence]",
-      "selectionMode": "single" | "multiple",
+      "selectionMode": "single", // Use "single" for mutually exclusive options or "multiple" when several options can be selected
       "options": [
         {"id": "a", "label": "[Short label]", "description": "[What this choice means for the product]"},
         {"id": "b", "label": "[Short label]", "description": "[What this choice means for the product]"},
@@ -161,7 +161,7 @@ OUTPUT FORMAT (JSON):
       "id": "q1",
       "question": "[Follow-up question based on previous answers]",
       "context": "[Why this is important now]",
-      "selectionMode": "single" | "multiple",
+      "selectionMode": "single", // Use "single" for mutually exclusive options or "multiple" when several options can be selected
       "options": [
         {"id": "a", "label": "[Option]", "description": "[What this means]"},
         {"id": "b", "label": "[Option]", "description": "[What this means]"},

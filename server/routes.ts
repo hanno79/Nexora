@@ -32,6 +32,10 @@ import { db, pool } from "./db";
 import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { parsePRDToStructure } from "./prdParser";
+
+// ÄNDERUNG 02.03.2025: Timeout-Konstante für Guided Finalisierung exportiert
+// Gemäß Review-Feedback: Eine Quelle der Wahrheit für Server und Client
+export const GUIDED_FINALIZE_TIMEOUT_MS = 30 * 60 * 1000; // 30 Minuten
 import { compilePrdDocument } from "./prdCompiler";
 import { computeCompleteness } from "./prdCompleteness";
 import { setupWebSocket, broadcastPrdUpdate } from "./wsServer";
@@ -1680,7 +1684,218 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     }
   }));
-  
+
+  // ÄNDERUNG 02.03.2025: SSE-basierter Endpunkt für Guided Finalisierung
+  // Dieser Endpunkt ermöglicht Live-Fortschrittsanzeige im DualAiDialog
+  // ÄNDERUNG 02.03.2025: Timeout-Handling hinzugefügt für langlaufende Finalisierungen
+  app.post('/api/ai/guided-finalize-stream', isAuthenticated, aiRateLimiter, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    let editablePrdId: string | null = null;
+    let userId = '';
+    let sseClosed = false;
+    let sseCompleted = false;
+    const abortController = new AbortController();
+    
+    // Timeout-Handling: Verwendet exportierte Konstante
+    const timeoutId = setTimeout(() => {
+      abortController.abort();
+      logger.warn("Guided finalize timeout reached", { hasPrdId: !!editablePrdId });
+    }, GUIDED_FINALIZE_TIMEOUT_MS);
+    
+    const cleanupTimeout = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+    
+    const isRequestClosed = () =>
+      isIterativeClientDisconnected({
+        sseClosed,
+        reqAborted: req.aborted,
+        reqDestroyed: req.destroyed,
+        resWritableEnded: res.writableEnded,
+        resDestroyed: res.destroyed,
+      });
+    const safeEndSse = () => {
+      cleanupTimeout();
+      if (!res.writableEnded && !res.destroyed) {
+        try { res.end(); } catch {}
+      }
+    };
+
+    try {
+      if (!isOpenRouterConfigured()) {
+        return res.status(503).json({
+          message: getOpenRouterConfigError()
+        });
+      }
+
+      const { sessionId, prdId } = req.body;
+      userId = req.user.claims.sub;
+      editablePrdId = await requireEditablePrdId(storage, req, res, prdId, {
+        invalidMessage: "PRD ID must be a non-empty string",
+      });
+      if (prdId !== undefined && prdId !== null && !editablePrdId) {
+        return;
+      }
+      const templateCategory = await resolveTemplateCategoryForPrd(editablePrdId);
+
+      if (!sessionId) {
+        return res.status(400).json({ message: "Session ID is required" });
+      }
+
+      const service = getGuidedAiService();
+
+      // SSE Setup
+      const handleSseDisconnect = () => {
+        if (sseClosed) return;
+        sseClosed = true;
+        abortController.abort();
+        if (!sseCompleted) {
+          logger.warn("Guided finalize SSE client disconnected", { hasPrdId: !!editablePrdId });
+        }
+        safeEndSse();
+      };
+
+      res.on('close', handleSseDisconnect);
+      req.on('aborted', handleSseDisconnect);
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+
+      // Send initial event
+      if (!isRequestClosed()) {
+        res.write(`data: ${JSON.stringify({ type: 'generation_start' })}\n\n`);
+      }
+
+      const result = await service.finalizePRD(sessionId, userId, { templateCategory });
+
+      if (isRequestClosed()) {
+        logger.debug("Guided finalize request closed before response", { hasPrdId: !!editablePrdId });
+        return;
+      }
+
+      const assessed = assessCompilerOutcome({
+        content: result.prdContent,
+        mode: result.workflowMode || 'generate',
+        existingContent: result.existingContent,
+        templateCategory,
+      });
+
+      // Log AI usage
+      if (result.modelsUsed.length > 0) {
+        const [userRow] = await db.select({ aiPreferences: users.aiPreferences }).from(users).where(eq(users.id, userId)).limit(1);
+        const userTier = resolveModelTier((userRow?.aiPreferences as any)?.tier);
+        await logAiUsage(
+          userId,
+          'generator',
+          result.modelsUsed[0],
+          userTier,
+          { prompt_tokens: 0, completion_tokens: result.tokensUsed, total_tokens: result.tokensUsed },
+          prdId
+        );
+      }
+
+      const payload = {
+        finalContent: result.prdContent,
+        prdContent: result.prdContent,
+        tokensUsed: result.tokensUsed,
+        modelsUsed: result.modelsUsed,
+        workflowMode: result.workflowMode,
+        totalTokens: result.tokensUsed,
+        qualityStatus: assessed.qualityStatus,
+        compilerDiagnostics: assessed.compilerDiagnostics,
+        finalizationStage: assessed.finalizationStage,
+      };
+
+      // Send complete event
+      if (!isRequestClosed()) {
+        res.write(`event: complete
+data: ${JSON.stringify(payload)}
+
+`);
+      }
+      sseCompleted = true;
+      safeEndSse();
+
+      // Persist if needed
+      if (editablePrdId) {
+        (async () => {
+          try {
+            const existingPrd = await storage.getPrd(editablePrdId!);
+            if (!existingPrd) return;
+            const iterationLog = assessed.qualityStatus === 'passed'
+              ? existingPrd.iterationLog || null
+              : mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, assessed.qualityStatus, assessed.compilerDiagnostics);
+            await storage.persistPrdRunFinalization({
+              prdId: editablePrdId!,
+              userId,
+              qualityStatus: assessed.qualityStatus,
+              finalizationStage: 'final',
+              content: assessed.qualityStatus === 'passed' ? assessed.compiled.content : undefined,
+              structuredContent: assessed.qualityStatus === 'passed' ? assessed.compiled.structure : undefined,
+              iterationLog,
+              compilerDiagnostics: assessed.compilerDiagnostics,
+            });
+          } catch (persistError) {
+            logger.error("Guided finalize SSE persistence failed", { error: persistError });
+          }
+        })();
+      }
+
+    } catch (error: any) {
+      cleanupTimeout();
+      // Ignoriere AbortError vom Timeout - wurde bereits geloggt
+      if (error?.name === 'AbortError') {
+        logger.debug("Guided finalize aborted due to timeout", { hasPrdId: !!editablePrdId });
+        return;
+      }
+      
+      logger.error("Guided finalize SSE error", { error });
+      const failure = classifyRunFailure(error);
+
+      if (res.headersSent && !res.writableEnded && !res.destroyed) {
+        res.write(`event: error
+data: ${JSON.stringify({
+          message: failure.message,
+          qualityStatus: failure.qualityStatus,
+          compilerDiagnostics: failure.diagnostics,
+          finalizationStage: 'final',
+          autoSaveRequested: false,
+        })}
+
+`);
+        res.end();
+      } else if (!res.headersSent) {
+        res.status(qualityStatusHttpCode(failure.qualityStatus)).json({
+          message: failure.message,
+          qualityStatus: failure.qualityStatus,
+          compilerDiagnostics: failure.diagnostics,
+          finalizationStage: 'final',
+          autoSaveRequested: false,
+        });
+      }
+
+      if (editablePrdId && userId) {
+        try {
+          const existingPrd = await storage.getPrd(editablePrdId);
+          if (existingPrd) {
+            await storage.persistPrdRunFinalization({
+              prdId: editablePrdId,
+              userId,
+              qualityStatus: failure.qualityStatus,
+              finalizationStage: 'final',
+              iterationLog: mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, failure.qualityStatus, failure.diagnostics),
+              compilerDiagnostics: failure.diagnostics,
+            });
+          }
+        } catch (persistFailureError) {
+          logger.error("Guided finalize SSE failure persistence failed", { error: persistFailureError });
+        }
+      }
+    }
+  }));
+
   // Skip guided workflow and generate PRD directly
   app.post('/api/ai/guided-skip', isAuthenticated, aiRateLimiter, asyncHandler(async (req: AuthenticatedRequest, res) => {
     if (!isOpenRouterConfigured()) {

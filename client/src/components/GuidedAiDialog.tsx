@@ -3,17 +3,15 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
-import { Sparkles, Brain, CheckCircle2, AlertCircle, ArrowRight, ArrowLeft, Zap, MessageSquare, SkipForward, RotateCcw } from 'lucide-react';
+import { Sparkles, Brain, CheckCircle2, AlertCircle, ArrowRight, Zap, MessageSquare, SkipForward, RotateCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useTranslation } from "@/lib/i18n";
 import { formatElapsedTime } from "@/lib/utils";
 import { useElapsedTimer } from "@/hooks/useElapsedTimer";
+import { QuestionCard } from './QuestionCard';
 
 interface GuidedQuestion {
   id: string;
@@ -34,6 +32,8 @@ interface GuidedAiDialogProps {
   initialProjectIdea?: string;
   existingContent?: string;
   prdId?: string;
+  // ÄNDERUNG 02.03.2025: Callback für Übergabe an DualAiDialog nach letzter Frage
+  onReadyForFinalization?: (sessionId: string, projectIdea: string, answersCount: number) => void;
 }
 
 type Step = 'input' | 'resuming' | 'analyzing' | 'questions' | 'processing' | 'finalizing' | 'done';
@@ -93,6 +93,8 @@ export function GuidedAiDialog({
   initialProjectIdea = '',
   existingContent,
   prdId,
+  // ÄNDERUNG 02.03.2025: Callback für Übergabe an DualAiDialog nach letzter Frage
+  onReadyForFinalization,
 }: GuidedAiDialogProps) {
   const { t } = useTranslation();
   const [projectIdea, setProjectIdea] = useState(initialProjectIdea);
@@ -253,23 +255,40 @@ export function GuidedAiDialog({
     setStep('input');
   };
 
-  // Auto-save session state when in active workflow
-  // ÄNDERUNG 02.03.2025: 'error' zum Dependency-Array hinzugefügt
+  // ÄNDERUNG 02.03.2025: Debounce für saveSessionToStorage implementiert (Issue 5)
+  // Verhindert excessive writes bei rapid input durch 300ms Debounce
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
   useEffect(() => {
     if (sessionId && step !== 'input' && step !== 'done' && step !== 'resuming') {
-      saveSessionToStorage({
-        sessionId,
-        timestamp: Date.now(),
-        step,
-        roundNumber,
-        currentQuestionIndex,
-        questions,
-        answers,
-        featureOverview,
-        projectIdea: effectiveProjectIdea,
-        error: error || undefined
-      });
+      // Clear vorherigen Timer
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+      
+      // Neuer Debounced Save
+      saveTimeoutRef.current = setTimeout(() => {
+        saveSessionToStorage({
+          sessionId,
+          timestamp: Date.now(),
+          step,
+          roundNumber,
+          currentQuestionIndex,
+          questions,
+          answers,
+          featureOverview,
+          projectIdea: effectiveProjectIdea,
+          error: error || undefined
+        });
+      }, 300);
     }
+    
+    // Cleanup: Timer löschen bei unmount oder erneutem Effect-Run
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
   }, [sessionId, step, roundNumber, currentQuestionIndex, questions, answers, featureOverview, effectiveProjectIdea, error]);
 
   // Sync project idea and auto-start when dialog opens with initial value
@@ -318,8 +337,10 @@ export function GuidedAiDialog({
     const answersArray = Object.entries(answers).map(([questionId, answer]) => ({
       questionId,
       selectedOptionIds: answer.selectedOptionIds,
-      // Nur customText senden wenn 'custom' tatsächlich ausgewählt ist
-      customText: answer.selectedOptionIds.includes('custom') ? answer.customText : undefined,
+      // Nur customText senden wenn 'custom' tatsächlich ausgewählt ist UND Text vorhanden
+      customText: answer.selectedOptionIds.includes('custom') && answer.customText?.trim()
+        ? answer.customText.trim()
+        : undefined,
     }));
 
     if (answersArray.length === 0) {
@@ -374,6 +395,30 @@ export function GuidedAiDialog({
   };
 
   const handleFinalize = async (sid: string) => {
+    // ÄNDERUNG 02.03.2025: Wenn onReadyForFinalization existiert, übergib an Parent
+    if (onReadyForFinalization) {
+      // Speichere Session-Status für Wiederherstellung
+      saveSessionToStorage({
+        sessionId: sid,
+        timestamp: Date.now(),
+        step: 'finalizing',
+        roundNumber,
+        currentQuestionIndex,
+        questions,
+        answers,
+        featureOverview,
+        projectIdea: effectiveProjectIdea,
+        error: error || undefined
+      });
+      // Callback an Parent (DualAiDialog) - übergibt auch die Anzahl der Antworten
+      const answersCount = Object.keys(answers).length;
+      onReadyForFinalization(sid, effectiveProjectIdea, answersCount);
+      // Schliesse diesen Dialog
+      onOpenChange(false);
+      return;
+    }
+
+    // Fallback: Legacy-Verhalten - direkte Finalisierung
     setStep('finalizing');
 
     try {
@@ -635,141 +680,30 @@ export function GuidedAiDialog({
                   </Card>
                 )}
 
-                {/* Question Navigation Header */}
-                <div className="flex items-center justify-between px-1">
-                  <Badge variant="outline">
-                    {t.guidedAi.questionCounter
-                      ?.replace('{current}', String(currentQuestionIndex + 1))
-                      ?.replace('{total}', String(questions.length))}
-                  </Badge>
-                  <Progress 
-                    value={((currentQuestionIndex + 1) / questions.length) * 100} 
-                    className="w-24 sm:w-32 h-2"
-                  />
-                </div>
-
-                {/* Current Question */}
-                {(() => {
-                  const question = questions[currentQuestionIndex];
-                  const isMultiple = question.selectionMode === 'multiple';
-                  // ÄNDERUNG 02.03.2025: Einheitliche Verwendung von 'custom' (Prompt verwendet nur 'custom')
-                  const hasCustomSelected = answers[question.id]?.selectedOptionIds?.includes('custom');
-                  
-                  return (
-                    <Card data-testid={`card-question-${question.id}`}>
-                      <CardHeader className="p-3 pb-2 sm:p-4 sm:pb-2">
-                        <CardTitle className="text-sm sm:text-base leading-tight">
-                          {question.question}
-                        </CardTitle>
-                        {question.context && (
-                          <CardDescription className="text-xs sm:text-sm mt-1">
-                            {question.context}
-                          </CardDescription>
-                        )}
-                        {isMultiple && (
-                          <Badge variant="secondary" className="mt-2 w-fit">
-                            {t.guidedAi.multipleChoiceHint || "Mehrere Antworten möglich"}
-                          </Badge>
-                        )}
-                      </CardHeader>
-                      <CardContent className="p-3 pt-0 sm:p-4 sm:pt-0 space-y-2 sm:space-y-3">
-                        <ScrollArea className="max-h-[50vh] sm:max-h-none">
-                          {isMultiple ? (
-                            // Multiple choice - checkboxes
-                            <div className="space-y-2 sm:space-y-3">
-                              {question.options.map((option) => (
-                                <div key={option.id} className="flex items-start space-x-2 sm:space-x-3">
-                                  <Checkbox
-                                    id={`${question.id}-${option.id}`}
-                                    checked={answers[question.id]?.selectedOptionIds?.includes(option.id)}
-                                    onCheckedChange={(checked) => 
-                                      updateMultiAnswer(question.id, option.id, checked as boolean)
-                                    }
-                                    data-testid={`checkbox-${question.id}-${option.id}`}
-                                    className="mt-0.5 flex-shrink-0"
-                                  />
-                                  <div className="grid gap-0.5 flex-1 min-w-0">
-                                    <Label
-                                      htmlFor={`${question.id}-${option.id}`}
-                                      className="font-medium cursor-pointer text-sm sm:text-base leading-tight"
-                                    >
-                                      {option.label}
-                                    </Label>
-                                    <p className="text-xs sm:text-sm text-muted-foreground leading-snug">
-                                      {option.description}
-                                    </p>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            // Single choice - radio
-                            // ÄNDERUNG 02.03.2025: Verbessertes Value-Binding mit undefined statt leerem String
-                            <RadioGroup
-                              value={answers[question.id]?.selectedOptionIds?.[0] ?? undefined}
-                              onValueChange={(value) => updateSingleAnswer(question.id, value)}
-                              className="space-y-2 sm:space-y-3"
-                            >
-                              {question.options.map((option) => (
-                                <div key={option.id} className="flex items-start space-x-2 sm:space-x-3">
-                                  <RadioGroupItem 
-                                    value={option.id} 
-                                    id={`${question.id}-${option.id}`}
-                                    data-testid={`radio-${question.id}-${option.id}`}
-                                    className="mt-0.5 flex-shrink-0"
-                                  />
-                                  <div className="grid gap-0.5 flex-1 min-w-0">
-                                    <Label 
-                                      htmlFor={`${question.id}-${option.id}`}
-                                      className="font-medium cursor-pointer text-sm sm:text-base leading-tight"
-                                    >
-                                      {option.label}
-                                    </Label>
-                                    <p className="text-xs sm:text-sm text-muted-foreground leading-snug">
-                                      {option.description}
-                                    </p>
-                                  </div>
-                                </div>
-                              ))}
-                            </RadioGroup>
-                          )}
-                        </ScrollArea>
-
-                        {/* Custom text input when "Other" is selected */}
-                        {hasCustomSelected && (
-                          <div className="mt-2 sm:mt-3 pl-5 sm:pl-7">
-                            <Input
-                              placeholder={t.guidedAi.explainPreference}
-                              value={answers[question.id]?.customText || ''}
-                              onChange={(e) => updateCustomText(question.id, e.target.value)}
-                              data-testid={`input-custom-${question.id}`}
-                              className="text-sm"
-                            />
-                          </div>
-                        )}
-                      </CardContent>
-                      <CardFooter className="flex justify-between p-3 sm:p-4">
-                        <Button
-                          variant="outline"
-                          onClick={() => setCurrentQuestionIndex(i => Math.max(0, i - 1))}
-                          disabled={currentQuestionIndex === 0}
-                          data-testid="button-prev-question"
-                        >
-                          <ArrowLeft className="w-4 h-4 mr-2" />
-                          {t.common.back}
-                        </Button>
-                        <Button
-                          onClick={() => setCurrentQuestionIndex(i => Math.min(questions.length - 1, i + 1))}
-                          disabled={currentQuestionIndex === questions.length - 1}
-                          data-testid="button-next-question"
-                        >
-                          {t.common.next}
-                          <ArrowRight className="w-4 h-4 ml-2" />
-                        </Button>
-                      </CardFooter>
-                    </Card>
-                  );
-                })()}
+                {/* ÄNDERUNG 02.03.2025: QuestionCard Komponente extrahiert (Issue 7)
+                    IIFE durch separate Komponente ersetzt für bessere Lesbarkeit */}
+                <QuestionCard
+                  question={questions[currentQuestionIndex]}
+                  answers={answers}
+                  updateSingleAnswer={updateSingleAnswer}
+                  updateMultiAnswer={updateMultiAnswer}
+                  updateCustomText={updateCustomText}
+                  t={{
+                    guidedAi: {
+                      questionCounter: t.guidedAi.questionCounter,
+                      multipleChoiceHint: t.guidedAi.multipleChoiceHint,
+                      explainPreference: t.guidedAi.explainPreference,
+                    },
+                    common: {
+                      back: t.common.back,
+                      next: t.common.next,
+                    },
+                  }}
+                  currentQuestionIndex={currentQuestionIndex}
+                  questionsLength={questions.length}
+                  onPrevious={() => setCurrentQuestionIndex(i => Math.max(0, i - 1))}
+                  onNext={() => setCurrentQuestionIndex(i => Math.min(questions.length - 1, i + 1))}
+                />
               </div>
             )}
 

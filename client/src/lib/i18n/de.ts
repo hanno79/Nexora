@@ -408,6 +408,11 @@ export const de: Translations = {
     iterationComplete: "Iteration {current}/{total} abgeschlossen",
     finalReviewInProgress: "Abschlussprüfung läuft...",
     finalReviewComplete: "Abschlussprüfung abgeschlossen",
+    // ÄNDERUNG 02.03.2025: Neue Übersetzungen für Guided Finalisierung im DualAiDialog
+    guidedFinalizing: "PRD wird basierend auf Guided-Antworten generiert...",
+    guidedStartingFinalization: "PRD-Generierung wird gestartet...",
+    guidedGenerationStarted: "PRD wird generiert...",
+    compilingPRD: "PRD wird kompiliert und validiert...",
   },
 
   guidedAi: {

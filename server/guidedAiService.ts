@@ -833,8 +833,9 @@ Generate a complete, professional PRD.`;
   }
 
   // ÄNDERUNG 02.03.2025: formatAnswerText als private Methode für DRY-Prinzip
+  // ÄNDERUNG 02.03.2025: Guard auf undefined/null geändert statt truthiness, damit leerer String erlaubt ist
   private formatAnswerText(answer: GuidedAnswerInput, question?: GuidedQuestion): string {
-    if (answer.customText && answer.selectedOptionIds?.includes('custom')) {
+    if (answer.customText !== undefined && answer.selectedOptionIds?.includes('custom')) {
       return answer.customText;
     }
     if (question && answer.selectedOptionIds?.length) {
