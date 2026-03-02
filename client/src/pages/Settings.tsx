@@ -183,15 +183,37 @@ export default function Settings() {
     'openai/gpt-oss-120b:free',
   ];
 
-  const handleTierChange = (value: "development" | "production" | "premium") => {
+  // ÄNDERUNG 02.03.2025: handleTierChange speichert jetzt SOFORT beim Tier-Wechsel
+  // Problem: Vorher wurde nur der lokale State aktualisiert, aber nicht sofort zum Backend gesendet.
+  // Wenn der Benutzer die Seite schnell verließ, gingen die Änderungen verloren.
+  const handleTierChange = async (value: "development" | "production" | "premium") => {
+    // 1. Aktuelle Modelle für das aktuelle Tier sichern
     const nextSaved = {
       ...savedTierModels,
       [aiTier]: { generatorModel, reviewerModel, fallbackChain },
     };
-    setSavedTierModels(nextSaved);
 
+    // 2. SOFORT zum Backend senden (nicht warten auf Debounce)
+    // Dies ist der kritische Fix - wir speichern synchron bevor wir das Tier wechseln
+    try {
+      await updateAiSettingsMutation.mutateAsync(
+        JSON.stringify({
+          generatorModel,
+          reviewerModel,
+          fallbackChain,
+          aiTier,  // Aktuelles Tier speichern
+        })
+      );
+    } catch (error) {
+      // Fehler beim Speichern - trotzdem fortfahren, aber loggen
+      console.error('Fehler beim Speichern vor Tier-Wechsel:', error);
+    }
+
+    // 3. Lokalen State aktualisieren
+    setSavedTierModels(nextSaved);
     setAiTier(value);
 
+    // 4. Neue Modelle für das gewählte Tier laden
     const saved = nextSaved[value];
     if (saved?.generatorModel || saved?.reviewerModel || saved?.fallbackChain) {
       if (saved.generatorModel) setGeneratorModel(saved.generatorModel);
@@ -257,6 +279,7 @@ export default function Settings() {
       const reviewerModelToSave = modelSettings.reviewerModel || reviewerModel;
       const fallbackChainToSave = modelSettings.fallbackChain || fallbackChain;
       const tierToSave = modelSettings.aiTier || aiTier;
+      // ÄNDERUNG 02.03.2025: Stelle sicher, dass alle Tiers im tierModels Objekt erhalten bleiben
       const currentTierModels = {
         ...savedTierModels,
         [tierToSave]: {
@@ -295,6 +318,7 @@ export default function Settings() {
   });
   const { mutateAsync } = updateAiSettingsMutation;
 
+  // Auto-save AI model settings with debounce
   useEffect(() => {
     if (!aiPrefsLoadedRef.current) return;
     if (debouncedModelSettings === lastSavedModelKeyRef.current) return;
@@ -307,6 +331,43 @@ export default function Settings() {
       },
     });
   }, [debouncedModelSettings, mutateAsync]);
+
+  // ÄNDERUNG 02.03.2025: Speichern beim Verlassen der Seite (beforeunload)
+  // Problem: Wenn der Benutzer die Seite verlässt, bevor das Debounce abgeschlossen ist,
+  // gehen Änderungen verloren. Dieser Handler speichert synchron vor dem Verlassen.
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const currentKey = JSON.stringify({ generatorModel, reviewerModel, fallbackChain, aiTier });
+      if (currentKey !== lastSavedModelKeyRef.current) {
+        // Force save - wir verwenden sendBeacon für synchrone Übertragung
+        const payload = {
+          generatorModel,
+          reviewerModel,
+          fallbackModel: fallbackChain[0] || "google/gemma-3-27b-it:free",
+          fallbackChain,
+          tier: aiTier,
+          tierModels: {
+            ...savedTierModels,
+            [aiTier]: { generatorModel, reviewerModel, fallbackChain },
+          },
+          tierDefaults,
+          iterativeMode,
+          iterationCount: Math.min(5, Math.max(2, iterationCount)),
+          iterativeTimeoutMinutes: Math.min(120, Math.max(5, iterativeTimeoutMinutes)),
+          useFinalReview,
+          guidedQuestionRounds: Math.min(10, Math.max(1, guidedQuestionRounds)),
+        };
+      const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+      // ÄNDERUNG 02.03.2025: Fehlerbehandlung für sendBeacon hinzugefügt
+      const success = navigator.sendBeacon('/api/settings/ai', blob);
+      if (!success) {
+        console.warn('sendBeacon failed - settings may not be saved before page unload');
+      }
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [generatorModel, reviewerModel, fallbackChain, aiTier, savedTierModels, tierDefaults, iterativeMode, iterationCount, iterativeTimeoutMinutes, useFinalReview, guidedQuestionRounds]);
 
   return (
     <div className="min-h-screen bg-background">

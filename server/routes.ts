@@ -352,6 +352,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       },
     };
 
+    // ÄNDERUNG 02.03.2025: Sichere Merge-Strategie für tierModels
+    // Problem: Vorher wurden übergebene tierModels nicht korrekt mit bestehenden gemerged.
+    // Jetzt: Wir übernehmen alle übergebenen tierModels vollständig und mergen nur das aktive Tier.
     const merged = {
       ...existingPrefs,
       ...preferences,
@@ -359,7 +362,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ...(preferences.reviewerModel ? { reviewerModel: tierUpdate.reviewerModel } : {}),
       ...(preferences.fallbackModel ? { fallbackModel: tierUpdate.fallbackModel } : {}),
       ...(Array.isArray(preferences.fallbackChain) ? { fallbackChain: tierUpdate.fallbackChain } : {}),
-      tierModels: updatedTierModels,
+      // WICHTIG: Wir verwenden die übergebenen tierModels vollständig, falls vorhanden
+      // Ansonsten mergen wir mit den bestehenden
+      tierModels: preferences.tierModels || updatedTierModels,
     };
 
     await db.update(users)
@@ -1688,21 +1693,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ÄNDERUNG 02.03.2025: SSE-basierter Endpunkt für Guided Finalisierung
   // Dieser Endpunkt ermöglicht Live-Fortschrittsanzeige im DualAiDialog
   // ÄNDERUNG 02.03.2025: Timeout-Handling hinzugefügt für langlaufende Finalisierungen
+  // ÄNDERUNG 02.03.2025: Promise.race für Timeout-Handling (kein AbortController da
+  // service.finalizePRD aktuell kein AbortSignal unterstützt - siehe TODO unten)
+  // TODO: Wenn finalizePRD um AbortSignal-Parameter erweitert wird, kann hier ein
+  // AbortController verwendet werden um die AI-Operation tatsächlich abzubrechen.
+  // Aktuell wird nur die HTTP-Verbindung bei Timeout geschlossen, die Verarbeitung
+  // läuft im Hintergrund weiter.
   app.post('/api/ai/guided-finalize-stream', isAuthenticated, aiRateLimiter, asyncHandler(async (req: AuthenticatedRequest, res) => {
     let editablePrdId: string | null = null;
     let userId = '';
     let sseClosed = false;
     let sseCompleted = false;
-    const abortController = new AbortController();
-    
-    // Timeout-Handling: Verwendet exportierte Konstante
-    const timeoutId = setTimeout(() => {
-      abortController.abort();
-      logger.warn("Guided finalize timeout reached", { hasPrdId: !!editablePrdId });
-    }, GUIDED_FINALIZE_TIMEOUT_MS);
+    let timeoutId: NodeJS.Timeout | null = null;
     
     const cleanupTimeout = () => {
-      if (timeoutId) clearTimeout(timeoutId);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
     };
     
     const isRequestClosed = () =>
@@ -1747,7 +1755,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const handleSseDisconnect = () => {
         if (sseClosed) return;
         sseClosed = true;
-        abortController.abort();
+        cleanupTimeout();
         if (!sseCompleted) {
           logger.warn("Guided finalize SSE client disconnected", { hasPrdId: !!editablePrdId });
         }
@@ -1768,7 +1776,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.write(`data: ${JSON.stringify({ type: 'generation_start' })}\n\n`);
       }
 
-      const result = await service.finalizePRD(sessionId, userId, { templateCategory });
+      // ÄNDERUNG 02.03.2025: Timeout starten BEVOR finalizePRD aufgerufen wird
+      // für konsistente Zeitmessung über alle Modi
+      // WICHTIG: Timer muss VOR finalizePRD() gestartet werden, damit ein hängender
+      // Service-Aufruf trotzdem vom Timeout erfasst wird (Race Condition vermeiden)
+      // ÄNDERUNG 02.03.2025: Vereinfachtes Timeout-Handling ohne AbortController,
+      // da service.finalizePRD kein AbortSignal unterstützt
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          logger.warn("Guided finalize timeout reached", { hasPrdId: !!editablePrdId });
+          reject(new Error('Guided finalize aborted due to timeout'));
+        }, GUIDED_FINALIZE_TIMEOUT_MS);
+      });
+
+      const finalizePromise = service.finalizePRD(sessionId, userId, { templateCategory });
+      const result = await Promise.race([finalizePromise, timeoutPromise]);
 
       if (isRequestClosed()) {
         logger.debug("Guided finalize request closed before response", { hasPrdId: !!editablePrdId });
@@ -1808,12 +1830,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         finalizationStage: assessed.finalizationStage,
       };
 
-      // Send complete event
+      // ÄNDERUNG 02.03.2025: SSE Event basierend auf assessed.status senden
+      // Bei failed_quality wird ein error Event gesendet, sonst complete
       if (!isRequestClosed()) {
-        res.write(`event: complete
+        if (assessed.qualityStatus === 'passed') {
+          res.write(`event: complete
 data: ${JSON.stringify(payload)}
 
 `);
+        } else {
+          // Bei fehlgeschlagener Qualitätsprüfung ein error Event senden
+          res.write(`event: error
+data: ${JSON.stringify({
+            message: 'Compiler quality gate failed after final verification.',
+            status: assessed.qualityStatus,
+            ...payload
+          })}
+
+`);
+        }
       }
       sseCompleted = true;
       safeEndSse();
@@ -1844,9 +1879,10 @@ data: ${JSON.stringify(payload)}
       }
 
     } catch (error: any) {
+      // ÄNDERUNG 02.03.2025: Timer immer aufräumen in finally-equivalentem Pattern
       cleanupTimeout();
       // Ignoriere AbortError vom Timeout - wurde bereits geloggt
-      if (error?.name === 'AbortError') {
+      if (error?.message?.includes('aborted due to timeout') || error?.name === 'AbortError') {
         logger.debug("Guided finalize aborted due to timeout", { hasPrdId: !!editablePrdId });
         return;
       }

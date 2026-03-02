@@ -413,8 +413,8 @@ export function GuidedAiDialog({
       // Callback an Parent (DualAiDialog) - übergibt auch die Anzahl der Antworten
       const answersCount = Object.keys(answers).length;
       onReadyForFinalization(sid, effectiveProjectIdea, answersCount);
-      // Schliesse diesen Dialog
-      onOpenChange(false);
+      // ÄNDERUNG 02.03.2025: KEIN onOpenChange(false) hier - Parent kontrolliert das Schließen
+      // Der Parent (DualAiDialog) schließt diesen Dialog via onReadyForFinalization -> setShowGuidedDialog(false)
       return;
     }
 
@@ -681,8 +681,10 @@ export function GuidedAiDialog({
                 )}
 
                 {/* ÄNDERUNG 02.03.2025: QuestionCard Komponente extrahiert (Issue 7)
-                    IIFE durch separate Komponente ersetzt für bessere Lesbarkeit */}
+                    IIFE durch separate Komponente ersetzt für bessere Lesbarkeit
+                    ÄNDERUNG 02.03.2025: Key hinzugefügt für Neurendering bei Rundenwechsel */}
                 <QuestionCard
+                  key={`round-${roundNumber}-q-${currentQuestionIndex}`}
                   question={questions[currentQuestionIndex]}
                   answers={answers}
                   updateSingleAnswer={updateSingleAnswer}
@@ -701,8 +703,6 @@ export function GuidedAiDialog({
                   }}
                   currentQuestionIndex={currentQuestionIndex}
                   questionsLength={questions.length}
-                  onPrevious={() => setCurrentQuestionIndex(i => Math.max(0, i - 1))}
-                  onNext={() => setCurrentQuestionIndex(i => Math.min(questions.length - 1, i + 1))}
                 />
               </div>
             )}
@@ -807,8 +807,10 @@ export function GuidedAiDialog({
             </>
           )}
 
+          {/* ÄNDERUNG 02.03.2025: Konsistente Footer-Navigation für alle Fragerunden */}
           {step === 'questions' && (
             <>
+              {/* Abbrechen Button - immer verfügbar */}
               <Button
                 variant="outline"
                 onClick={() => {
@@ -819,6 +821,19 @@ export function GuidedAiDialog({
               >
                 {t.common.cancel}
               </Button>
+              
+              {/* Navigation: Zurück zur vorherigen Frage (nicht bei erster Frage) */}
+              {currentQuestionIndex > 0 && (
+                <Button
+                  variant="outline"
+                  onClick={() => setCurrentQuestionIndex(i => Math.max(0, i - 1))}
+                  data-testid="button-prev-question"
+                >
+                  <ArrowRight className="w-4 h-4 mr-1 sm:mr-2 rotate-180" />
+                  {t.common.back}
+                </Button>
+              )}
+              
               {currentQuestionIndex === questions.length - 1 ? (
                 // Letzte Frage: Zeige "Überspringen & Generieren" und "Antworten absenden"
                 <>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -60,6 +60,126 @@ export function DualAiDialog({
   const [guidedSessionInfo, setGuidedSessionInfo] = useState<{projectIdea: string; answersCount: number} | null>(null);
   const { elapsedSeconds, startTimer: startElapsedTimer, stopTimer: stopElapsedTimer, resetTimer: resetElapsedTimer } = useElapsedTimer();
 
+  // ÄNDERUNG 02.03.2025: Mit useCallback memoisiert für korrekte Dependencies
+  // ÄNDERUNG 02.03.2025: AbortController-Support für Cleanup hinzugefügt
+  // MUSS vor dem useEffect definiert werden, das es verwendet
+  // ÄNDERUNG 02.03.2025: abortSignal Parameter entfernt - wird nicht verwendet
+  const handleGuidedFinalization = useCallback(async (sessionId: string) => {
+    setIsGenerating(true);
+    setCurrentStep('guided-finalizing');
+    setProgressDetail(t.dualAi.guidedStartingFinalization);
+    setError('');
+    setTotalTokensSoFar(0);
+
+    startElapsedTimer();
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const response = await fetch('/api/ai/guided-finalize-stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+        },
+        body: JSON.stringify({
+          sessionId,
+          prdId
+        }),
+        credentials: 'include',
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let msg = t.errors.generateFailed;
+        try { msg = JSON.parse(errorText).message || msg; } catch {}
+        throw new Error(msg);
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('text/event-stream') && response.body) {
+        // ÄNDERUNG 02.03.2025: SSE Event-Handler bereinigt
+        // Nur Events behalten die vom Server tatsächlich gesendet werden
+        const data = await readSSEStream(response.body, (event) => {
+          switch (event.type) {
+            case 'generation_start':
+              setProgressDetail(t.dualAi.guidedGenerationStarted);
+              break;
+            case 'complete':
+              setTotalTokensSoFar(event.totalTokens || 0);
+              if (event.modelsUsed?.length > 0) {
+                setGeneratorModel(event.modelsUsed[0]);
+                setReviewerModel(event.modelsUsed[1] || event.modelsUsed[0]);
+              }
+              break;
+          }
+        }, t.errors.generateFailed);
+
+        if (!data) throw new Error('SSE stream ended without result');
+        const finalContent = data.finalContent || data.prdContent || '';
+        if (!finalContent.trim()) throw new Error('AI returned no content. Please retry.');
+
+        setCurrentStep('done');
+        setIsGenerating(false);
+        onContentGenerated(finalContent, data);
+
+        // Session aus localStorage entfernen
+        localStorage.removeItem('nexora_guided_session_v2');
+        setGuidedSessionId(null);
+        setGuidedSessionInfo(null);
+
+        // Dialog nach kurzer Verzögerung schliessen damit Benutzer Erfolg sieht
+        setTimeout(() => {
+          onOpenChange(false);
+          resetState();
+        }, 2000);
+      } else {
+        // Fallback: klassische JSON-Antwort
+        const data = await response.json();
+        const finalContent = data.prdContent || data.finalContent || '';
+        if (!finalContent.trim()) throw new Error('AI returned no content. Please retry.');
+
+        if (data.modelsUsed?.length > 0) {
+          setGeneratorModel(data.modelsUsed[0]);
+          setReviewerModel(data.modelsUsed[1] || data.modelsUsed[0]);
+        }
+
+        setCurrentStep('done');
+        setIsGenerating(false);
+        onContentGenerated(finalContent, data);
+
+        localStorage.removeItem('nexora_guided_session_v2');
+        setGuidedSessionId(null);
+        setGuidedSessionInfo(null);
+
+        // Dialog nach kurzer Verzögerung schliessen damit Benutzer Erfolg sieht
+        setTimeout(() => {
+          onOpenChange(false);
+          resetState();
+        }, 2000);
+      }
+    } catch (err: any) {
+      console.error('Guided finalization error:', err);
+      if (err?.name === 'AbortError') {
+        setError(t.dualAi.timeoutError);
+      } else {
+        setError(err.message || t.errors.generateFailed);
+      }
+      // ÄNDERUNG 02.03.2025: Session aus localStorage entfernen bei Fehler um Endlosschleife zu verhindern
+      localStorage.removeItem('nexora_guided_session_v2');
+      setGuidedSessionId(null);
+      setGuidedSessionInfo(null);
+      setCurrentStep('idle');
+      setIsGenerating(false);
+    } finally {
+      abortControllerRef.current = null;
+      stopElapsedTimer();
+    }
+    // Dependencies für useCallback - alle verwendeten States und Props
+  }, [t, prdId, onContentGenerated, onOpenChange, startElapsedTimer, stopElapsedTimer]);
+
   // ÄNDERUNG 02.03.2025: Lade Guided Session aus localStorage beim Öffnen
   // ÄNDERUNG 02.03.2025: Race Condition behoben - setTimeout mit Closure entfernt
   useEffect(() => {
@@ -84,6 +204,8 @@ export function DualAiDialog({
             });
             // Automatisch in Guided-Finalisierung wechseln
             setWorkflowMode('guided');
+            // Die eigentliche Finalisierung wird durch den useEffect unten ausgeführt
+            // sobald die States aktualisiert wurden
           } else if (isExpired) {
             // Abgelaufene Session bereinigen
             localStorage.removeItem('nexora_guided_session_v2');
@@ -101,12 +223,59 @@ export function DualAiDialog({
     restoreSession();
   }, [open]);
 
+  // ÄNDERUNG 02.03.2025: Automatische Finalisierung nach Session-Restore
+  // Dieser Effect läuft NACHDEM die States (guidedSessionId, workflowMode) aktualisiert wurden
+  // ÄNDERUNG 02.03.2025: Verhindert Race Condition durch setTimeout - nutzt useEffect stattdessen
+  // ÄNDERUNG 02.03.2025: isFinalizing State verhindert Doppelausführung
+  const [isFinalizing, setIsFinalizing] = useState(false);
+  
+  useEffect(() => {
+    if (!open || !guidedSessionId || workflowMode !== 'guided') return;
+    if (currentStep !== 'idle' || isFinalizing) return; // Bereits am Laufen
+    
+    // Prüfe ob wir aus einem Restore kommen (Session ist in localStorage mit step 'finalizing')
+    const stored = localStorage.getItem('nexora_guided_session_v2');
+    if (!stored) return;
+    
+    try {
+      const session = JSON.parse(stored);
+      if (session.step === 'finalizing' && session.sessionId === guidedSessionId) {
+        // Markiere Session als "wird verarbeitet" um Doppelausführung zu verhindern
+        localStorage.setItem('nexora_guided_session_v2', JSON.stringify({
+          ...session,
+          step: 'finalizing_in_progress'
+        }));
+        
+        // ÄNDERUNG 02.03.2025: isFinalizing State setzen um Race Condition zu verhindern
+        setIsFinalizing(true);
+        
+        handleGuidedFinalization(guidedSessionId).catch((err) => {
+          if (err?.name === 'AbortError') return;
+          console.error('Auto-finalization after restore failed:', err);
+          setError(t.errors.generateFailed || 'Finalisierung fehlgeschlagen');
+          setIsGenerating(false);
+          setCurrentStep('idle');
+        }).finally(() => {
+          setIsFinalizing(false);
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to check session state:', err);
+    }
+    // ÄNDERUNG 02.03.2025: isFinalizing zu Dependencies hinzugefügt
+  }, [open, guidedSessionId, workflowMode, currentStep, isFinalizing, handleGuidedFinalization, t.errors.generateFailed]);
+
   // KI-Benutzereinstellungen laden, um den Standard-Workflow-Modus zu setzen
+  // ÄNDERUNG 02.03.2025: Prüfe auf aktive Guided-Session VOR dem Settings-Load
   useEffect(() => {
     if (open) {
-      loadUserSettings();
+      // Wenn eine Guided-Session wiederhergestellt wurde, überspringe Settings-Load
+      // für den workflowMode, damit 'guided' erhalten bleibt
+      if (!guidedSessionId) {
+        loadUserSettings();
+      }
     }
-  }, [open]);
+  }, [open, guidedSessionId]);
 
   const loadUserSettings = async () => {
     const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -372,6 +541,8 @@ export function DualAiDialog({
     // ÄNDERUNG 02.03.2025: Guided Session States zurücksetzen
     setGuidedSessionId(null);
     setGuidedSessionInfo(null);
+    // ÄNDERUNG 02.03.2025: isGenerating zurücksetzen damit Dialog nicht deaktiviert bleibt
+    setIsGenerating(false);
     resetElapsedTimer();
   };
 
@@ -382,118 +553,7 @@ export function DualAiDialog({
     setWorkflowMode('guided');
     setShowGuidedDialog(false);
     // Starte sofort die Finalisierung
-    handleGuidedFinalization(sessionId);
-  };
-
-  const handleGuidedFinalization = async (sessionId: string) => {
-    setIsGenerating(true);
-    setCurrentStep('guided-finalizing');
-    setProgressDetail(t.dualAi.guidedStartingFinalization);
-    setError('');
-    setTotalTokensSoFar(0);
-
-    startElapsedTimer();
-
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    try {
-      const response = await fetch('/api/ai/guided-finalize-stream', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'text/event-stream',
-        },
-        body: JSON.stringify({
-          sessionId,
-          prdId
-        }),
-        credentials: 'include',
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let msg = t.errors.generateFailed;
-        try { msg = JSON.parse(errorText).message || msg; } catch {}
-        throw new Error(msg);
-      }
-
-      const contentType = response.headers.get('content-type') || '';
-      if (contentType.includes('text/event-stream') && response.body) {
-        // ÄNDERUNG 02.03.2025: SSE Event-Handler bereinigt
-        // Nur Events behalten die vom Server tatsächlich gesendet werden
-        const data = await readSSEStream(response.body, (event) => {
-          switch (event.type) {
-            case 'generation_start':
-              setProgressDetail(t.dualAi.guidedGenerationStarted);
-              break;
-            case 'complete':
-              setTotalTokensSoFar(event.totalTokens || 0);
-              if (event.modelsUsed?.length > 0) {
-                setGeneratorModel(event.modelsUsed[0]);
-                setReviewerModel(event.modelsUsed[1] || event.modelsUsed[0]);
-              }
-              break;
-          }
-        }, t.errors.generateFailed);
-
-        if (!data) throw new Error('SSE stream ended without result');
-        const finalContent = data.finalContent || data.prdContent || '';
-        if (!finalContent.trim()) throw new Error('AI returned no content. Please retry.');
-
-        setCurrentStep('done');
-        onContentGenerated(finalContent, data);
-
-        // Session aus localStorage entfernen
-        localStorage.removeItem('nexora_guided_session_v2');
-        setGuidedSessionId(null);
-        setGuidedSessionInfo(null);
-
-        setTimeout(() => {
-          onOpenChange(false);
-          resetState();
-        }, 2000);
-      } else {
-        // Fallback: klassische JSON-Antwort
-        const data = await response.json();
-        const finalContent = data.prdContent || data.finalContent || '';
-        if (!finalContent.trim()) throw new Error('AI returned no content. Please retry.');
-
-        if (data.modelsUsed?.length > 0) {
-          setGeneratorModel(data.modelsUsed[0]);
-          setReviewerModel(data.modelsUsed[1] || data.modelsUsed[0]);
-        }
-
-        setCurrentStep('done');
-        onContentGenerated(finalContent, data);
-
-        localStorage.removeItem('nexora_guided_session_v2');
-        setGuidedSessionId(null);
-        setGuidedSessionInfo(null);
-
-        setTimeout(() => {
-          onOpenChange(false);
-          resetState();
-        }, 2000);
-      }
-    } catch (err: any) {
-      console.error('Guided finalization error:', err);
-      if (err?.name === 'AbortError') {
-        setError(t.dualAi.timeoutError);
-      } else {
-        setError(err.message || t.errors.generateFailed);
-      }
-      // ÄNDERUNG 02.03.2025: Session aus localStorage entfernen bei Fehler um Endlosschleife zu verhindern
-      localStorage.removeItem('nexora_guided_session_v2');
-      setGuidedSessionId(null);
-      setGuidedSessionInfo(null);
-      setCurrentStep('idle');
-      setIsGenerating(false);
-    } finally {
-      abortControllerRef.current = null;
-      stopElapsedTimer();
-    }
+    // Die Finalisierung wird durch den useEffect unten ausgeführt
   };
 
   const getStepIcon = () => {
@@ -644,6 +704,12 @@ export function DualAiDialog({
             <div className="flex items-center gap-2 p-3 rounded-md bg-muted">
               {getStepIcon()}
               <span className="text-sm font-medium">{getStepText()}</span>
+              {/* ÄNDERUNG 02.03.2025: Badge für Guided-Modus */}
+              {workflowMode === 'guided' && (
+                <Badge variant="secondary" className="ml-2 text-xs">
+                  Guided
+                </Badge>
+              )}
               {currentStep !== 'idle' && currentStep !== 'done' && (
                 <div className="ml-auto flex gap-2">
                   <div className="h-2 w-2 rounded-full bg-primary animate-bounce" />
@@ -667,8 +733,8 @@ export function DualAiDialog({
                 )}
               </div>
             )}
-            {/* Live-Statistiken für den Simple Run und Iterationsmodus */}
-            {(currentStep === 'generating' || currentStep === 'iterating') && (
+            {/* Live-Statistiken für den Simple Run, Iterationsmodus und Guided Finalisierung */}
+            {(currentStep === 'generating' || currentStep === 'iterating' || currentStep === 'guided-finalizing') && (
               <div className="flex items-center gap-4 px-3 text-xs text-muted-foreground">
                 {elapsedSeconds > 0 && (
                   <span>{formatElapsedTime(elapsedSeconds)} {t.dualAi.elapsed}</span>
