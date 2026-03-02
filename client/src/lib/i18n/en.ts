@@ -458,6 +458,7 @@ export const en = {
     otherOption: "Other",
     otherOptionDescription: "Enter custom answer...",
     questionCounter: "Question {current} of {total}",
+    nextQuestion: "Next Question",
   },
 
   onboarding: {

@@ -584,7 +584,7 @@ export function GuidedAiDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[95vw] max-w-[700px] h-[90vh] sm:h-auto sm:max-h-[85vh] overflow-hidden flex flex-col p-4 sm:p-6" data-testid="dialog-guided-ai">
+      <DialogContent className="w-[95vw] max-w-[700px] h-[90vh] sm:h-auto sm:max-h-[85vh] overflow-auto flex flex-col p-4 sm:p-6" data-testid="dialog-guided-ai">
         <DialogHeader className="flex-shrink-0 space-y-1 sm:space-y-2">
           <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
             <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5 text-primary flex-shrink-0" />
@@ -819,23 +819,38 @@ export function GuidedAiDialog({
               >
                 {t.common.cancel}
               </Button>
-              <Button
-                variant="outline"
-                onClick={handleSkipQuestions}
-                data-testid="button-skip-questions"
-              >
-                <SkipForward className="w-4 h-4 mr-1 sm:mr-2" />
-                <span className="hidden sm:inline">{t.guidedAi.skipGenerate}</span>
-                <span className="sm:hidden">{t.guidedAi.skip}</span>
-              </Button>
-              <Button
-                onClick={handleSubmitAnswers}
-                disabled={Object.keys(answers).length === 0}
-                data-testid="button-submit-answers"
-              >
-                <ArrowRight className="w-4 h-4 mr-1 sm:mr-2" />
-                {t.guidedAi.continue}
-              </Button>
+              {currentQuestionIndex === questions.length - 1 ? (
+                // Letzte Frage: Zeige "Überspringen & Generieren" und "Antworten absenden"
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={handleSkipQuestions}
+                    data-testid="button-skip-questions"
+                  >
+                    <SkipForward className="w-4 h-4 mr-1 sm:mr-2" />
+                    <span className="hidden sm:inline">{t.guidedAi.skipGenerate}</span>
+                    <span className="sm:hidden">{t.guidedAi.skip}</span>
+                  </Button>
+                  <Button
+                    onClick={handleSubmitAnswers}
+                    disabled={Object.keys(answers).length === 0}
+                    data-testid="button-submit-answers"
+                  >
+                    <ArrowRight className="w-4 h-4 mr-1 sm:mr-2" />
+                    {t.guidedAi.continue}
+                  </Button>
+                </>
+              ) : (
+                // Nicht die letzte Frage: Zeige "Nächste Frage" Button
+                <Button
+                  onClick={() => setCurrentQuestionIndex(i => Math.min(questions.length - 1, i + 1))}
+                  disabled={!answers[questions[currentQuestionIndex]?.id]?.selectedOptionIds?.length}
+                  data-testid="button-next-question"
+                >
+                  <ArrowRight className="w-4 h-4 mr-1 sm:mr-2" />
+                  {t.common.next}
+                </Button>
+              )}
             </>
           )}
 

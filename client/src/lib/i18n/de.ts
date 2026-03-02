@@ -460,6 +460,7 @@ export const de: Translations = {
     otherOption: "Andere",
     otherOptionDescription: "Eigene Antwort eingeben...",
     questionCounter: "Frage {current} von {total}",
+    nextQuestion: "Nächste Frage",
   },
 
   onboarding: {
