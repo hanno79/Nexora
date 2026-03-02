@@ -369,6 +369,21 @@ export function DualAiDialog({
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+
+        // Quality-Gate-Fehler mit brauchbarem Content: Nutze den Content mit Warnung
+        if (response.status === 422 && errorData.finalContent?.trim()) {
+          console.warn('AI generation passed with quality warnings:', errorData.message);
+          setGeneratorModel(errorData.generatorResponse?.model || '');
+          setReviewerModel(errorData.reviewerResponse?.model || '');
+          setCurrentStep('done');
+          onContentGenerated(errorData.finalContent, { ...errorData, qualityStatus: 'failed_quality' });
+          setTimeout(() => {
+            onOpenChange(false);
+            resetState();
+          }, 1500);
+          return;
+        }
+
         throw new Error(errorData.message || t.errors.generateFailed);
       }
 

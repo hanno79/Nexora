@@ -109,6 +109,7 @@ export default function Settings() {
     guidedQuestionRounds?: number;
   }>({
     queryKey: ["/api/settings/ai"],
+    staleTime: 0, // Immer frisch vom Server laden bei Remount
   });
 
   const { data: modelStatusData } = useQuery<{
@@ -126,6 +127,7 @@ export default function Settings() {
 
   const lastSavedModelKeyRef = useRef<string>('');
   const aiPrefsLoadedRef = useRef(false);
+  const flushPendingSaveRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     if (aiPreferences) {
@@ -183,37 +185,21 @@ export default function Settings() {
     'openai/gpt-oss-120b:free',
   ];
 
-  // ÄNDERUNG 02.03.2025: handleTierChange speichert jetzt SOFORT beim Tier-Wechsel
-  // Problem: Vorher wurde nur der lokale State aktualisiert, aber nicht sofort zum Backend gesendet.
-  // Wenn der Benutzer die Seite schnell verließ, gingen die Änderungen verloren.
-  const handleTierChange = async (value: "development" | "production" | "premium") => {
-    // 1. Aktuelle Modelle für das aktuelle Tier sichern
+  // Tier-Wechsel: Nur lokalen State aktualisieren.
+  // Der Debounce-Autosave übernimmt das Speichern (aiTier ändert sich → neuer Key → Save).
+  // Bei SPA-Navigation vor Debounce greift der Unmount-Flush (flushPendingSaveRef).
+  const handleTierChange = (value: "development" | "production" | "premium") => {
+    // 1. Aktuelle Modelle für das aktuelle Tier lokal sichern
     const nextSaved = {
       ...savedTierModels,
       [aiTier]: { generatorModel, reviewerModel, fallbackChain },
     };
-
-    // 2. SOFORT zum Backend senden (nicht warten auf Debounce)
-    // Dies ist der kritische Fix - wir speichern synchron bevor wir das Tier wechseln
-    try {
-      await updateAiSettingsMutation.mutateAsync(
-        JSON.stringify({
-          generatorModel,
-          reviewerModel,
-          fallbackChain,
-          aiTier,  // Aktuelles Tier speichern
-        })
-      );
-    } catch (error) {
-      // Fehler beim Speichern - trotzdem fortfahren, aber loggen
-      console.error('Fehler beim Speichern vor Tier-Wechsel:', error);
-    }
-
-    // 3. Lokalen State aktualisieren
     setSavedTierModels(nextSaved);
+
+    // 2. Tier wechseln
     setAiTier(value);
 
-    // 4. Neue Modelle für das gewählte Tier laden
+    // 3. Modelle für das neue Tier laden
     const saved = nextSaved[value];
     if (saved?.generatorModel || saved?.reviewerModel || saved?.fallbackChain) {
       if (saved.generatorModel) setGeneratorModel(saved.generatorModel);
@@ -308,7 +294,8 @@ export default function Settings() {
         ...prev,
         [aiTier]: { generatorModel, reviewerModel, fallbackChain },
       }));
-      queryClient.invalidateQueries({ queryKey: ["/api/settings/ai"] });
+      // Kein invalidateQueries hier - lokaler State ist Source of Truth während gemountet.
+      // Bei Remount holt useQuery frische Daten (staleTime: 0).
       toast({
         title: t.common.success,
         description: t.settings.aiPreferencesSaved,
@@ -332,42 +319,43 @@ export default function Settings() {
     });
   }, [debouncedModelSettings, mutateAsync]);
 
-  // ÄNDERUNG 02.03.2025: Speichern beim Verlassen der Seite (beforeunload)
-  // Problem: Wenn der Benutzer die Seite verlässt, bevor das Debounce abgeschlossen ist,
-  // gehen Änderungen verloren. Dieser Handler speichert synchron vor dem Verlassen.
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      const currentKey = JSON.stringify({ generatorModel, reviewerModel, fallbackChain, aiTier });
-      if (currentKey !== lastSavedModelKeyRef.current) {
-        // Force save - wir verwenden sendBeacon für synchrone Übertragung
-        const payload = {
-          generatorModel,
-          reviewerModel,
-          fallbackModel: fallbackChain[0] || "google/gemma-3-27b-it:free",
-          fallbackChain,
-          tier: aiTier,
-          tierModels: {
-            ...savedTierModels,
-            [aiTier]: { generatorModel, reviewerModel, fallbackChain },
-          },
-          tierDefaults,
-          iterativeMode,
-          iterationCount: Math.min(5, Math.max(2, iterationCount)),
-          iterativeTimeoutMinutes: Math.min(120, Math.max(5, iterativeTimeoutMinutes)),
-          useFinalReview,
-          guidedQuestionRounds: Math.min(10, Math.max(1, guidedQuestionRounds)),
-        };
-      const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
-      // ÄNDERUNG 02.03.2025: Fehlerbehandlung für sendBeacon hinzugefügt
-      const success = navigator.sendBeacon('/api/settings/ai', blob);
-      if (!success) {
-        console.warn('sendBeacon failed - settings may not be saved before page unload');
-      }
-      }
+  // Flush-Funktion: Wird bei jedem Render aktualisiert, damit Refs immer aktuelle Werte haben.
+  // Wird sowohl von beforeunload (Tab-Close) als auch Unmount (SPA-Navigation) verwendet.
+  flushPendingSaveRef.current = () => {
+    const currentKey = JSON.stringify({ generatorModel, reviewerModel, fallbackChain, aiTier });
+    if (currentKey === lastSavedModelKeyRef.current) return;
+    if (!aiPrefsLoadedRef.current) return;
+    const payload = {
+      generatorModel,
+      reviewerModel,
+      fallbackModel: fallbackChain[0] || "google/gemma-3-27b-it:free",
+      fallbackChain,
+      tier: aiTier,
+      tierModels: {
+        ...savedTierModels,
+        [aiTier]: { generatorModel, reviewerModel, fallbackChain },
+      },
+      tierDefaults,
+      iterativeMode,
+      iterationCount: Math.min(5, Math.max(2, iterationCount)),
+      iterativeTimeoutMinutes: Math.min(120, Math.max(5, iterativeTimeoutMinutes)),
+      useFinalReview,
+      guidedQuestionRounds: Math.min(10, Math.max(1, guidedQuestionRounds)),
     };
+    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    navigator.sendBeacon('/api/settings/ai', blob);
+  };
+
+  // beforeunload (Tab-Close/Refresh) + Unmount-Flush (SPA-Navigation)
+  useEffect(() => {
+    const handleBeforeUnload = () => flushPendingSaveRef.current();
     window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [generatorModel, reviewerModel, fallbackChain, aiTier, savedTierModels, tierDefaults, iterativeMode, iterationCount, iterativeTimeoutMinutes, useFinalReview, guidedQuestionRounds]);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      // Unmount-Flush: Fängt SPA-Navigation ab wo beforeunload nicht feuert
+      flushPendingSaveRef.current();
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-background">

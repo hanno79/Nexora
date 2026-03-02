@@ -169,7 +169,7 @@ export function assembleStructureToMarkdown(structure: PRDStructure): string {
     }
   }
 
-  for (const [heading, content] of Object.entries(structure.otherSections)) {
+  for (const [heading, content] of Object.entries(structure.otherSections || {})) {
     if (content.trim()) {
       parts.push(`## ${heading}\n\n${content.trim()}`);
     }

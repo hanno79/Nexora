@@ -613,7 +613,7 @@ export function logStructureValidation(structure: PRDStructure): void {
     missingSections.push('featureCatalogue');
   }
 
-  const otherKeys = Object.keys(structure.otherSections);
+  const otherKeys = Object.keys(structure.otherSections || {});
 
   logger.info(`📊 PRD Structure Analysis:`);
   logger.info(`  Features found: ${structure.features.length}`);

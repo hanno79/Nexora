@@ -225,6 +225,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }).from(users).where(eq(users.id, userId)).limit(1);
 
     const stored = (user[0]?.aiPreferences as any) || {};
+    
+    // DEBUG: Log raw stored data
+    logger.info('AI Settings GET - Raw stored data', {
+      userId,
+      storedTier: stored.tier,
+      storedTierModelsKeys: Object.keys(stored.tierModels || {}),
+      storedDevelopmentGenerator: stored.tierModels?.development?.generatorModel,
+      storedProductionGenerator: stored.tierModels?.production?.generatorModel,
+      storedPremiumGenerator: stored.tierModels?.premium?.generatorModel,
+    });
+    
     const tier = resolveModelTier(stored.tier);
     const tierKey = tier;
     const tierDefaults = MODEL_TIERS[tierKey] || MODEL_TIERS.development;
@@ -238,13 +249,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       Object.entries(rawTierModels).map(([tierName, modelSet]) => {
         const typedTier = resolveModelTier(tierName);
         const defaults = MODEL_TIERS[typedTier] || MODEL_TIERS.development;
+        const sanitizedGenerator = sanitizeConfiguredModel(modelSet?.generatorModel);
+        const sanitizedReviewer = sanitizeConfiguredModel(modelSet?.reviewerModel);
+        const sanitizedFallback = sanitizeConfiguredModel(modelSet?.fallbackModel);
+        
+        // DEBUG: Log sanitization results
+        logger.debug('AI Settings GET - Sanitizing tier model', {
+          userId,
+          tierName,
+          originalGenerator: modelSet?.generatorModel,
+          sanitizedGenerator,
+          usingDefaultGenerator: !sanitizedGenerator,
+          originalReviewer: modelSet?.reviewerModel,
+          sanitizedReviewer,
+          usingDefaultReviewer: !sanitizedReviewer,
+        });
+        
         return [
           tierName,
           {
             ...(modelSet || {}),
-            generatorModel: sanitizeConfiguredModel(modelSet?.generatorModel) || defaults.generator,
-            reviewerModel: sanitizeConfiguredModel(modelSet?.reviewerModel) || defaults.reviewer,
-            fallbackModel: sanitizeConfiguredModel(modelSet?.fallbackModel) || getDefaultFallbackModelForTier(typedTier),
+            generatorModel: sanitizedGenerator || defaults.generator,
+            reviewerModel: sanitizedReviewer || defaults.reviewer,
+            fallbackModel: sanitizedFallback || getDefaultFallbackModelForTier(typedTier),
             fallbackChain: Array.isArray(modelSet?.fallbackChain) ? modelSet.fallbackChain : undefined,
           },
         ];
@@ -276,19 +303,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
       fallbackChain: resolvedFallbackChain,
       iterativeTimeoutMinutes: stored.iterativeTimeoutMinutes || 30,
     };
+    
+    // DEBUG: Log response
+    logger.info('AI Settings GET - Response', {
+      userId,
+      responseTier: preferences.tier,
+      responseTierModelsKeys: Object.keys(preferences.tierModels || {}),
+      responseDevelopmentGenerator: preferences.tierModels?.development?.generatorModel,
+      responseProductionGenerator: preferences.tierModels?.production?.generatorModel,
+      responsePremiumGenerator: preferences.tierModels?.premium?.generatorModel,
+    });
 
     res.json(preferences);
   }));
 
-  app.patch('/api/settings/ai', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  // Handler für AI-Settings Update (PATCH + POST)
+  // POST wird für navigator.sendBeacon() benötigt (beforeunload/unmount flush)
+  const handleAiSettingsUpdate = asyncHandler(async (req: AuthenticatedRequest, res) => {
     const userId = req.user.claims.sub;
     const preferences = aiPreferencesSchema.parse(req.body);
+
+    // DEBUG: Log incoming request
+    logger.info('AI Settings PATCH - Request received', {
+      userId,
+      incomingTier: preferences.tier,
+      incomingGenerator: preferences.generatorModel,
+      incomingReviewer: preferences.reviewerModel,
+      incomingTierModelsKeys: Object.keys(preferences.tierModels || {}),
+    });
 
     const existing = await db.select({
       aiPreferences: users.aiPreferences
     }).from(users).where(eq(users.id, userId)).limit(1);
     const existingPrefs = (existing[0]?.aiPreferences as any) || {};
     const existingTierModels = existingPrefs.tierModels || {};
+
+    // DEBUG: Log existing data
+    logger.info('AI Settings PATCH - Existing data', {
+      userId,
+      existingTier: existingPrefs.tier,
+      existingTierModelsKeys: Object.keys(existingTierModels),
+      existingDevelopmentGenerator: existingTierModels.development?.generatorModel,
+      existingProductionGenerator: existingTierModels.production?.generatorModel,
+      existingPremiumGenerator: existingTierModels.premium?.generatorModel,
+    });
 
     const activeTier = resolveModelTier(preferences.tier || existingPrefs.tier);
     const activeTierKey = activeTier;
@@ -305,6 +363,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       fallbackModel?: string;
       fallbackChain?: string[];
     } | undefined>;
+    
+    // DEBUG: Log incoming tier models detail
+    logger.info('AI Settings PATCH - Incoming tier models detail', {
+      userId,
+      incomingTierModels: JSON.stringify(incomingTierModels),
+    });
+    
     const sanitizedIncomingTierModels = Object.fromEntries(
       Object.entries(incomingTierModels).map(([tierName, modelSet]) => {
         const typedTier = resolveModelTier(tierName);
@@ -345,27 +410,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const updatedTierModels = {
       ...existingTierModels,
-      ...sanitizedIncomingTierModels,
       [activeTier]: {
         ...(existingTierModels[activeTier] || {}),
         ...tierUpdate,
       },
     };
+    
+    // DEBUG: Log updated tier models
+    logger.info('AI Settings PATCH - Updated tier models', {
+      userId,
+      activeTier,
+      updatedTierModelsKeys: Object.keys(updatedTierModels),
+      updatedDevelopmentGenerator: updatedTierModels.development?.generatorModel,
+      updatedProductionGenerator: updatedTierModels.production?.generatorModel,
+      updatedPremiumGenerator: updatedTierModels.premium?.generatorModel,
+    });
 
-    // ÄNDERUNG 02.03.2025: Sichere Merge-Strategie für tierModels
-    // Problem: Vorher wurden übergebene tierModels nicht korrekt mit bestehenden gemerged.
-    // Jetzt: Wir übernehmen alle übergebenen tierModels vollständig und mergen nur das aktive Tier.
+    // ÄNDERUNG 02.03.2025: Kritischer Bugfix - Reihenfolge der Merge-Operationen korrigiert
+    // Problem 1: ...preferences enthält preferences.tierModels und überschreibt existingPrefs.tierModels
+    // Problem 2: Die Merge-Logik für tierModels war falsch - sie hat incoming Daten priorisiert statt existing
+    // Lösung:
+    // 1. tierModels aus preferences extrahieren (um zu verhindern, dass es existingPrefs überschreibt)
+    // 2. Korrekte Merge-Reihenfolge: existing → updated (mit active tier update) → sanitized incoming
+    const { tierModels: _, ...preferencesWithoutTierModels } = preferences;
+    
+    // Merge-Strategie für tierModels:
+    // - Start: existingTierModels (aus DB)
+    // - Dann: updatedTierModels (existing + active tier update)
+    // - Zuletzt: sanitizedIncomingTierModels (nur wenn vorhanden und explizit gesendet)
+    const finalTierModels = Object.keys(sanitizedIncomingTierModels).length > 0
+      ? { ...existingTierModels, ...updatedTierModels, ...sanitizedIncomingTierModels }
+      : updatedTierModels;
+
     const merged = {
       ...existingPrefs,
-      ...preferences,
+      ...preferencesWithoutTierModels,
       ...(preferences.generatorModel ? { generatorModel: tierUpdate.generatorModel } : {}),
       ...(preferences.reviewerModel ? { reviewerModel: tierUpdate.reviewerModel } : {}),
       ...(preferences.fallbackModel ? { fallbackModel: tierUpdate.fallbackModel } : {}),
       ...(Array.isArray(preferences.fallbackChain) ? { fallbackChain: tierUpdate.fallbackChain } : {}),
-      // WICHTIG: Wir verwenden die übergebenen tierModels vollständig, falls vorhanden
-      // Ansonsten mergen wir mit den bestehenden
-      tierModels: preferences.tierModels || updatedTierModels,
+      // WICHTIG: Die finalen tierModels setzen - das überschreibt ggf. preferences.tierModels
+      tierModels: finalTierModels,
     };
+
+    // DEBUG: Log merged result
+    logger.info('AI Settings PATCH - Merged result', {
+      userId,
+      mergedTierModelsKeys: Object.keys(merged.tierModels || {}),
+      mergedDevelopmentGenerator: merged.tierModels?.development?.generatorModel,
+      mergedProductionGenerator: merged.tierModels?.production?.generatorModel,
+      mergedPremiumGenerator: merged.tierModels?.premium?.generatorModel,
+    });
 
     await db.update(users)
       .set({
@@ -375,7 +470,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .where(eq(users.id, userId));
 
     res.json(merged);
-  }));
+  });
+
+  app.patch('/api/settings/ai', isAuthenticated, handleAiSettingsUpdate);
+  app.post('/api/settings/ai', isAuthenticated, handleAiSettingsUpdate);
 
   // Language Settings routes
   app.patch('/api/settings/language', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
@@ -1008,11 +1106,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         autoSaveRequested: saveRequested,
       };
 
-      if (assessed.qualityStatus !== 'passed') {
-        res.status(qualityStatusHttpCode(assessed.qualityStatus)).json(responsePayload);
-      } else {
-        res.json(responsePayload);
-      }
+      // Always return 200 when generatePRD() succeeded (no throw).
+      // qualityStatus and compilerDiagnostics are included for client-side tracking.
+      // The catch block below handles genuine failures (PrdCompilerQualityError etc.).
+      res.json(responsePayload);
 
       if (editablePrdId) {
         (async () => {
@@ -1831,23 +1928,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
 
       // ÄNDERUNG 02.03.2025: SSE Event basierend auf assessed.status senden
-      // Bei failed_quality wird ein error Event gesendet, sonst complete
+      // ÄNDERUNG 02.03.2025: event: complete -> event: result für Konsistenz mit readSSEStream
+      // Bei failed_quality wird ein error Event gesendet, sonst result
       if (!isRequestClosed()) {
         if (assessed.qualityStatus === 'passed') {
-          res.write(`event: complete
-data: ${JSON.stringify(payload)}
-
-`);
+          res.write(`event: result\ndata: ${JSON.stringify(payload)}\n\n`);
         } else {
           // Bei fehlgeschlagener Qualitätsprüfung ein error Event senden
-          res.write(`event: error
-data: ${JSON.stringify({
+          res.write(`event: error\ndata: ${JSON.stringify({
             message: 'Compiler quality gate failed after final verification.',
             status: assessed.qualityStatus,
             ...payload
-          })}
-
-`);
+          })}\n\n`);
         }
       }
       sseCompleted = true;
@@ -1884,6 +1976,16 @@ data: ${JSON.stringify({
       // Ignoriere AbortError vom Timeout - wurde bereits geloggt
       if (error?.message?.includes('aborted due to timeout') || error?.name === 'AbortError') {
         logger.debug("Guided finalize aborted due to timeout", { hasPrdId: !!editablePrdId });
+        // SSE-Stream sauber beenden mit Timeout-Error
+        if (res.headersSent && !res.writableEnded && !res.destroyed) {
+          res.write(`event: error\ndata: ${JSON.stringify({
+            message: 'Guided finalize aborted due to timeout',
+            qualityStatus: 'cancelled',
+            finalizationStage: 'final',
+            autoSaveRequested: false,
+          })}\n\n`);
+          res.end();
+        }
         return;
       }
       
@@ -1891,16 +1993,13 @@ data: ${JSON.stringify({
       const failure = classifyRunFailure(error);
 
       if (res.headersSent && !res.writableEnded && !res.destroyed) {
-        res.write(`event: error
-data: ${JSON.stringify({
+        res.write(`event: error\ndata: ${JSON.stringify({
           message: failure.message,
           qualityStatus: failure.qualityStatus,
           compilerDiagnostics: failure.diagnostics,
           finalizationStage: 'final',
           autoSaveRequested: false,
-        })}
-
-`);
+        })}\n\n`);
         res.end();
       } else if (!res.headersSent) {
         res.status(qualityStatusHttpCode(failure.qualityStatus)).json({

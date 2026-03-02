@@ -79,7 +79,7 @@ const [guidedProgressDetail, setGuidedProgressDetail] = useState('');
 // Neu: Callback an Parent und schliessen
 
 onComplete(sessionId); // Übergibt Session-ID an DualAiDialog
-onOpenChange(false);   // Schliesst Guided Dialog
+// Closing via parent - onComplete löst im Parent das Schliessen aus
 ```
 
 **Neue Props:**
