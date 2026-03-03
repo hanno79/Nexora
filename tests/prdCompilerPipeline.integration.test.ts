@@ -573,6 +573,40 @@ describe('generate mode - happy path', () => {
       expect(result.content).toContain(heading);
     }
   });
+
+  it('preserves project-specific feature content rather than inserting generic boilerplate', () => {
+    const rawContent = buildTestPrd({ featureCount: 3 });
+    const result = compilePrdDocument(rawContent, {
+      mode: 'generate',
+      language: 'en',
+    });
+
+    // Feature purpose from EN_FEATURE_SPECS should be preserved, not replaced by generic template
+    const f01 = result.structure.features.find(f => f.id === 'F-01');
+    expect(f01).toBeDefined();
+    // Original purpose mentions "securely log in" — NOT the generic "delivers a clearly scoped user capability"
+    expect(f01!.purpose).toMatch(/log\s*in|authenticat/i);
+    expect(f01!.purpose).not.toMatch(/delivers a clearly scoped user capability/i);
+    // Acceptance criteria should reference domain terms, not generic "verifiable by end users"
+    expect(f01!.acceptanceCriteria?.length).toBeGreaterThanOrEqual(1);
+    expect(f01!.acceptanceCriteria![0]).toMatch(/credential|dashboard|password|login/i);
+  });
+
+  it('features retain structured fields from input spec rather than template defaults', () => {
+    const rawContent = buildTestPrd({ featureCount: 2 });
+    const result = compilePrdDocument(rawContent, {
+      mode: 'generate',
+      language: 'en',
+    });
+
+    for (const feature of result.structure.features) {
+      // Each feature should have mainFlow, actors, and trigger from the input spec
+      expect(feature.mainFlow?.length).toBeGreaterThanOrEqual(2);
+      expect(feature.actors).toBeTruthy();
+      // Actors should NOT be the generic "Primary: end user invoking" template
+      expect(feature.actors).not.toMatch(/Primary: end user invoking/i);
+    }
+  });
 });
 
 describe('improve mode - feature count regression', () => {

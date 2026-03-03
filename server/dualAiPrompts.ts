@@ -2,18 +2,13 @@
 // ALL PROMPTS IN ENGLISH for international SaaS platform
 
 import type { TokenUsage } from "@shared/schema";
+import { CANONICAL_PRD_HEADINGS } from './prdCompiler';
 
 /**
  * Get language instruction to prepend to system prompts
  * This ensures AI responds in the user's preferred language
  */
-export const FIXED_ENGLISH_HEADINGS = [
-  'System Vision', 'System Boundaries', 'Domain Model', 'Global Business Rules',
-  'Functional Feature Catalogue', 'Non-Functional Requirements',
-  'Error Handling & Recovery', 'Deployment & Infrastructure',
-  'Definition of Done', 'Out of Scope', 'Timeline & Milestones',
-  'Success Criteria & Acceptance Testing',
-].join(', ');
+export const FIXED_ENGLISH_HEADINGS = CANONICAL_PRD_HEADINGS.join(', ');
 
 export function getLanguageInstruction(language: string | null | undefined): string {
   if (!language || language === 'auto') {
@@ -55,52 +50,38 @@ export const GENERATOR_SYSTEM_PROMPT = `You are an experienced Product Manager a
 Your task is to create a COMPLETE, DETAILED, professional Product Requirements Document based on user input.
 The document must define the system as the sum of independent, implementable features.
 
-REQUIRED STRUCTURE (ALL sections MUST be present):
+REQUIRED STRUCTURE — use EXACTLY these H2 headings, in this order. ALL 12 sections MUST be present:
 
-## Part A — System Context
+## System Vision
+Concise high-level purpose, intended outcome, executive summary (problem, solution, impact), problem statement, and SMART goals with concrete KPIs. This section answers: What is this product, why does it exist, and what does success look like?
 
-1. System Vision (concise high-level purpose and intended outcome — no implementation details)
-2. Executive Summary (2-3 paragraphs with problem, solution, impact)
-3. Problem Statement (detailed: current state, problems, costs)
-4. Goals & Success Metrics (SMART goals with concrete KPIs)
-5. Target Audience & User Personas (at least 2 personas with details)
-6. System Boundaries & Operating Model
-   - Deployment type (web app, mobile, desktop, API)
-   - Runtime environment (browser, server, hybrid)
-   - Online/offline capability
-   - Single-user or multi-user
-   - Persistence strategy (database, local storage, cloud sync)
-   - External integrations (if any)
+## System Boundaries
+Target audience with at least 2 detailed user personas. Operating model: deployment type (web, mobile, desktop, API), runtime (browser, server, hybrid), online/offline capability, single/multi-user, persistence strategy (database, local storage, cloud sync), external integrations. User stories (at least 5-8 in "As a... I want... So that..." format).
 
-## Part B — Feature Specifications (CORE OF THE DOCUMENT)
+## Domain Model
+Core business entities, their attributes, relationships, and constraints. Data types, cardinalities, and entity lifecycle states. This section provides the conceptual data foundation for the feature catalogue.
 
-7. User Stories (at least 5-8 stories in "As a... I want... So that..." format)
-8. Functional Feature Catalogue (MANDATORY)
-   This is the MOST IMPORTANT section. The system is defined as the sum of these features.
-   Identify ALL discrete features and describe each one independently.
-   Each feature MUST follow the Feature Spec Template below:
+## Global Business Rules
+Cross-feature invariants, validation rules, authorization policies, and constraints that apply across the entire system. These rules are referenced by individual features but owned globally.
+
+## Functional Feature Catalogue
+This is the MOST IMPORTANT section. The system is defined as the sum of these features.
+Identify ALL discrete features and describe each one independently.
+Each feature MUST follow the Feature Spec Template below:
 ${FEATURE_SPEC_TEMPLATE}
-   Organize features into:
-   - Must-Have Features (5-10 features, each with FULL F-XX spec)
-   - Nice-to-Have Features (3-5 features, each with FULL F-XX spec)
-   - Future Considerations (2-3 features, brief description only)
+Organize features into:
+- Must-Have Features (5-10 features, each with FULL F-XX spec)
+- Nice-to-Have Features (3-5 features, each with FULL F-XX spec)
+- Future Considerations (2-3 features, brief description only)
 
-## Part C — Technical & Design Context
+## Non-Functional Requirements
+Performance targets (page load, API response times), scalability requirements, reliability/availability targets, security requirements, accessibility (WCAG level), compliance requirements, UI/UX guidelines (design principles, key screens, interaction patterns).
 
-9. Technical Requirements
-   - Architecture Overview (Frontend, Backend, Database, APIs)
-   - Tech Stack Details
-   - Third-Party Integrations
-   - Security Requirements
-   - Performance Requirements
-10. Non-Functional Requirements (Scalability, Reliability, Accessibility, Compliance)
-11. UI/UX Guidelines (Design principles, key screens, interaction patterns)
+## Error Handling & Recovery
+System-wide error handling strategy, user-facing error communication, fallback behaviors, retry policies. External dependencies and associated risks with mitigation strategies.
 
-## Part D — Planning & Risk
-
-12. Timeline & Milestones (realistic phases with time estimates)
-13. Dependencies & Risks (external dependencies, risks with mitigation)
-14. Success Criteria & Acceptance Testing (how success is measured)
+## Deployment & Infrastructure
+Architecture overview (frontend, backend, database, APIs), tech stack details, third-party integrations, CI/CD pipeline, hosting/infrastructure, monitoring and observability.
 
 DEFAULT TECH STACK (overridable by user input):
 - Framework: Next.js + Tailwind CSS
@@ -108,6 +89,18 @@ DEFAULT TECH STACK (overridable by user input):
 - Hosting: Vercel, Netlify or Replit
 - Auth: Replit Auth or Clerk (optional)
 - Payment: Stripe (for payment apps)
+
+## Definition of Done
+Feature-level completion criteria: what conditions must be met before a feature is considered implemented and releasable. Quality gates for code review, testing, and documentation.
+
+## Out of Scope
+Explicit list of features, capabilities, and requirements that are NOT included in this version. This prevents scope creep and clarifies boundaries for developers.
+
+## Timeline & Milestones
+Realistic delivery phases with time estimates, key milestones, and deliverables per phase. Each phase should reference specific F-XX features.
+
+## Success Criteria & Acceptance Testing
+Measurable success indicators (KPIs with target values), acceptance test scenarios, and criteria for determining whether the product meets its goals. Each criterion should be testable and observable.
 
 QUALITY REQUIREMENTS:
 - EACH section must be substantial (at least 3-5 sentences)
@@ -126,10 +119,11 @@ OUTPUT RULES:
 - Do NOT start with phrases like "Here is the PRD", "Hier ist das PRD", "I've created..." etc.
 - Start directly with the first heading (e.g., "# [Product Name]")
 - The document must read as a standalone, polished PRD
+- Use EXACTLY the H2 headings listed above — do not rename, split, or add extra top-level sections
 
 IMPORTANT:
-- ALL 14 sections MUST be present
-- The Functional Feature Catalogue (section 8) is MANDATORY and must contain full F-XX specs
+- ALL 12 sections listed above MUST be present with exactly these H2 headings
+- The Functional Feature Catalogue is MANDATORY and must contain full F-XX specs
 - Each section must contain substantial details
 - Minimum 2500 words for a complete PRD
 - A developer or no-code tool must be able to implement the system feature-by-feature without needing clarification
@@ -142,15 +136,16 @@ FOCUS ON FEATURES AND USER EXPERIENCE, not technical implementation details.
 Keep your questions simple and understandable for non-technical stakeholders.
 
 CHECK REQUIRED SECTIONS (mark missing explicitly):
-✓ System Vision - concise purpose and intended outcome?
-✓ Executive Summary - clear value proposition?
-✓ Problem Statement - user pain points clearly defined?
-✓ Goals & Success Metrics - user-observable success criteria?
-✓ Target Audience & User Personas - at least 2 detailed personas?
-✓ System Boundaries & Operating Model - deployment, runtime, persistence clearly defined?
-✓ User Stories - at least 5-8 concrete user journeys?
+✓ System Vision - purpose, value proposition, problem, goals clearly defined?
+✓ System Boundaries - target audience, personas, deployment, runtime, persistence defined?
+✓ Domain Model - core entities and relationships described?
+✓ Global Business Rules - cross-feature invariants and constraints documented?
 ✓ Functional Feature Catalogue - features described with F-XX specs?
-✓ UI/UX Guidelines - how will users interact with the product?
+✓ Non-Functional Requirements - performance, security, scalability, accessibility, UI/UX?
+✓ Error Handling & Recovery - error strategies, dependencies, risks with mitigation?
+✓ Deployment & Infrastructure - architecture, tech stack, integrations?
+✓ Definition of Done - feature completion criteria and quality gates?
+✓ Out of Scope - explicit exclusions listed?
 ✓ Timeline & Milestones - realistic phases with user-testable deliverables?
 ✓ Success Criteria & Acceptance Testing - how do we know features work?
 
@@ -214,28 +209,26 @@ MANDATORY ACTIONS:
 3. EXPAND superficial sections with additional details
 4. ANSWER ALL questions directly in the PRD with concrete details
 5. CLARIFY vague or ambiguous requirements by adding specifics
-6. ADD missing technical specifications to existing Technical sections
+6. ADD missing technical specifications to Deployment & Infrastructure
 7. SUPPLEMENT missing business metrics and success criteria
 8. ADD security, performance, and scalability details where missing
-9. ENSURE that ALL 14 mandatory sections are present and substantial
+9. ENSURE that ALL 12 mandatory sections are present and substantial
 10. ENSURE the Functional Feature Catalogue contains complete F-XX specs for every Must-Have and Nice-to-Have feature
 11. ADD missing Feature Specs if features are described without the F-XX template
 
-QUALITY CRITERIA for the revised PRD:
-- System Vision: Concise purpose and intended outcome
-- Executive Summary: 2-3 substantial paragraphs
-- Problem Statement: Detailed analysis of the problem
-- Goals & Success Metrics: Concrete, measurable SMART goals
-- Target Audience: At least 2 detailed personas
-- System Boundaries & Operating Model: Complete deployment/runtime/persistence description
-- User Stories: At least 5-8 stories in "As a... I want... So that..." format
+QUALITY CRITERIA for the revised PRD (all 12 sections):
+- System Vision: Purpose, executive summary, problem statement, SMART goals with KPIs
+- System Boundaries: Target audience with personas, deployment, runtime, persistence, user stories
+- Domain Model: Core entities, relationships, data types
+- Global Business Rules: Cross-feature invariants, validation rules, authorization policies
 - Functional Feature Catalogue: Must-Have (5-10), Nice-to-Have (3-5) each with FULL F-XX specs; Future (2-3) brief
-- Technical Requirements: Complete architecture, stack, security, performance
-- Non-Functional Requirements: Scalability, Reliability, Accessibility, Compliance
-- UI/UX Guidelines: Design Principles, Key Screens, Interaction Patterns
-- Timeline: Realistic phases with time estimates
-- Dependencies & Risks: With mitigation strategies
-- Success Criteria: Measurable acceptance tests
+- Non-Functional Requirements: Performance, security, scalability, accessibility, UI/UX guidelines
+- Error Handling & Recovery: Error strategies, dependencies, risks with mitigation
+- Deployment & Infrastructure: Architecture, tech stack, integrations, CI/CD
+- Definition of Done: Feature completion criteria, quality gates
+- Out of Scope: Explicit exclusions for this version
+- Timeline & Milestones: Realistic phases with time estimates and deliverables
+- Success Criteria & Acceptance Testing: Measurable acceptance tests and KPIs
 
 FEATURE SPEC QUALITY CHECK:
 Each F-XX feature spec must include all 10 fields: Purpose, Actors, Trigger, Preconditions, Main Flow, Alternate Flows, Postconditions, Data Impact, UI Impact, Acceptance Criteria.
@@ -260,7 +253,8 @@ OUTPUT RULES:
 - Do NOT include any introductory text like "Here is the revised PRD", "Hier ist die überarbeitete Version", "I've updated the document", etc.
 - Do NOT label the output as "Revised PRD" or "Überarbeitetes PRD" — it is simply THE PRD
 - Do NOT include meta-commentary about what you changed or improved
-- The output must start directly with the first heading (e.g., "# [Product Name]" or "## Part A")
+- The output must start directly with the first heading (e.g., "# [Product Name]" followed by "## System Vision")
+- Use EXACTLY the canonical H2 headings — do not rename, split, or add extra top-level sections
 - A reader should not be able to tell that this document was revised — it should read as a polished, original document`;
 
 // ===================================================================================
@@ -279,10 +273,19 @@ CRITICAL RULES FOR CONTENT PRESERVATION:
 - Each iteration should EXPAND the PRD, not restart it
 - PRESERVE all existing F-XX Feature Specs — expand them, do not delete or replace
 
-MANDATORY SECTIONS the PRD must contain (add missing ones):
-- System Vision (concise purpose and intended outcome)
-- System Boundaries & Operating Model (deployment, runtime, online/offline, single/multi-user, persistence, integrations)
+MANDATORY SECTIONS — the PRD must contain ALL of these H2 headings (add missing ones):
+- System Vision (purpose, executive summary, problem statement, goals with KPIs)
+- System Boundaries (target audience, personas, operating model, deployment, runtime, persistence)
+- Domain Model (core entities, relationships, data types)
+- Global Business Rules (cross-feature invariants, validation rules, authorization policies)
 - Functional Feature Catalogue with F-XX Feature Specs for each discrete feature
+- Non-Functional Requirements (performance, security, scalability, accessibility, UI/UX)
+- Error Handling & Recovery (error strategy, dependencies, risks with mitigation)
+- Deployment & Infrastructure (architecture, tech stack, integrations, CI/CD)
+- Definition of Done (feature completion criteria, quality gates)
+- Out of Scope (explicit exclusions for this version)
+- Timeline & Milestones (phases with deliverables and time estimates)
+- Success Criteria & Acceptance Testing (measurable success indicators)
 ${FEATURE_SPEC_TEMPLATE}
 
 PROCESS:
@@ -294,7 +297,7 @@ PROCESS:
 6. Ask 3-5 CONCRETE questions about the most important open points
 
 REQUIRED STRUCTURE of your output:
-[Write the COMPLETE PRD here — no wrapper heading, no "Revised PRD" label. Start directly with the first PRD heading like "# [Product Name]" or "## Part A — System Context"]
+[Write the COMPLETE PRD here — no wrapper heading, no "Revised PRD" label. Start directly with the first PRD heading like "# [Product Name]" followed by "## System Vision"]
 
 ---
 
@@ -345,7 +348,7 @@ OUTPUT RULES:
 - Do NOT include meta-commentary about what you changed
 - Do NOT include "## Open Points & Gaps" sections — instead, address all gaps through your questions
 - Do NOT include any markdown after the JSON and questions sections except valid PRD content/sections
-- The PRD content must start directly with the first heading (e.g., "# [Product Name]" or "## Part A")
+- The PRD content must start directly with the first heading (e.g., "# [Product Name]" followed by "## System Vision")
 - Separate the PRD from questions using a "---" divider
 
 IMPORTANT:

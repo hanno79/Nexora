@@ -5,12 +5,13 @@ import {
   buildSectionFallback,
   collectPlaceholderIssues,
   collectTemplateSemanticIssues,
-  isLegacyGenericFallback,
+  isGenericFallback,
   type RequiredSectionKey,
 } from './prdTemplateIntent';
 import {
   applyConservativeFeatureAggregation,
   collectBoilerplateRepetitionIssues,
+  collectCrossSectionSimilarityIssues,
   collectLanguageConsistencyIssues,
   collectMetaLeakIssues,
   findFeatureAggregationCandidates,
@@ -538,6 +539,54 @@ function hasStructuredFeatureValue(value: unknown): boolean {
   return hasText(value);
 }
 
+/**
+ * Extract field hints from a feature's rawContent to produce more specific
+ * placeholder text than the fully generic templates.
+ */
+function extractFieldHintsFromRaw(rawContent: string): {
+  purposeHint?: string;
+  actorHint?: string;
+  triggerHint?: string;
+} {
+  if (!rawContent || rawContent.length < 20) return {};
+
+  const lines = rawContent
+    .split('\n')
+    .map(l => l.replace(/^#+\s*/, '').replace(/^\*+/, '').trim())
+    .filter(Boolean);
+
+  // Purpose: First substantive line that isn't a heading/ID or field label
+  let purposeHint: string | undefined;
+  for (const line of lines) {
+    if (/^F-\d+/i.test(line)) continue;
+    if (line.length < 15) continue;
+    if (/^\d+\.\s/.test(line)) continue;
+    purposeHint = line.endsWith('.') ? line : line + '.';
+    break;
+  }
+
+  // Actors: Look for role mentions in rawContent
+  const actorPatterns: [RegExp, string][] = [
+    [/\b(?:admin(?:istrator)?|manager|moderator)\b/i, 'Admin'],
+    [/\b(?:customer|client|buyer|seller|vendor|kaeufer|verkaeufer)\b/i, 'Customer'],
+    [/\b(?:developer|engineer|tester|entwickler)\b/i, 'Developer'],
+    [/\b(?:user|nutzer|anwender|benutzer)\b/i, 'User'],
+  ];
+  const foundActors: string[] = [];
+  for (const [pattern, label] of actorPatterns) {
+    if (pattern.test(rawContent)) foundActors.push(label);
+  }
+  const actorHint = foundActors.length > 0 ? foundActors.join(', ') : undefined;
+
+  // Trigger: Look for action triggers
+  const triggerMatch = rawContent.match(
+    /\b(?:clicks?|taps?|navigates?|submits?|opens?|selects?|starts?|initiates?|klickt|navigiert|startet|oeffnet|waehlt)\s+[^.\n]{5,60}/i
+  );
+  const triggerHint = triggerMatch ? triggerMatch[0].trim() : undefined;
+
+  return { purposeHint, actorHint, triggerHint };
+}
+
 function buildFeatureFieldTemplate(
   featureName: string,
   language: SupportedLanguage,
@@ -642,12 +691,26 @@ export function ensurePrdFeatureDepth(
   for (let i = 0; i < (structure.features || []).length; i++) {
     const feature = { ...(structure.features[i] || {}) } as FeatureSpec;
     const template = buildFeatureFieldTemplate(feature.name || feature.id, language, i);
+    const hints = extractFieldHintsFromRaw(feature.rawContent || '');
     let changed = false;
 
     for (const field of FEATURE_STRUCTURED_FIELDS) {
       const currentValue = (feature as any)[field];
       if (hasStructuredFeatureValue(currentValue)) continue;
-      (feature as any)[field] = (template as any)[field];
+
+      // Prefer rawContent-derived hints over generic templates for key fields
+      if (field === 'purpose' && hints.purposeHint) {
+        (feature as any)[field] = hints.purposeHint;
+      } else if (field === 'actors' && hints.actorHint) {
+        const safeName = feature.name || feature.id;
+        (feature as any)[field] = language === 'de'
+          ? `Akteure: ${hints.actorHint} im Kontext von "${safeName}".`
+          : `Actors: ${hints.actorHint} in the context of "${safeName}".`;
+      } else if (field === 'trigger' && hints.triggerHint) {
+        (feature as any)[field] = hints.triggerHint;
+      } else {
+        (feature as any)[field] = (template as any)[field];
+      }
       changed = true;
     }
 
@@ -696,7 +759,7 @@ export function validatePrdStructure(
       });
     }
 
-    if (isLegacyGenericFallback(String(value || ''))) {
+    if (isGenericFallback(String(value || ''))) {
       issues.push({
         code: `generic_section_boilerplate_${String(def.key)}`,
         message: `Section appears generic and not context-specific: ${def.label}`,
@@ -821,6 +884,11 @@ export function validatePrdStructure(
 
   const metaLeakIssues = collectMetaLeakIssues(structure);
   for (const issue of metaLeakIssues) {
+    issues.push(issue);
+  }
+
+  const crossSectionIssues = collectCrossSectionSimilarityIssues(structure);
+  for (const issue of crossSectionIssues) {
     issues.push(issue);
   }
 

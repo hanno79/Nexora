@@ -226,14 +226,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const stored = (user[0]?.aiPreferences as any) || {};
     
-    // DEBUG: Log raw stored data
-    logger.info('AI Settings GET - Raw stored data', {
-      userId,
-      storedTier: stored.tier,
-      storedTierModelsKeys: Object.keys(stored.tierModels || {}),
-      storedDevelopmentGenerator: stored.tierModels?.development?.generatorModel,
-      storedProductionGenerator: stored.tierModels?.production?.generatorModel,
-      storedPremiumGenerator: stored.tierModels?.premium?.generatorModel,
+    // DEBUG: Log raw stored data (sanitized – no PII)
+    logger.debug('AI Settings GET - Raw stored data', {
+      hasTier: !!stored.tier,
+      tierModelCount: Object.keys(stored.tierModels || {}).length,
+      hasDevGenerator: !!stored.tierModels?.development?.generatorModel,
+      hasProdGenerator: !!stored.tierModels?.production?.generatorModel,
+      hasPremiumGenerator: !!stored.tierModels?.premium?.generatorModel,
     });
     
     const tier = resolveModelTier(stored.tier);
@@ -253,16 +252,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const sanitizedReviewer = sanitizeConfiguredModel(modelSet?.reviewerModel);
         const sanitizedFallback = sanitizeConfiguredModel(modelSet?.fallbackModel);
         
-        // DEBUG: Log sanitization results
+        // DEBUG: Log sanitization results (sanitized – no PII)
         logger.debug('AI Settings GET - Sanitizing tier model', {
-          userId,
           tierName,
-          originalGenerator: modelSet?.generatorModel,
-          sanitizedGenerator,
-          usingDefaultGenerator: !sanitizedGenerator,
-          originalReviewer: modelSet?.reviewerModel,
-          sanitizedReviewer,
-          usingDefaultReviewer: !sanitizedReviewer,
+          hasOriginalGenerator: !!modelSet?.generatorModel,
+          hasSanitizedGenerator: !!sanitizedGenerator,
+          hasOriginalReviewer: !!modelSet?.reviewerModel,
+          hasSanitizedReviewer: !!sanitizedReviewer,
         });
         
         return [
@@ -304,14 +300,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       iterativeTimeoutMinutes: stored.iterativeTimeoutMinutes || 30,
     };
     
-    // DEBUG: Log response
-    logger.info('AI Settings GET - Response', {
-      userId,
+    // DEBUG: Log response (sanitized – no PII)
+    logger.debug('AI Settings GET - Response', {
       responseTier: preferences.tier,
-      responseTierModelsKeys: Object.keys(preferences.tierModels || {}),
-      responseDevelopmentGenerator: preferences.tierModels?.development?.generatorModel,
-      responseProductionGenerator: preferences.tierModels?.production?.generatorModel,
-      responsePremiumGenerator: preferences.tierModels?.premium?.generatorModel,
+      tierModelCount: Object.keys(preferences.tierModels || {}).length,
+      hasDevGenerator: !!preferences.tierModels?.development?.generatorModel,
+      hasProdGenerator: !!preferences.tierModels?.production?.generatorModel,
+      hasPremiumGenerator: !!preferences.tierModels?.premium?.generatorModel,
     });
 
     res.json(preferences);
@@ -323,13 +318,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const userId = req.user.claims.sub;
     const preferences = aiPreferencesSchema.parse(req.body);
 
-    // DEBUG: Log incoming request
-    logger.info('AI Settings PATCH - Request received', {
-      userId,
-      incomingTier: preferences.tier,
-      incomingGenerator: preferences.generatorModel,
-      incomingReviewer: preferences.reviewerModel,
-      incomingTierModelsKeys: Object.keys(preferences.tierModels || {}),
+    // DEBUG: Log incoming request (sanitized – no PII)
+    logger.debug('AI Settings PATCH - Request received', {
+      hasTier: !!preferences.tier,
+      hasGenerator: !!preferences.generatorModel,
+      hasReviewer: !!preferences.reviewerModel,
+      tierModelCount: Object.keys(preferences.tierModels || {}).length,
     });
 
     const existing = await db.select({
@@ -338,14 +332,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const existingPrefs = (existing[0]?.aiPreferences as any) || {};
     const existingTierModels = existingPrefs.tierModels || {};
 
-    // DEBUG: Log existing data
-    logger.info('AI Settings PATCH - Existing data', {
-      userId,
-      existingTier: existingPrefs.tier,
-      existingTierModelsKeys: Object.keys(existingTierModels),
-      existingDevelopmentGenerator: existingTierModels.development?.generatorModel,
-      existingProductionGenerator: existingTierModels.production?.generatorModel,
-      existingPremiumGenerator: existingTierModels.premium?.generatorModel,
+    // DEBUG: Log existing data (sanitized – no PII)
+    logger.debug('AI Settings PATCH - Existing data', {
+      hasTier: !!existingPrefs.tier,
+      tierModelCount: Object.keys(existingTierModels).length,
+      hasDevGenerator: !!existingTierModels.development?.generatorModel,
+      hasProdGenerator: !!existingTierModels.production?.generatorModel,
+      hasPremiumGenerator: !!existingTierModels.premium?.generatorModel,
     });
 
     const activeTier = resolveModelTier(preferences.tier || existingPrefs.tier);
@@ -364,10 +357,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       fallbackChain?: string[];
     } | undefined>;
     
-    // DEBUG: Log incoming tier models detail
-    logger.info('AI Settings PATCH - Incoming tier models detail', {
-      userId,
-      incomingTierModels: JSON.stringify(incomingTierModels),
+    // DEBUG: Log incoming tier models detail (sanitized – no PII)
+    logger.debug('AI Settings PATCH - Incoming tier models detail', {
+      incomingTierCount: Object.keys(incomingTierModels).length,
+      incomingTierNames: Object.keys(incomingTierModels),
     });
     
     const sanitizedIncomingTierModels = Object.fromEntries(
@@ -416,14 +409,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       },
     };
     
-    // DEBUG: Log updated tier models
-    logger.info('AI Settings PATCH - Updated tier models', {
-      userId,
+    // DEBUG: Log updated tier models (sanitized – no PII)
+    logger.debug('AI Settings PATCH - Updated tier models', {
       activeTier,
-      updatedTierModelsKeys: Object.keys(updatedTierModels),
-      updatedDevelopmentGenerator: updatedTierModels.development?.generatorModel,
-      updatedProductionGenerator: updatedTierModels.production?.generatorModel,
-      updatedPremiumGenerator: updatedTierModels.premium?.generatorModel,
+      tierModelCount: Object.keys(updatedTierModels).length,
+      hasDevGenerator: !!updatedTierModels.development?.generatorModel,
+      hasProdGenerator: !!updatedTierModels.production?.generatorModel,
+      hasPremiumGenerator: !!updatedTierModels.premium?.generatorModel,
     });
 
     // ÄNDERUNG 02.03.2025: Kritischer Bugfix - Reihenfolge der Merge-Operationen korrigiert
@@ -453,13 +445,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       tierModels: finalTierModels,
     };
 
-    // DEBUG: Log merged result
-    logger.info('AI Settings PATCH - Merged result', {
-      userId,
-      mergedTierModelsKeys: Object.keys(merged.tierModels || {}),
-      mergedDevelopmentGenerator: merged.tierModels?.development?.generatorModel,
-      mergedProductionGenerator: merged.tierModels?.production?.generatorModel,
-      mergedPremiumGenerator: merged.tierModels?.premium?.generatorModel,
+    // DEBUG: Log merged result (sanitized – no PII)
+    logger.debug('AI Settings PATCH - Merged result', {
+      tierModelCount: Object.keys(merged.tierModels || {}).length,
+      hasDevGenerator: !!merged.tierModels?.development?.generatorModel,
+      hasProdGenerator: !!merged.tierModels?.production?.generatorModel,
+      hasPremiumGenerator: !!merged.tierModels?.premium?.generatorModel,
     });
 
     await db.update(users)

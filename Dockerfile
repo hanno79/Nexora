@@ -3,6 +3,8 @@
 # Stage 1: Build
 FROM node:20-alpine AS builder
 ENV NODE_ENV=development
+ARG VITE_AUTH_PROVIDER=clerk
+ARG VITE_CLERK_PUBLISHABLE_KEY
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY scripts/ensureRollupNative.cjs ./scripts/ensureRollupNative.cjs
@@ -18,6 +20,5 @@ COPY package.json package-lock.json ./
 COPY scripts/ensureRollupNative.cjs ./scripts/ensureRollupNative.cjs
 RUN npm install --omit=dev
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/client/dist ./client/dist
 EXPOSE 5000
 CMD ["node", "dist/index.js"]

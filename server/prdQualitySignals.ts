@@ -995,3 +995,73 @@ export function isHighConfidenceFeatureDuplicate(
   const analysis = findFeatureAggregationCandidates([a, b], category, language);
   return analysis.candidates.some(candidate => candidate.featureIds.length >= 2);
 }
+
+// ---------------------------------------------------------------------------
+// Cross-Section Similarity Detection (V2)
+// Detects near-identical content across different non-feature sections.
+// ---------------------------------------------------------------------------
+
+const CROSS_SECTION_KEYS: Array<keyof PRDStructure> = [
+  'systemVision',
+  'systemBoundaries',
+  'domainModel',
+  'globalBusinessRules',
+  'nonFunctional',
+  'errorHandling',
+  'deployment',
+  'definitionOfDone',
+  'outOfScope',
+  'timelineMilestones',
+  'successCriteria',
+];
+
+function tokenizeForJaccard(text: string): Set<string> {
+  return new Set(
+    String(text || '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .split(/\s+/)
+      .filter(w => w.length >= 3)
+  );
+}
+
+function jaccardSim(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 1;
+  if (a.size === 0 || b.size === 0) return 0;
+  let intersection = 0;
+  for (const token of a) {
+    if (b.has(token)) intersection++;
+  }
+  const union = a.size + b.size - intersection;
+  return union > 0 ? intersection / union : 0;
+}
+
+export function collectCrossSectionSimilarityIssues(structure: PRDStructure): QualityIssue[] {
+  const issues: QualityIssue[] = [];
+  const sectionData = new Map<string, { text: string; tokens: Set<string> }>();
+
+  for (const key of CROSS_SECTION_KEYS) {
+    const text = String((structure as any)[key] || '').trim();
+    if (text.length >= 20) {
+      sectionData.set(key, { text, tokens: tokenizeForJaccard(text) });
+    }
+  }
+
+  const keys = Array.from(sectionData.keys());
+  for (let i = 0; i < keys.length; i++) {
+    for (let j = i + 1; j < keys.length; j++) {
+      const a = sectionData.get(keys[i])!;
+      const b = sectionData.get(keys[j])!;
+      const similarity = jaccardSim(a.tokens, b.tokens);
+      if (similarity > 0.7) {
+        issues.push({
+          code: 'cross_section_near_identical',
+          message: `Sections "${keys[i]}" and "${keys[j]}" have near-identical content (${Math.round(similarity * 100)}% token overlap). Each section must provide distinct, section-specific information.`,
+          severity: 'error',
+        });
+      }
+    }
+  }
+
+  return issues;
+}

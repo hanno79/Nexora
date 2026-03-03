@@ -1,18 +1,7 @@
 import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
-import { createServer as createViteServer, createLogger } from "vite";
 import { type Server } from "http";
-import viteConfig from "../vite.config";
-
-const viteLogger = createLogger();
-const viteLoggerFailFast = process.env.VITE_LOGGER_FAIL_FAST === "true";
-const viteDefaultAllowedHosts = ["localhost", "127.0.0.1", "::1"];
-const viteAllowedHostsFromEnv = process.env.VITE_ALLOWED_HOSTS
-  ?.split(",")
-  .map(host => host.trim())
-  .filter(Boolean);
-const viteAllowAllHosts = process.env.VITE_DEV_PUBLIC === "true";
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -26,6 +15,20 @@ export function log(message: string, source = "express") {
 }
 
 export async function setupVite(app: Express, _server: Server) {
+  const viteModule = await import("vite");
+  const createViteServer = viteModule.createServer;
+  const createLogger = viteModule.createLogger;
+  const viteConfig = (await import("../vite.config")).default;
+
+  const viteLogger = createLogger();
+  const viteLoggerFailFast = process.env.VITE_LOGGER_FAIL_FAST === "true";
+  const viteDefaultAllowedHosts = ["localhost", "127.0.0.1", "::1"];
+  const viteAllowedHostsFromEnv = process.env.VITE_ALLOWED_HOSTS
+    ?.split(",")
+    .map(host => host.trim())
+    .filter(Boolean);
+  const viteAllowAllHosts = process.env.VITE_DEV_PUBLIC === "true";
+
   const allowedHosts: true | string[] = viteAllowAllHosts
     ? true
     : (viteAllowedHostsFromEnv?.length ? viteAllowedHostsFromEnv : viteDefaultAllowedHosts);

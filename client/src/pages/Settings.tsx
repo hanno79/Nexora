@@ -343,7 +343,15 @@ export default function Settings() {
       guidedQuestionRounds: Math.min(10, Math.max(1, guidedQuestionRounds)),
     };
     const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
-    navigator.sendBeacon('/api/settings/ai', blob);
+    const queued = navigator.sendBeacon('/api/settings/ai', blob);
+    if (!queued) {
+      fetch('/api/settings/ai', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'application/json' },
+        keepalive: true,
+      }).catch(() => {});
+    }
   };
 
   // beforeunload (Tab-Close/Refresh) + Unmount-Flush (SPA-Navigation)

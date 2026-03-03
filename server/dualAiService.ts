@@ -9,6 +9,7 @@ import {
   REVIEW_STANDARD,
   REVIEW_FINAL,
   REPAIR_PASS,
+  CONTENT_REVIEW_REFINE,
   ITERATIVE_ANSWERER,
   ITERATIVE_ANSWERER_RETRY,
   ITERATIVE_CLARIFYING_Q,
@@ -329,6 +330,19 @@ Create an improved version that incorporates the new requirements while keeping 
           model: repairResult.model,
           usage: repairResult.usage,
           finishReason: repairResult.finishReason,
+        };
+      },
+      contentRefineGenerator: async (refinePrompt: string) => {
+        const refineResult = await client.callWithFallback(
+          'generator',
+          'You are a PRD content refinement specialist. Follow the instructions precisely.' + langInstruction,
+          refinePrompt,
+          CONTENT_REVIEW_REFINE
+        );
+        return {
+          content: refineResult.content,
+          model: refineResult.model,
+          usage: refineResult.usage,
         };
       },
     } as const;
@@ -1612,6 +1626,19 @@ Your task:
             model: repairResult.model,
             usage: repairResult.usage,
             finishReason: repairResult.finishReason,
+          };
+        },
+        contentRefineGenerator: async (refinePrompt: string) => {
+          const refineResult = await opts.client.callWithFallback(
+            'generator',
+            'You are a PRD content refinement specialist. Follow the instructions precisely.' + opts.langInstruction,
+            refinePrompt,
+            CONTENT_REVIEW_REFINE
+          );
+          return {
+            content: refineResult.content,
+            model: refineResult.model,
+            usage: refineResult.usage,
           };
         },
       };

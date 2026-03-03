@@ -481,6 +481,44 @@ describe('prdCompilerFinalizer', () => {
     expect(repairGenerator).toHaveBeenCalledTimes(2);
   });
 
+  it('fallback sections contain template-appropriate content', async () => {
+    // Only system vision and feature catalogue are provided → all others are fallbacks
+    const minimal = [
+      '## System Vision',
+      'A task management tool for agile development teams.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      '### F-01: Sprint Board',
+      '1. Purpose',
+      'Manage sprint tasks on a kanban board.',
+      '10. Acceptance Criteria',
+      '- Tasks can be moved between columns.',
+    ].join('\n');
+
+    const result = await finalizeWithCompilerGates({
+      initialResult: { content: minimal, model: 'mock', usage: usage(80) },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Generate an agile task management tool PRD.',
+      repairGenerator: async () => ({ content: minimal, model: 'mock', usage: usage(10) }),
+    });
+
+    expect(result.quality.valid).toBe(true);
+    // Fallback sections should exist and contain relevant keywords, not empty
+    expect(result.content).toContain('## Definition of Done');
+    expect(result.content).toContain('## Out of Scope');
+    expect(result.content).toContain('## Timeline & Milestones');
+    // Definition of Done should mention criteria/quality-related terms
+    const dodMatch = result.content.match(/## Definition of Done\n([\s\S]*?)(?=\n## |\n$)/);
+    expect(dodMatch).toBeTruthy();
+    expect(dodMatch![1]).toMatch(/criteria|quality|test|review|complete/i);
+    // Timeline should mention phases or milestones
+    const timelineMatch = result.content.match(/## Timeline & Milestones\n([\s\S]*?)(?=\n## |\n$)/);
+    expect(timelineMatch).toBeTruthy();
+    expect(timelineMatch![1]).toMatch(/phase|milestone|week|sprint|delivery/i);
+  });
+
   it('returns qualityScore in result', async () => {
     const complete = [
       '## System Vision', 'Complete PRD output.',

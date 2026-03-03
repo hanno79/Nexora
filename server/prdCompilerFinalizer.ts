@@ -7,6 +7,7 @@ import {
   type PrdQualityReport,
 } from './prdCompiler';
 import { buildTemplateInstruction } from './prdTemplateIntent';
+import { reviewAndRefineContent, type ContentReviewResult } from './prdContentReviewer';
 
 type SupportedLanguage = 'de' | 'en';
 
@@ -27,6 +28,11 @@ export interface FinalizeWithCompilerGatesOptions {
   maxRepairPasses?: number;
   repairGenerator: (repairPrompt: string, pass: number) => Promise<CompilerModelResult>;
   compileDocument?: CompilePrdDocumentFn;
+  /** Enable post-compiler content review to detect and fix filler/repetition. Default: true. */
+  enableContentReview?: boolean;
+  /** Generator for the content-refine AI call. If not provided, content review runs
+   *  in analysis-only mode (issues reported but no AI refinement). */
+  contentRefineGenerator?: (prompt: string) => Promise<{ content: string; model: string; usage: any }>;
 }
 
 export interface FinalizeWithCompilerGatesResult {
@@ -35,6 +41,10 @@ export interface FinalizeWithCompilerGatesResult {
   quality: PrdQualityReport;
   qualityScore: number;
   repairAttempts: CompilerModelResult[];
+  /** Content review results (populated when enableContentReview is true). */
+  contentReview?: ContentReviewResult;
+  /** Whether the content was refined by AI after content review. */
+  contentRefined?: boolean;
 }
 
 export class PrdCompilerQualityError extends Error {
@@ -265,11 +275,42 @@ export async function finalizeWithCompilerGates(
     );
   }
 
+  // --- Content Review & Refine (post-compiler pass) ---
+  const enableContentReview = options.enableContentReview !== false;
+  let contentReview: ContentReviewResult | undefined;
+  let contentRefined = false;
+
+  if (enableContentReview) {
+    const refineResult = await reviewAndRefineContent({
+      content: compiled.content,
+      structure: compiled.structure,
+      language: language || 'en',
+      templateCategory,
+      fallbackSections: compiled.quality.fallbackSections,
+      refineGenerator: options.contentRefineGenerator,
+    });
+
+    contentReview = refineResult.reviewResult;
+    contentRefined = refineResult.refined;
+
+    if (refineResult.refined) {
+      // Re-compile the refined content to ensure structural integrity
+      const recompiled = compileCurrent(refineResult.content);
+      if (recompiled.quality.valid || qualityScore(recompiled.quality) >= bestScore) {
+        compiled = recompiled;
+        bestScore = Math.max(bestScore, qualityScore(recompiled.quality));
+      }
+      // If recompile degraded quality, keep the pre-refinement version
+    }
+  }
+
   return {
     content: compiled.content,
     structure: compiled.structure,
     quality: compiled.quality,
     qualityScore: bestScore,
     repairAttempts,
+    contentReview,
+    contentRefined,
   };
 }

@@ -60,6 +60,24 @@ export function DualAiDialog({
   const [guidedSessionInfo, setGuidedSessionInfo] = useState<{projectIdea: string; answersCount: number} | null>(null);
   const { elapsedSeconds, startTimer: startElapsedTimer, stopTimer: stopElapsedTimer, resetTimer: resetElapsedTimer } = useElapsedTimer();
 
+  const resetState = useCallback(() => {
+    setUserInput('');
+    setCurrentStep('idle');
+    setGeneratorModel('');
+    setReviewerModel('');
+    setError('');
+    setCurrentIteration(0);
+    setTotalIterations(0);
+    setProgressDetail('');
+    setTotalTokensSoFar(0);
+    // ÄNDERUNG 02.03.2025: Guided Session States zurücksetzen
+    setGuidedSessionId(null);
+    setGuidedSessionInfo(null);
+    // ÄNDERUNG 02.03.2025: isGenerating zurücksetzen damit Dialog nicht deaktiviert bleibt
+    setIsGenerating(false);
+    resetElapsedTimer();
+  }, [resetElapsedTimer]);
+
   // ÄNDERUNG 02.03.2025: Mit useCallback memoisiert für korrekte Dependencies
   // ÄNDERUNG 02.03.2025: AbortController-Support für Cleanup hinzugefügt
   // MUSS vor dem useEffect definiert werden, das es verwendet
@@ -178,7 +196,7 @@ export function DualAiDialog({
       stopElapsedTimer();
     }
     // Dependencies für useCallback - alle verwendeten States und Props
-  }, [t, prdId, onContentGenerated, onOpenChange, startElapsedTimer, stopElapsedTimer]);
+  }, [t, prdId, onContentGenerated, onOpenChange, startElapsedTimer, stopElapsedTimer, resetState]);
 
   // ÄNDERUNG 02.03.2025: Lade Guided Session aus localStorage beim Öffnen
   // ÄNDERUNG 02.03.2025: Race Condition behoben - setTimeout mit Closure entfernt
@@ -373,8 +391,8 @@ export function DualAiDialog({
         // Quality-Gate-Fehler mit brauchbarem Content: Nutze den Content mit Warnung
         if (response.status === 422 && errorData.finalContent?.trim()) {
           console.warn('AI generation passed with quality warnings:', errorData.message);
-          setGeneratorModel(errorData.generatorResponse?.model || '');
-          setReviewerModel(errorData.reviewerResponse?.model || '');
+          setGeneratorModel(errorData.generatorResponse?.model || errorData.generatorModel || '');
+          setReviewerModel(errorData.reviewerResponse?.model || errorData.reviewerModel || '');
           setCurrentStep('done');
           onContentGenerated(errorData.finalContent, { ...errorData, qualityStatus: 'failed_quality' });
           setTimeout(() => {
@@ -543,23 +561,6 @@ export function DualAiDialog({
     }
   };
 
-  const resetState = () => {
-    setUserInput('');
-    setCurrentStep('idle');
-    setGeneratorModel('');
-    setReviewerModel('');
-    setError('');
-    setCurrentIteration(0);
-    setTotalIterations(0);
-    setProgressDetail('');
-    setTotalTokensSoFar(0);
-    // ÄNDERUNG 02.03.2025: Guided Session States zurücksetzen
-    setGuidedSessionId(null);
-    setGuidedSessionInfo(null);
-    // ÄNDERUNG 02.03.2025: isGenerating zurücksetzen damit Dialog nicht deaktiviert bleibt
-    setIsGenerating(false);
-    resetElapsedTimer();
-  };
 
   // ÄNDERUNG 02.03.2025: Handler für Guided Finalisierung
   const handleGuidedReadyForFinalization = (sessionId: string, projectIdea: string, answersCount: number) => {

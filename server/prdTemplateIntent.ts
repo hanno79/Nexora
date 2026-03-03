@@ -44,6 +44,17 @@ interface TemplateProfile {
     disallowedFeatureNameSignals?: RegExp[];
     maxDisallowedFeatureRatio?: number;
   };
+  /** Template-specific fallback overrides. Only define where a template needs
+   *  DIFFERENT fallback content than the base. Omitted keys use BASE_SECTION_FALLBACKS. */
+  sectionFallbacks?: Partial<Record<RequiredSectionKey, {
+    templateEn: string;
+    templateDe: string;
+  }>>;
+  /** Template-specific hints for content quality review. */
+  contentReviewHints?: {
+    requiredSectionContent?: Partial<Record<RequiredSectionKey, RegExp[]>>;
+    qualityWeights?: { specificity: number; uniqueness: number; depth: number };
+  };
 }
 
 const STOP_WORDS = new Set([
@@ -89,6 +100,12 @@ const TEMPLATE_PROFILES: Record<PrdTemplateCategory, TemplateProfile> = {
       ],
       maxDisallowedFeatureRatio: 0.35,
     },
+    contentReviewHints: {
+      requiredSectionContent: {
+        successCriteria: [/acceptance|akzeptanz|test/i, /feature|workflow/i],
+        definitionOfDone: [/criteria|kriterien|review|test/i],
+      },
+    },
   },
   epic: {
     category: 'epic',
@@ -113,6 +130,22 @@ const TEMPLATE_PROFILES: Record<PrdTemplateCategory, TemplateProfile> = {
       ],
       requiredSections: ['timelineMilestones', 'outOfScope'],
       minFeatureCount: 5,
+    },
+    sectionFallbacks: {
+      timelineMilestones: {
+        templateEn: 'Delivery is structured in milestones with ownership:\n- Milestone 1: Foundation & data model — Owner: Backend team\n- Milestone 2: Core feature set ({features}) — Owner: Cross-functional\n- Milestone 3: Integration & dependencies — Owner: Platform team\n- Milestone 4: Acceptance & release — Owner: QA + Stakeholders\nEach milestone has defined entry/exit criteria and dependency gates.',
+        templateDe: 'Lieferung ist in Meilensteine mit Verantwortung strukturiert:\n- Meilenstein 1: Grundlage & Datenmodell — Verantwortung: Backend-Team\n- Meilenstein 2: Kern-Feature-Set ({features}) — Verantwortung: Cross-funktional\n- Meilenstein 3: Integration & Abhaengigkeiten — Verantwortung: Plattform-Team\n- Meilenstein 4: Abnahme & Release — Verantwortung: QA + Stakeholder\nJeder Meilenstein hat definierte Entry-/Exit-Kriterien und Abhaengigkeits-Gates.',
+      },
+      outOfScope: {
+        templateEn: 'The following are explicitly OUT OF SCOPE for this epic:\n- Features planned for later phases (post-MVP)\n- Cross-team dependencies not yet agreed upon\n- Extensions beyond the defined feature catalogue ({features})\n- Organizational or process changes outside the product scope',
+        templateDe: 'Folgende Aspekte sind fuer dieses Epic explizit NICHT im Scope:\n- Features die fuer spaetere Phasen geplant sind (post-MVP)\n- Cross-Team-Abhaengigkeiten die noch nicht vereinbart sind\n- Erweiterungen ueber den definierten Feature-Katalog hinaus ({features})\n- Organisations- oder Prozessaenderungen ausserhalb des Produktscopes',
+      },
+    },
+    contentReviewHints: {
+      requiredSectionContent: {
+        timelineMilestones: [/milestone|meilenstein|phase/i, /owner|verantwort/i],
+        outOfScope: [/scope|phase|later|spaeter/i],
+      },
     },
   },
   technical: {
@@ -148,6 +181,19 @@ const TEMPLATE_PROFILES: Record<PrdTemplateCategory, TemplateProfile> = {
       ],
       maxDisallowedFeatureRatio: 0.4,
     },
+    sectionFallbacks: {
+      nonFunctional: {
+        templateEn: 'Performance: API latency p95 < 200ms, throughput > 100 req/s.\nReliability: 99.9% uptime SLA, automated failover.\nSecurity: OWASP Top 10 mitigated, TLS 1.3, secrets management.\nObservability: Structured logging, distributed tracing, alerting on error rate > 1%.\nScalability: Horizontal scaling for stateless services, connection pooling for DB.',
+        templateDe: 'Performance: API-Latenz p95 < 200ms, Durchsatz > 100 req/s.\nZuverlaessigkeit: 99.9% Uptime-SLA, automatisches Failover.\nSicherheit: OWASP Top 10 mitigiert, TLS 1.3, Secrets-Management.\nObservability: Strukturiertes Logging, Distributed Tracing, Alerting bei Fehlerrate > 1%.\nSkalierbarkeit: Horizontale Skalierung fuer stateless Services, Connection Pooling fuer DB.',
+      },
+    },
+    contentReviewHints: {
+      requiredSectionContent: {
+        nonFunctional: [/latency|latenz|throughput|durchsatz|p\d{2}/i, /security|sicherheit/i],
+        deployment: [/architecture|architektur|infrastructure|infrastruktur/i],
+      },
+      qualityWeights: { specificity: 30, uniqueness: 30, depth: 40 },
+    },
   },
   'product-launch': {
     category: 'product-launch',
@@ -181,6 +227,22 @@ const TEMPLATE_PROFILES: Record<PrdTemplateCategory, TemplateProfile> = {
         /\b(dark mode|theme|profil|profile|avatar|chat|social|friend|follower)\b/i,
       ],
       maxDisallowedFeatureRatio: 0.4,
+    },
+    sectionFallbacks: {
+      successCriteria: {
+        templateEn: 'Launch is successful when:\n- Feature adoption rate reaches target within 30 days post-launch\n- User activation funnel shows > 40% completion from signup to first action\n- Stakeholder sign-off on all launch-critical features ({features})\n- Support ticket volume stays below defined threshold\n- No P0/P1 bugs reported in the first 7 days post-launch',
+        templateDe: 'Der Launch ist erfolgreich wenn:\n- Feature-Adoptionsrate innerhalb von 30 Tagen nach Launch das Ziel erreicht\n- Nutzer-Aktivierungs-Funnel zeigt > 40% Abschluss von Registrierung bis erste Aktion\n- Stakeholder-Abnahme aller launch-kritischen Features ({features})\n- Support-Ticketvolumen bleibt unter definierter Schwelle\n- Keine P0/P1-Bugs in den ersten 7 Tagen nach Launch',
+      },
+      timelineMilestones: {
+        templateEn: 'Launch timeline:\n- Pre-Launch: Feature freeze, QA, stakeholder review\n- Soft Launch: Limited rollout to beta users, collect feedback\n- General Availability: Full rollout with marketing support\n- Post-Launch: Monitor KPIs, address feedback, iterate\nFeatures in scope: {features}',
+        templateDe: 'Launch-Zeitplan:\n- Pre-Launch: Feature-Freeze, QA, Stakeholder-Review\n- Soft Launch: Begrenzter Rollout an Beta-Nutzer, Feedback sammeln\n- General Availability: Vollstaendiger Rollout mit Marketing-Unterstuetzung\n- Post-Launch: KPIs monitoren, Feedback adressieren, iterieren\nFeatures im Scope: {features}',
+      },
+    },
+    contentReviewHints: {
+      requiredSectionContent: {
+        successCriteria: [/adoption|aktivierung|conversion|launch/i, /metric|kpi|messung/i],
+        timelineMilestones: [/launch|rollout|beta/i, /stakeholder/i],
+      },
     },
   },
   custom: {
@@ -475,6 +537,78 @@ export function buildTemplateInstruction(
   return `${prefix}\n- ${rules.join('\n- ')}`;
 }
 
+// ---------------------------------------------------------------------------
+// Section-specific base fallback templates.
+// Each section has its OWN distinct template structure.
+// Templates can use {features} placeholder (replaced with top feature names).
+// Template-specific overrides in TemplateProfile.sectionFallbacks take priority.
+// ---------------------------------------------------------------------------
+
+type FallbackTemplatePair = { templateEn: string; templateDe: string };
+
+const BASE_SECTION_FALLBACKS: Record<RequiredSectionKey, FallbackTemplatePair> = {
+  systemVision: {
+    templateEn: 'The product provides a clearly defined capability for its target users, enabling them to {context} with measurable impact.',
+    templateDe: 'Das Produkt bietet eine klar definierte Faehigkeit fuer seine Zielnutzer, die es ihnen ermoeglicht, {context} mit messbarem Mehrwert zu nutzen.',
+  },
+  systemBoundaries: {
+    templateEn: 'The system operates within the following boundaries:\n- Deployment: Web application\n- Runtime: Browser-based client with server backend\n- Persistence: Database-backed with defined data model\n- Integrations: As defined in the feature catalogue ({features})',
+    templateDe: 'Das System operiert innerhalb folgender Grenzen:\n- Deployment: Webanwendung\n- Laufzeit: Browser-basierter Client mit Server-Backend\n- Persistenz: Datenbankgestuetzt mit definiertem Datenmodell\n- Integrationen: Wie im Feature-Katalog definiert ({features})',
+  },
+  domainModel: {
+    templateEn: 'Core entities are derived from the feature catalogue ({features}). Each entity has defined relationships, constraints, and lifecycle rules documented in the feature specifications.',
+    templateDe: 'Kernentitaeten leiten sich aus dem Feature-Katalog ab ({features}). Jede Entitaet hat definierte Beziehungen, Randbedingungen und Lebenszyklusregeln, die in den Feature-Spezifikationen dokumentiert sind.',
+  },
+  globalBusinessRules: {
+    templateEn: 'The following invariants apply across all features:\n- Data consistency: All mutations are atomic and validated before persistence\n- Authorization: Actions are scoped to the authenticated user context\n- Error handling: Failures produce clear feedback without side effects',
+    templateDe: 'Folgende Invarianten gelten uebergreifend fuer alle Features:\n- Datenkonsistenz: Alle Mutationen sind atomar und vor der Persistierung validiert\n- Autorisierung: Aktionen sind auf den authentifizierten Nutzerkontext beschraenkt\n- Fehlerbehandlung: Fehler erzeugen klare Rueckmeldungen ohne Seiteneffekte',
+  },
+  nonFunctional: {
+    templateEn: 'Performance: Page load < 3s, API responses < 500ms.\nReliability: System recovers gracefully from transient failures.\nAccessibility: WCAG 2.1 AA compliance for all user-facing features.\nSecurity: Input validation, authentication, and authorization enforced on all endpoints.',
+    templateDe: 'Performance: Seitenladezeit < 3s, API-Antworten < 500ms.\nZuverlaessigkeit: System erholt sich von transienten Fehlern ohne Datenverlust.\nBarrierefreiheit: WCAG 2.1 AA fuer alle nutzersichtbaren Features.\nSicherheit: Eingabevalidierung, Authentifizierung und Autorisierung auf allen Endpunkten.',
+  },
+  errorHandling: {
+    templateEn: 'Error handling follows these principles:\n- Validation errors: Return field-level messages before any mutation\n- Network failures: Retry with exponential backoff, surface timeout after 3 attempts\n- Server errors: Log details server-side, show user-friendly message client-side\n- Data conflicts: Detect and report without silent overwrites',
+    templateDe: 'Fehlerbehandlung folgt diesen Prinzipien:\n- Validierungsfehler: Feldspezifische Meldungen vor jeder Mutation\n- Netzwerkfehler: Retry mit exponentiellem Backoff, Timeout nach 3 Versuchen\n- Serverfehler: Details serverseitig loggen, nutzerfreundliche Meldung clientseitig\n- Datenkonflikte: Erkennen und melden ohne stilles Ueberschreiben',
+  },
+  deployment: {
+    templateEn: 'The application is deployed as a web service with:\n- Frontend: Single-page application served via CDN\n- Backend: API server with database connectivity\n- Environment: Development, Staging, Production\n- CI/CD: Automated build, test, and deployment pipeline',
+    templateDe: 'Die Anwendung wird als Webservice deployed mit:\n- Frontend: Single-Page-Applikation via CDN\n- Backend: API-Server mit Datenbankanbindung\n- Umgebungen: Development, Staging, Production\n- CI/CD: Automatisierte Build-, Test- und Deployment-Pipeline',
+  },
+  definitionOfDone: {
+    templateEn: 'A feature is complete when:\n- All acceptance criteria from the feature specification pass\n- Code review approved with no open blockers\n- Automated tests cover the main flow and key error paths\n- Documentation updated for user-facing changes\n- No critical or high-severity bugs remain open for: {features}',
+    templateDe: 'Ein Feature gilt als abgeschlossen wenn:\n- Alle Akzeptanzkriterien aus der Feature-Spezifikation bestanden sind\n- Code-Review ohne offene Blocker abgeschlossen ist\n- Automatisierte Tests den Hauptfluss und wichtige Fehlerpfade abdecken\n- Dokumentation fuer nutzersichtbare Aenderungen aktualisiert ist\n- Keine kritischen oder hohen Bugs offen sind fuer: {features}',
+  },
+  outOfScope: {
+    templateEn: 'The following are explicitly OUT OF SCOPE for this version:\n- Features and extensions beyond the defined catalogue ({features})\n- Integrations not specified in System Boundaries\n- Performance optimization beyond the stated NFR targets\n- Migration of legacy data from external systems',
+    templateDe: 'Folgende Aspekte sind fuer diese Version explizit NICHT im Scope:\n- Features und Erweiterungen ueber den definierten Katalog hinaus ({features})\n- Integrationen, die nicht in den System Boundaries definiert sind\n- Performance-Optimierung ueber die definierten NFR-Ziele hinaus\n- Migration von Altdaten aus externen Systemen',
+  },
+  timelineMilestones: {
+    templateEn: 'Delivery is structured in phases:\n- Phase 1 (Foundation): Core infrastructure and data model setup\n- Phase 2 (Core Features): Implementation of {features}\n- Phase 3 (Refinement): Testing, bug fixes, and acceptance review\nEach phase includes development, testing, and stakeholder review.',
+    templateDe: 'Die Lieferung ist in Phasen strukturiert:\n- Phase 1 (Grundlage): Kerninfrastruktur und Datenmodell-Setup\n- Phase 2 (Kern-Features): Umsetzung von {features}\n- Phase 3 (Verfeinerung): Testing, Bugfixes und Abnahme-Review\nJede Phase umfasst Entwicklung, Testing und Stakeholder-Review.',
+  },
+  successCriteria: {
+    templateEn: 'The project is successful when:\n- All features from the catalogue are implemented and accepted by stakeholders\n- Acceptance criteria for each feature (as defined in F-XX specs) pass\n- No critical bugs remain open at release\n- Users can complete the core workflows ({features}) end-to-end without assistance',
+    templateDe: 'Das Projekt ist erfolgreich wenn:\n- Alle Features aus dem Katalog implementiert und von Stakeholdern abgenommen sind\n- Akzeptanzkriterien je Feature (wie in F-XX Specs definiert) bestanden sind\n- Keine kritischen Bugs zum Release offen sind\n- Nutzer die Kern-Workflows ({features}) Ende-zu-Ende ohne Hilfe durchfuehren koennen',
+  },
+};
+
+function resolveFallbackTemplate(
+  section: RequiredSectionKey,
+  language: SupportedLanguage,
+  category: PrdTemplateCategory
+): string {
+  // 1. Check template-specific override
+  const profile = TEMPLATE_PROFILES[category] || TEMPLATE_PROFILES.generic;
+  const override = profile.sectionFallbacks?.[section];
+  if (override) {
+    return language === 'de' ? override.templateDe : override.templateEn;
+  }
+  // 2. Use base fallback (each section has its own distinct template)
+  const base = BASE_SECTION_FALLBACKS[section];
+  return language === 'de' ? base.templateDe : base.templateEn;
+}
+
 export function buildSectionFallback(params: {
   section: RequiredSectionKey;
   language: SupportedLanguage;
@@ -483,28 +617,39 @@ export function buildSectionFallback(params: {
   contextHint?: string;
 }): string {
   const category = normalizeTemplateCategory(params.category);
-  const section = params.section;
-  const label = sectionLabel(section, params.language);
-  const context = buildContextFragment({
-    structure: params.structure,
-    contextHint: params.contextHint,
-    language: params.language,
-  });
-  const categoryLabel = params.language === 'de'
-    ? TEMPLATE_PROFILES[category].labelDe
-    : TEMPLATE_PROFILES[category].labelEn;
+  const features = topFeatureNames(params.structure);
+  const featuresStr = features.length > 0 ? features.join(', ') : '(Features)';
 
-  if (params.language === 'de') {
-    return `${label} ist fuer dieses ${categoryLabel} explizit beschrieben. ${context} ` +
-      `Die Aussagen sind umsetzbar, testbar und fuer diese Version verbindlich.`;
-  }
+  let template = resolveFallbackTemplate(params.section, params.language, category);
 
-  return `${label} is explicitly defined for this ${categoryLabel}. ${context} ` +
-    `Statements are implementation-ready, testable, and binding for this version.`;
+  // Replace {features} placeholder with actual feature names
+  template = template.replace(/\{features\}/g, featuresStr);
+
+  // Replace {context} placeholder with context words
+  const contextWords = safeWordsFromContext(params.contextHint);
+  const contextStr = contextWords.length > 0
+    ? contextWords.join(', ')
+    : featuresStr;
+  template = template.replace(/\{context\}/g, contextStr);
+
+  return template;
 }
 
 export function isLegacyGenericFallback(value: string): boolean {
   return NORMALIZED_LEGACY_FALLBACKS.has(normalizeForMatch(value));
+}
+
+// Regex patterns matching the OLD buildSectionFallback one-size-fits-all template
+const COMPILER_FALLBACK_PATTERNS: RegExp[] = [
+  /is explicitly defined for this .+\.\s*(?:Core scope centers on|Context priorities include|This section is concretized).+Statements are implementation-ready,? testable,? and binding for this version\./i,
+  /ist f(?:ue|ü)r dieses .+explizit beschrieben\.\s*(?:Kernfokus sind die Feature-Workflows|Der Kontext umfasst|Der Abschnitt wird).+Die Aussagen sind umsetzbar,? testbar und f(?:ue|ü)r diese Version verbindlich\./i,
+];
+
+/** Detects both legacy static fallbacks AND the old compiler-generated fallback template. */
+export function isGenericFallback(value: string): boolean {
+  if (isLegacyGenericFallback(value)) return true;
+  const text = String(value || '').trim();
+  return COMPILER_FALLBACK_PATTERNS.some(pattern => pattern.test(text));
 }
 
 export function collectPlaceholderIssues(params: {
@@ -593,7 +738,7 @@ export function collectTemplateSemanticIssues(params: {
   for (const requiredSection of profile.semanticSignals.requiredSections) {
     const value = String((params.structure as any)[requiredSection] || '').trim();
     if (!value) continue;
-    if (isLegacyGenericFallback(value)) {
+    if (isGenericFallback(value)) {
       issues.push({
         code: `template_semantic_boilerplate_${requiredSection}`,
         message: `Section "${requiredSection}" contains generic boilerplate and is not template-specific.`,

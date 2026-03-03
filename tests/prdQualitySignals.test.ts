@@ -205,6 +205,25 @@ describe('prdQualitySignals', () => {
     expect(issues.some(i => i.code === 'boilerplate_repetition_detected')).toBe(false);
   });
 
+  it('flags sentences repeated 7+ times as boilerplate (inverse of threshold test)', () => {
+    const repeated = 'A custom business sentence that repeats far too many times across the entire document.';
+    const structure = baseStructure();
+    // Place the same sentence in 7 different sections → exceeds global threshold
+    structure.systemVision = repeated;
+    structure.systemBoundaries = repeated;
+    structure.domainModel = repeated;
+    structure.globalBusinessRules = repeated;
+    structure.nonFunctional = repeated;
+    structure.errorHandling = repeated;
+    structure.deployment = repeated;
+
+    const issues = collectBoilerplateRepetitionIssues(structure);
+    expect(issues.some(i => i.code === 'boilerplate_repetition_detected')).toBe(true);
+    // Verify it's an error, not just a warning
+    const boilerplateIssue = issues.find(i => i.code === 'boilerplate_repetition_detected');
+    expect(boilerplateIssue?.severity).toBe('error');
+  });
+
   it('finds and applies conservative feature aggregation candidates', () => {
     const structure = baseStructure();
     structure.features = [
