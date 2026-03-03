@@ -471,7 +471,7 @@ function topFeatureNames(structure: PRDStructure): string[] {
   return (structure.features || [])
     .map(f => String(f.name || '').trim())
     .filter(Boolean)
-    .slice(0, 3);
+    .slice(0, 5);
 }
 
 function tokenizeScope(value: string): string[] {

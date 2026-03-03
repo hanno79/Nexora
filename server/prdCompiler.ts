@@ -543,10 +543,15 @@ function hasStructuredFeatureValue(value: unknown): boolean {
  * Extract field hints from a feature's rawContent to produce more specific
  * placeholder text than the fully generic templates.
  */
-function extractFieldHintsFromRaw(rawContent: string): {
+export function extractFieldHintsFromRaw(rawContent: string): {
   purposeHint?: string;
   actorHint?: string;
   triggerHint?: string;
+  mainFlowHint?: string[];
+  preconditionsHint?: string;
+  postconditionsHint?: string;
+  dataImpactHint?: string;
+  uiImpactHint?: string;
 } {
   if (!rawContent || rawContent.length < 20) return {};
 
@@ -570,7 +575,7 @@ function extractFieldHintsFromRaw(rawContent: string): {
     [/\b(?:admin(?:istrator)?|manager|moderator)\b/i, 'Admin'],
     [/\b(?:customer|client|buyer|seller|vendor|kaeufer|verkaeufer)\b/i, 'Customer'],
     [/\b(?:developer|engineer|tester|entwickler)\b/i, 'Developer'],
-    [/\b(?:user|nutzer|anwender|benutzer)\b/i, 'User'],
+    [/\b(?:user|nutzer|anwender|benutzer|spieler|player)\b/i, 'User'],
   ];
   const foundActors: string[] = [];
   for (const [pattern, label] of actorPatterns) {
@@ -584,7 +589,54 @@ function extractFieldHintsFromRaw(rawContent: string): {
   );
   const triggerHint = triggerMatch ? triggerMatch[0].trim() : undefined;
 
-  return { purposeHint, actorHint, triggerHint };
+  // MainFlow: Extract numbered steps (1. ..., 2. ...) from rawContent
+  const numberedSteps = rawContent
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => /^\d+\.\s+/.test(l))
+    .map(l => l.replace(/^\d+\.\s+/, '').trim())
+    .filter(l => l.length >= 10);
+  const mainFlowHint = numberedSteps.length >= 2 ? numberedSteps : undefined;
+
+  // Preconditions: Look for labeled section in rawContent
+  const preconditionsHint = extractLabeledSection(rawContent, /(?:preconditions?|vorbedingungen?|voraussetzungen?)/i);
+
+  // Postconditions: Look for labeled section
+  const postconditionsHint = extractLabeledSection(rawContent, /(?:postconditions?|nachbedingungen?|ergebnis(?:se)?)/i);
+
+  // Data Impact: Look for database/storage/data references
+  const dataImpactHint = extractLabeledSection(rawContent, /(?:data\s*impact|daten(?:bank)?|speicher|storage|database|persist)/i);
+
+  // UI Impact: Look for UI/display references
+  const uiImpactHint = extractLabeledSection(rawContent, /(?:ui\s*impact|oberfl[aä]che|anzeige|display|screen|component)/i);
+
+  return { purposeHint, actorHint, triggerHint, mainFlowHint, preconditionsHint, postconditionsHint, dataImpactHint, uiImpactHint };
+}
+
+/** Extract text following a labeled heading/bold-label within rawContent */
+function extractLabeledSection(rawContent: string, labelPattern: RegExp): string | undefined {
+  const lines = rawContent.split('\n');
+  for (let idx = 0; idx < lines.length; idx++) {
+    const line = lines[idx].replace(/^\*+|\*+$/g, '').trim();
+    // Skip feature headings (### F-XX: ...) and section headings (## ...)
+    if (/^#{2,}\s*F-\d+/i.test(lines[idx].trim()) || /^#{2,}\s+\w/.test(lines[idx].trim())) continue;
+    if (!labelPattern.test(line)) continue;
+    // Collect text after the label line until next heading/label or blank
+    const content: string[] = [];
+    // Check if the label line itself contains content after ":"
+    const colonPart = line.split(/[:\-—]\s*/);
+    if (colonPart.length > 1 && colonPart.slice(1).join(' ').trim().length > 10) {
+      content.push(colonPart.slice(1).join(' ').trim());
+    }
+    for (let j = idx + 1; j < lines.length && j < idx + 8; j++) {
+      const next = lines[j].trim();
+      if (!next) break;
+      if (/^\*?\*?\d+\.\s/.test(next) || /^#+\s/.test(next) || /^\*\*\d+\./.test(next)) break;
+      if (next.length > 10) content.push(next.replace(/^[-*•]\s*/, ''));
+    }
+    if (content.length > 0) return content.join(' ').substring(0, 300);
+  }
+  return undefined;
 }
 
 function buildFeatureFieldTemplate(
@@ -698,16 +750,26 @@ export function ensurePrdFeatureDepth(
       const currentValue = (feature as any)[field];
       if (hasStructuredFeatureValue(currentValue)) continue;
 
-      // Prefer rawContent-derived hints over generic templates for key fields
+      // Prefer rawContent-derived hints over generic templates
+      const safeName = feature.name || feature.id;
       if (field === 'purpose' && hints.purposeHint) {
         (feature as any)[field] = hints.purposeHint;
       } else if (field === 'actors' && hints.actorHint) {
-        const safeName = feature.name || feature.id;
         (feature as any)[field] = language === 'de'
           ? `Akteure: ${hints.actorHint} im Kontext von "${safeName}".`
           : `Actors: ${hints.actorHint} in the context of "${safeName}".`;
       } else if (field === 'trigger' && hints.triggerHint) {
         (feature as any)[field] = hints.triggerHint;
+      } else if (field === 'mainFlow' && hints.mainFlowHint) {
+        (feature as any)[field] = hints.mainFlowHint;
+      } else if (field === 'preconditions' && hints.preconditionsHint) {
+        (feature as any)[field] = hints.preconditionsHint;
+      } else if (field === 'postconditions' && hints.postconditionsHint) {
+        (feature as any)[field] = hints.postconditionsHint;
+      } else if (field === 'dataImpact' && hints.dataImpactHint) {
+        (feature as any)[field] = hints.dataImpactHint;
+      } else if (field === 'uiImpact' && hints.uiImpactHint) {
+        (feature as any)[field] = hints.uiImpactHint;
       } else {
         (feature as any)[field] = (template as any)[field];
       }

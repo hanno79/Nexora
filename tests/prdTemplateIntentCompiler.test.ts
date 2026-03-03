@@ -697,3 +697,42 @@ describe('prdTemplateIntent compiler integration', () => {
     ).toBe(false);
   });
 });
+
+describe('fallback section feature references', () => {
+  it('references up to 5 features in fallback sections when available', () => {
+    // Build a PRD with 6 features but no Definition of Done section (triggers fallback)
+    const featureNames = ['Auth Login', 'User Profile', 'Dashboard', 'Settings', 'Notifications', 'Reports'];
+    const featureBlocks = featureNames.map((name, i) => {
+      const id = `F-${String(i + 1).padStart(2, '0')}`;
+      return [
+        `### ${id}: ${name}`,
+        '**1. Purpose**',
+        `The ${name} feature provides core functionality.`,
+        '**10. Acceptance Criteria**',
+        `1. ${name} works correctly end-to-end.`,
+      ].join('\n');
+    });
+
+    const raw = [
+      '## System Vision',
+      'A comprehensive user management platform.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      ...featureBlocks,
+      '',
+      '## Non-Functional Requirements',
+      'Performance: < 2s response time.',
+    ].join('\n');
+
+    const result = compilePrdDocument(raw, { mode: 'generate', language: 'en' });
+
+    // Definition of Done should be a fallback-generated section referencing features
+    const dod = result.structure.definitionOfDone || '';
+    // Should reference at least 4 features (up to 5, not capped at 3)
+    const referencedFeatures = featureNames.filter(name => dod.includes(name));
+    expect(referencedFeatures.length).toBeGreaterThanOrEqual(4);
+    // The 6th feature (Reports) may or may not be included (cap is 5)
+    expect(referencedFeatures.length).toBeLessThanOrEqual(5);
+  });
+});

@@ -109,7 +109,14 @@ export async function runFeatureExpansionPipeline(params: {
   try {
     logFn('🧩 Feature Identification Layer: Extracting atomic features...');
     const vision = extractVisionFromContent(draftContent);
-    const featureResult = await generateFeatureList(inputText, vision, client);
+    // Extract existing domain context to help feature identification produce more features
+    const domainModelMatch = draftContent.match(/##\s*Domain Model\s*\n([\s\S]*?)(?=\n##\s|\n---\s|$)/i);
+    const boundariesMatch = draftContent.match(/##\s*System Boundaries\s*\n([\s\S]*?)(?=\n##\s|\n---\s|$)/i);
+    const featureContext = (domainModelMatch || boundariesMatch) ? {
+      domainModel: domainModelMatch?.[1]?.trim(),
+      systemBoundaries: boundariesMatch?.[1]?.trim(),
+    } : undefined;
+    const featureResult = await generateFeatureList(inputText, vision, client, featureContext);
     const topLevelFeatureLines = featureResult.featureList
       .split('\n')
       .filter((line) => line.trim().startsWith('- '))

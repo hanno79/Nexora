@@ -1094,13 +1094,15 @@ Your task:
     state: IterationLoopState,
     opts: IterationOpts
   ): Promise<void> {
-    // Feature Identification Layer + Expansion Engine (first iteration only)
-    if (i === 1) {
-      let firstIterationStructure: PRDStructure | null = null;
+    // Feature Identification Layer + Expansion Engine (iterations 1–2 = grow window)
+    // Iteration 1: initial feature discovery. Iteration 2: Q&A-informed feature growth.
+    // Freeze activates after iteration 2 expansion completes.
+    if (i <= 2) {
+      let iterationStructure: PRDStructure | null = null;
       try {
-        firstIterationStructure = parsePRDToStructure(this.extractCleanPRD(genResult.content));
-      } catch (firstIterationParseError: any) {
-        dualAiWarn('⚠️ Unable to parse first iteration PRD for freeze seeding:', firstIterationParseError.message);
+        iterationStructure = parsePRDToStructure(this.extractCleanPRD(genResult.content));
+      } catch (iterationParseError: any) {
+        dualAiWarn(`⚠️ Unable to parse iteration ${i} PRD for freeze seeding:`, iterationParseError.message);
       }
 
       opts.throwIfCancelled(`iteration ${i} feature expansion`);
@@ -1116,36 +1118,39 @@ Your task:
       if (expansion.expandedFeatureCount > 0) {
         opts.onProgress?.({ type: 'features_expanded', count: expansion.expandedFeatureCount, tokensUsed: expansion.expansionTokens });
 
-        // FEATURE FREEZE: Activate freeze after first successful compilation
         const compiledCount = expansion.expandedFeatures.filter(
           (f: any) => f.compiled === true || f.valid === true
         ).length;
         const expansionBaseline = this.buildFreezeBaselineFromExpansion(
           { expandedFeatures: expansion.expandedFeatures, totalTokens: expansion.expansionTokens },
-          firstIterationStructure || state.previousStructure
+          iterationStructure || state.previousStructure
         );
         if (expansionBaseline) {
           state.freezeBaselineStructure = expansionBaseline;
         }
-        if (compiledCount > 0 && !state.freezeActivated) {
+
+        // FEATURE FREEZE: Activate after iteration 2 expansion (grow window closed)
+        if (compiledCount > 0 && !state.freezeActivated && i >= 2) {
           state.featuresFrozen = true;
           state.freezeActivated = true;
           state.diagnostics.freezeSeedSource = 'compiledExpansion';
-          dualAiLog('🧊 FEATURE CATALOGUE FROZEN – First compilation detected');
+          dualAiLog('🧊 FEATURE CATALOGUE FROZEN – Grow window closed after iteration 2');
           dualAiLog('   ' + compiledCount + ' feature(s) in compiled state');
           if (state.freezeBaselineStructure?.features.length) {
             dualAiLog('   Baseline catalogue size: ' + state.freezeBaselineStructure.features.length);
           }
           dualAiLog('   Full regeneration will be blocked from next iteration');
+        } else if (i === 1 && compiledCount > 0) {
+          dualAiLog(`📊 Iteration 1: ${compiledCount} features compiled. Grow window open — expansion will run again in iteration 2.`);
         }
 
         // Merge expansion into structured representation for persistence
         if (expansion.enrichedStructure) {
           state.iterativeEnrichedStructure = expansion.enrichedStructure;
           dualAiLog(`📦 Iterative structure enriched: ${expansion.enrichedStructure.features.length} features with structured fields`);
-        } else if (firstIterationStructure && expansion.expandedFeatures.length > 0) {
+        } else if (iterationStructure && expansion.expandedFeatures.length > 0) {
           try {
-            state.iterativeEnrichedStructure = mergeExpansionIntoStructure(firstIterationStructure, expansion.expandedFeatures);
+            state.iterativeEnrichedStructure = mergeExpansionIntoStructure(iterationStructure, expansion.expandedFeatures);
             dualAiLog(`📦 Iterative structure enriched: ${state.iterativeEnrichedStructure.features.length} features with structured fields`);
           } catch (mergeError: any) {
             dualAiWarn('⚠️ Iterative structure merge failed (non-blocking):', mergeError.message);
@@ -3250,7 +3255,9 @@ Rules:
 - No markdown, no explanations, JSON only
 - Use empty arrays if no changes
 - Do not duplicate existing features in addedFeatures
-- Keep addedFeatures minimal and concrete`;
+- Add features that were discussed in the Q&A or reviewer feedback but are missing from the current PRD catalogue
+- Each distinct capability mentioned in the feedback should be a separate feature
+- Aim for completeness — if the reviewer or generator mentions a screen, endpoint, or interaction not yet in the catalogue, add it`;
 
     const userPrompt = `CURRENT PRD:
 ${currentPrd}

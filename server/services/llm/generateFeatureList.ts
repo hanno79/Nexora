@@ -18,6 +18,8 @@ System Idea:
 System Vision:
 \${vision}
 
+\${contextBlock}
+
 ----------------------------------------
 OBJECTIVE
 ----------------------------------------
@@ -31,6 +33,16 @@ Identify discrete features that:
 - Do not describe benefits or vision
 
 The complete system must later be describable as the sum of these features.
+
+Aim for 10–20 features for a typical application. Think about:
+- Each distinct screen or page the user sees
+- Each API endpoint or backend service
+- Each data model or schema that must be created
+- Each user interaction flow (login, signup, search, submit, etc.)
+- Setup, configuration, and deployment tasks
+- Error handling, validation, and edge cases as separate features
+
+If you identify fewer than 8 features, you are likely combining multiple capabilities into one. Break them apart.
 
 ----------------------------------------
 OUTPUT FORMAT (STRICT)
@@ -57,13 +69,24 @@ Rules:
 
 Only output the feature list.`;
 
-function buildPrompt(userInput: string, vision: string): string {
+function buildPrompt(userInput: string, vision: string, context?: { domainModel?: string; systemBoundaries?: string }): string {
+  let contextBlock = '';
+  if (context?.domainModel || context?.systemBoundaries) {
+    const parts: string[] = [];
+    if (context.domainModel) parts.push(`Domain Model:\n${context.domainModel}`);
+    if (context.systemBoundaries) parts.push(`System Boundaries:\n${context.systemBoundaries}`);
+    contextBlock = `Additional Context:\n${parts.join('\n\n')}`;
+  }
   return FEATURE_IDENTIFICATION_PROMPT
     .replaceAll('${userInput}', userInput)
-    .replaceAll('${vision}', vision);
+    .replaceAll('${vision}', vision)
+    .replaceAll('${contextBlock}', contextBlock);
 }
 
-function validateFeatureList(text: string): { valid: boolean; reason?: string } {
+const RETRY_MINIMUM_FEATURES = 8;
+const HARD_MINIMUM_FEATURES = 3;
+
+function validateFeatureList(text: string, attempt: number): { valid: boolean; reason?: string } {
   const featurePattern = /F-(\d+):/g;
   const matches: number[] = [];
   let match: RegExpExecArray | null;
@@ -72,8 +95,9 @@ function validateFeatureList(text: string): { valid: boolean; reason?: string } 
     matches.push(parseInt(match[1], 10));
   }
 
-  if (matches.length < 3) {
-    return { valid: false, reason: `Only ${matches.length} features found (minimum 3 required)` };
+  // Hard minimum: always reject fewer than 3
+  if (matches.length < HARD_MINIMUM_FEATURES) {
+    return { valid: false, reason: `Only ${matches.length} features found (minimum ${HARD_MINIMUM_FEATURES} required)` };
   }
 
   if (matches[0] !== 1) {
@@ -86,15 +110,21 @@ function validateFeatureList(text: string): { valid: boolean; reason?: string } 
     }
   }
 
+  // On first attempt, encourage more features by retrying if too few
+  if (attempt === 1 && matches.length < RETRY_MINIMUM_FEATURES) {
+    return { valid: false, reason: `Only ${matches.length} features found (aiming for ${RETRY_MINIMUM_FEATURES}+). Retrying for better decomposition.` };
+  }
+
   return { valid: true };
 }
 
 export async function generateFeatureList(
   userInput: string,
   vision: string,
-  client: OpenRouterClient
+  client: OpenRouterClient,
+  context?: { domainModel?: string; systemBoundaries?: string }
 ): Promise<{ featureList: string; model: string; usage: TokenUsage; retried: boolean }> {
-  const systemPrompt = buildPrompt(userInput, vision);
+  const systemPrompt = buildPrompt(userInput, vision, context);
   const userPrompt = `Based on the system idea and vision provided, identify all atomic features. Output ONLY the feature list in the strict format specified.`;
 
   let retried = false;
@@ -109,7 +139,7 @@ export async function generateFeatureList(
       FEATURE_LIST_GENERATION
     );
 
-    const validation = validateFeatureList(result.content);
+    const validation = validateFeatureList(result.content, attempt);
 
     if (validation.valid) {
       console.log(`✅ Feature list validated successfully (attempt ${attempt})`);
@@ -124,7 +154,7 @@ export async function generateFeatureList(
     console.warn(`⚠️ Feature list validation failed: ${validation.reason}`);
 
     if (attempt === 1) {
-      console.log('🔄 Retrying feature identification...');
+      console.log('🔄 Retrying feature identification with higher target...');
       retried = true;
     } else {
       console.warn('⚠️ Feature list validation failed after retry — returning raw output');
