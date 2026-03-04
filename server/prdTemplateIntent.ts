@@ -1,4 +1,5 @@
 import type { PRDStructure } from './prdStructure';
+import { normalizeForMatch as _normalizeForMatch } from './prdTextUtils';
 
 export type PrdTemplateCategory =
   | 'feature'
@@ -302,14 +303,7 @@ const LEGACY_GENERIC_FALLBACKS = [
   'Erfolgskriterien und Abnahmeindikatoren sind messbar und testbar.',
 ];
 
-function normalizeForMatch(value: string): string {
-  return String(value || '')
-    .toLowerCase()
-    .replace(/[`*_>#-]/g, ' ')
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+const normalizeForMatch = _normalizeForMatch;
 
 const NORMALIZED_LEGACY_FALLBACKS = new Set(LEGACY_GENERIC_FALLBACKS.map(normalizeForMatch));
 const REQUIRED_SECTION_KEYS: RequiredSectionKey[] = [
@@ -469,9 +463,14 @@ function sectionLabel(section: RequiredSectionKey, language: SupportedLanguage):
 
 function topFeatureNames(structure: PRDStructure): string[] {
   return (structure.features || [])
-    .map(f => String(f.name || '').trim())
+    .map(f => {
+      const id = String(f.id || '').trim();
+      const name = String(f.name || '').trim();
+      // Return "F-XX: Name" format for precise references
+      return id && name ? `${id}: ${name}` : name || id;
+    })
     .filter(Boolean)
-    .slice(0, 5);
+    .slice(0, 10);
 }
 
 function tokenizeScope(value: string): string[] {

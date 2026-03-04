@@ -55,6 +55,8 @@ export function DualAiDialog({
   const [showGuidedDialog, setShowGuidedDialog] = useState(false);
   const [progressDetail, setProgressDetail] = useState('');
   const [totalTokensSoFar, setTotalTokensSoFar] = useState(0);
+  // Fix 0.2: Mode transparency state for displaying effective mode in done step
+  const [modeInfo, setModeInfo] = useState<{ effectiveMode?: string; baselineFeatureCount?: number; baselinePartial?: boolean } | null>(null);
   // ÄNDERUNG 02.03.2025: States für Guided Finalisierung
   const [guidedSessionId, setGuidedSessionId] = useState<string | null>(null);
   const [guidedSessionInfo, setGuidedSessionInfo] = useState<{projectIdea: string; answersCount: number} | null>(null);
@@ -70,6 +72,7 @@ export function DualAiDialog({
     setTotalIterations(0);
     setProgressDetail('');
     setTotalTokensSoFar(0);
+    setModeInfo(null);
     // ÄNDERUNG 02.03.2025: Guided Session States zurücksetzen
     setGuidedSessionId(null);
     setGuidedSessionInfo(null);
@@ -139,6 +142,11 @@ export function DualAiDialog({
         const finalContent = data.finalContent || data.prdContent || '';
         if (!finalContent.trim()) throw new Error('AI returned no content. Please retry.');
 
+        setModeInfo({
+          effectiveMode: data.effectiveMode,
+          baselineFeatureCount: data.baselineFeatureCount,
+          baselinePartial: data.baselinePartial,
+        });
         setCurrentStep('done');
         setIsGenerating(false);
         onContentGenerated(finalContent, data);
@@ -164,6 +172,11 @@ export function DualAiDialog({
           setReviewerModel(data.modelsUsed[1] || data.modelsUsed[0]);
         }
 
+        setModeInfo({
+          effectiveMode: data.effectiveMode,
+          baselineFeatureCount: data.baselineFeatureCount,
+          baselinePartial: data.baselinePartial,
+        });
         setCurrentStep('done');
         setIsGenerating(false);
         onContentGenerated(finalContent, data);
@@ -393,6 +406,11 @@ export function DualAiDialog({
           console.warn('AI generation passed with quality warnings:', errorData.message);
           setGeneratorModel(errorData.generatorResponse?.model || errorData.generatorModel || '');
           setReviewerModel(errorData.reviewerResponse?.model || errorData.reviewerModel || '');
+          setModeInfo({
+            effectiveMode: errorData.effectiveMode,
+            baselineFeatureCount: errorData.baselineFeatureCount,
+            baselinePartial: errorData.baselinePartial,
+          });
           setCurrentStep('done');
           onContentGenerated(errorData.finalContent, { ...errorData, qualityStatus: 'failed_quality' });
           setTimeout(() => {
@@ -413,6 +431,11 @@ export function DualAiDialog({
 
       setGeneratorModel(data.generatorResponse.model);
       setReviewerModel(data.reviewerResponse.model);
+      setModeInfo({
+        effectiveMode: data.effectiveMode,
+        baselineFeatureCount: data.baselineFeatureCount,
+        baselinePartial: data.baselinePartial,
+      });
       setCurrentStep('done');
 
       onContentGenerated(finalContent, data);
@@ -530,6 +553,11 @@ export function DualAiDialog({
           setReviewerModel(data.modelsUsed[1] || data.modelsUsed[0]);
         }
 
+        setModeInfo({
+          effectiveMode: data.effectiveMode,
+          baselineFeatureCount: data.baselineFeatureCount,
+          baselinePartial: data.baselinePartial,
+        });
         setCurrentStep('done');
         onContentGenerated(finalContent, data);
       } else {
@@ -543,6 +571,11 @@ export function DualAiDialog({
           setReviewerModel(data.modelsUsed[1] || data.modelsUsed[0]);
         }
 
+        setModeInfo({
+          effectiveMode: data.effectiveMode,
+          baselineFeatureCount: data.baselineFeatureCount,
+          baselinePartial: data.baselinePartial,
+        });
         setCurrentStep('done');
         onContentGenerated(finalContent, data);
       }
@@ -748,6 +781,15 @@ export function DualAiDialog({
                   </Badge>
                 )}
               </div>
+            )}
+            {/* Fix 0.2: Mode transparency info line */}
+            {modeInfo?.effectiveMode && currentStep === 'done' && (
+              <p className="text-xs text-muted-foreground mt-1 px-1">
+                {modeInfo.effectiveMode === 'improve'
+                  ? `Erweitert (${modeInfo.baselineFeatureCount} Features als Baseline)`
+                  : 'Neu generiert'}
+                {modeInfo.baselinePartial && ' \u2014 bestehender Inhalt als Kontext verwendet'}
+              </p>
             )}
             {/* Live-Statistiken für den Simple Run, Iterationsmodus und Guided Finalisierung */}
             {(currentStep === 'generating' || currentStep === 'iterating' || currentStep === 'guided-finalizing') && (

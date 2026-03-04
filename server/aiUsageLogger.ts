@@ -7,7 +7,9 @@ import { normalizeTokenCount } from "./tokenMath";
 
 // Hardcoded fallback pricing (per token) for common models when OpenRouter API is unavailable.
 // Prices in USD per token (prompt / completion). Updated as of 2025-05.
+// ÄNDERUNG 03.03.2026: Groq und Cerebras Preise hinzugefügt
 const FALLBACK_PRICING: Record<string, { prompt: number; completion: number }> = {
+  // OpenRouter Modelle
   "anthropic/claude-sonnet-4": { prompt: 3e-6, completion: 15e-6 },
   "anthropic/claude-haiku-4": { prompt: 0.8e-6, completion: 4e-6 },
   "anthropic/claude-3.5-sonnet": { prompt: 3e-6, completion: 15e-6 },
@@ -17,6 +19,18 @@ const FALLBACK_PRICING: Record<string, { prompt: number; completion: number }> =
   "openai/gpt-4o-mini": { prompt: 0.15e-6, completion: 0.6e-6 },
   "deepseek/deepseek-r1-0528:free": { prompt: 0, completion: 0 },
   "meta-llama/llama-3.3-70b-instruct:free": { prompt: 0, completion: 0 },
+  
+  // Groq Modelle (Preise pro 1M Tokens -> pro Token)
+  "llama-3.1-8b-instant": { prompt: 0.05e-6, completion: 0.08e-6 },
+  "gemma2-9b-it": { prompt: 0.20e-6, completion: 0.20e-6 },
+  "llama-3.3-70b-versatile": { prompt: 0.59e-6, completion: 0.79e-6 },
+  "mixtral-8x7b-32768": { prompt: 0.24e-6, completion: 0.24e-6 },
+  "llama3-70b-8192": { prompt: 0.59e-6, completion: 0.79e-6 },
+  "llama3-8b-8192": { prompt: 0.05e-6, completion: 0.08e-6 },
+  
+  // Cerebras Modelle (Preise pro 1M Tokens -> pro Token)
+  "llama3.1-8b": { prompt: 0.10e-6, completion: 0.10e-6 },
+  "llama-3.3-70b": { prompt: 0.85e-6, completion: 1.20e-6 },
 };
 
 /**

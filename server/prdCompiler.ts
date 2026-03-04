@@ -18,6 +18,7 @@ import {
   sanitizeMetaLeaksInStructure,
   type FeatureAggregationAnalysis,
 } from './prdQualitySignals';
+import { hasText, normalizeForMatch, cloneStructure } from './prdTextUtils';
 
 type SupportedLanguage = 'de' | 'en';
 
@@ -151,7 +152,7 @@ export const CANONICAL_PRD_HEADINGS = [
   'Success Criteria & Acceptance Testing',
 ] as const;
 
-const MIN_REQUIRED_SECTION_LENGTH = 30;
+const MIN_REQUIRED_SECTION_LENGTH = 60;
 const MIN_INPUT_LENGTH = 20;  // ÄNDERUNG 01.03.2026: Zentrale Konstante für Mindesteingabelänge
 
 const FEATURE_STRUCTURED_FIELDS: Array<keyof FeatureSpec> = [
@@ -184,10 +185,6 @@ interface ValidationOptions {
   fallbackSections?: string[];
 }
 
-function hasText(value: unknown): boolean {
-  return typeof value === 'string' && value.trim().length > 0;
-}
-
 function detectLanguage(
   explicitLanguage: SupportedLanguage | undefined,
   sample: string
@@ -200,14 +197,6 @@ function detectLanguage(
   if (/[äöüß]/i.test(text)) return 'de';
   if (text.includes(' und ') || text.includes(' fuer ') || text.includes(' für ')) return 'de';
   return 'en';
-}
-
-function cloneStructureShallow(structure: PRDStructure): PRDStructure {
-  return {
-    ...structure,
-    features: [...(structure.features || [])].map(feature => ({ ...feature })),
-    otherSections: { ...(structure.otherSections || {}) },
-  };
 }
 
 function safeParseStructure(content: string): PRDStructure {
@@ -223,14 +212,6 @@ function safeParseStructure(content: string): PRDStructure {
   }
 }
 
-function normalizeForMatch(value: string): string {
-  return String(value || '')
-    .toLowerCase()
-    .replace(/[`*_>#-]/g, ' ')
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
 
 function collectUnknownSectionHeadings(structure: PRDStructure): string[] {
   const unknownEntries = Object.entries(structure.otherSections || {})
@@ -267,7 +248,7 @@ function normalizeStructureForCompiler(
   structure: PRDStructure,
   options: { strictCanonical: boolean }
 ): PRDStructure {
-  const normalized = cloneStructureShallow(structure);
+  const normalized = cloneStructure(structure);
 
   normalized.features = [...(normalized.features || [])].sort((a, b) =>
     a.id.localeCompare(b.id, undefined, { numeric: true })
@@ -555,6 +536,16 @@ export function extractFieldHintsFromRaw(rawContent: string): {
 } {
   if (!rawContent || rawContent.length < 20) return {};
 
+  // For actor, trigger, and similar heuristic hints, only use content BEFORE
+  // the first structured subsection marker (**N. Label**) to avoid extracting
+  // spurious hints from previously scaffolded/assembled content. This ensures
+  // idempotent compile-parse-compile cycles. Labeled sections (**4. Preconditions**)
+  // are still extracted from the full rawContent via extractLabeledSection().
+  const firstStructuredMarker = rawContent.search(/\*\*\d{1,2}\.\s+/);
+  const proseSource = firstStructuredMarker > 0
+    ? rawContent.substring(0, firstStructuredMarker).trim()
+    : rawContent;
+
   const lines = rawContent
     .split('\n')
     .map(l => l.replace(/^#+\s*/, '').replace(/^\*+/, '').trim())
@@ -570,7 +561,8 @@ export function extractFieldHintsFromRaw(rawContent: string): {
     break;
   }
 
-  // Actors: Look for role mentions in rawContent
+  // Actors: Look for role mentions in proseSource only (before structured blocks)
+  // to avoid extracting spurious hints from scaffold text like "User initiates..."
   const actorPatterns: [RegExp, string][] = [
     [/\b(?:admin(?:istrator)?|manager|moderator)\b/i, 'Admin'],
     [/\b(?:customer|client|buyer|seller|vendor|kaeufer|verkaeufer)\b/i, 'Customer'],
@@ -579,17 +571,17 @@ export function extractFieldHintsFromRaw(rawContent: string): {
   ];
   const foundActors: string[] = [];
   for (const [pattern, label] of actorPatterns) {
-    if (pattern.test(rawContent)) foundActors.push(label);
+    if (pattern.test(proseSource)) foundActors.push(label);
   }
   const actorHint = foundActors.length > 0 ? foundActors.join(', ') : undefined;
 
-  // Trigger: Look for action triggers
-  const triggerMatch = rawContent.match(
+  // Trigger: Look for action triggers in proseSource only
+  const triggerMatch = proseSource.match(
     /\b(?:clicks?|taps?|navigates?|submits?|opens?|selects?|starts?|initiates?|klickt|navigiert|startet|oeffnet|waehlt)\s+[^.\n]{5,60}/i
   );
   const triggerHint = triggerMatch ? triggerMatch[0].trim() : undefined;
 
-  // MainFlow: Extract numbered steps (1. ..., 2. ...) from rawContent
+  // MainFlow: Extract numbered steps from full rawContent (labeled sections are expected)
   const numberedSteps = rawContent
     .split('\n')
     .map(l => l.trim())
@@ -598,7 +590,7 @@ export function extractFieldHintsFromRaw(rawContent: string): {
     .filter(l => l.length >= 10);
   const mainFlowHint = numberedSteps.length >= 2 ? numberedSteps : undefined;
 
-  // Preconditions: Look for labeled section in rawContent
+  // Preconditions: Look for labeled section in full rawContent
   const preconditionsHint = extractLabeledSection(rawContent, /(?:preconditions?|vorbedingungen?|voraussetzungen?)/i);
 
   // Postconditions: Look for labeled section
@@ -639,100 +631,6 @@ function extractLabeledSection(rawContent: string, labelPattern: RegExp): string
   return undefined;
 }
 
-function buildFeatureFieldTemplate(
-  featureName: string,
-  language: SupportedLanguage,
-  variant: number
-): Pick<FeatureSpec, 'purpose' | 'actors' | 'trigger' | 'preconditions' | 'mainFlow' | 'alternateFlows' | 'postconditions' | 'dataImpact' | 'uiImpact' | 'acceptanceCriteria'> {
-  const safeName = String(featureName || '').trim() || `Feature ${variant + 1}`;
-  const isGerman = language === 'de';
-  const pick = (values: string[]) => values[variant % values.length];
-
-  if (isGerman) {
-    return {
-      purpose: pick([
-        `"${safeName}" liefert einen klar abgegrenzten Nutzerwert mit messbarem Ergebnis.`,
-        `Das Feature "${safeName}" beschreibt einen eigenstaendigen, testbaren Anwendungsfall.`,
-        `"${safeName}" wird als implementierbare Funktionseinheit mit eindeutiger Wirkung umgesetzt.`,
-      ]),
-      actors: pick([
-        `Primaer: Endnutzer im Kontext von "${safeName}". Sekundaer: API- und Persistenzschicht.`,
-        `Akteure sind Nutzer, die "${safeName}" ausloesen, sowie Systemdienste zur Verarbeitung.`,
-        `Nutzer interagieren direkt mit "${safeName}", waehrend das Backend Validierung und Speicherung uebernimmt.`,
-      ]),
-      trigger: pick([
-        `Der Nutzer startet "${safeName}" explizit ueber die Benutzeroberflaeche.`,
-        `"${safeName}" wird durch eine konkrete Nutzeraktion oder einen definierten Systemevent ausgeloest.`,
-        `Ein UI-Event initiiert den Ablauf von "${safeName}".`,
-      ]),
-      preconditions: pick([
-        `Alle benoetigten Eingaben sind vorhanden und vorvalidiert.`,
-        `Authentifizierung und Berechtigungen fuer "${safeName}" sind erfuellt.`,
-        `Abhaengige Dienste sind erreichbar und die Anwendung befindet sich in einem konsistenten Zustand.`,
-      ]),
-      mainFlow: [
-        `System nimmt die Anfrage fuer "${safeName}" entgegen und validiert Eingaben.`,
-        `Geschaeftslogik fuer "${safeName}" wird deterministisch ausgefuehrt.`,
-        `Relevante Daten werden atomar gespeichert oder aktualisiert.`,
-        `UI wird mit dem Ergebnis von "${safeName}" aktualisiert und bestaetigt den Abschluss.`,
-      ],
-      alternateFlows: [
-        `Validierung fehlgeschlagen: Das System liefert eine klare Fehlermeldung ohne Seiteneffekte.`,
-        `Temporärer Fehler: Das System protokolliert den Fehler und bietet einen Retry-Pfad an.`,
-      ],
-      postconditions: `Nach Abschluss von "${safeName}" ist der resultierende Zustand konsistent, gespeichert und fuer Folgeaktionen verfuegbar.`,
-      dataImpact: `Das Feature "${safeName}" liest und aktualisiert nur die relevanten Entitaeten innerhalb des definierten Scopes.`,
-      uiImpact: `Die Oberflaeche zeigt Lade-, Erfolg- und Fehlerzustaende fuer "${safeName}" konsistent und nachvollziehbar an.`,
-      acceptanceCriteria: [
-        `"${safeName}" ist fuer einen Nutzer ohne manuelles Nachladen in der UI verifizierbar.`,
-        `Fehlerfaelle von "${safeName}" liefern klare Nutzerhinweise und hinterlassen keinen inkonsistenten Zustand.`,
-        `Die durch "${safeName}" verursachten Datenaenderungen sind nach Ausfuehrung nachvollziehbar vorhanden.`,
-      ],
-    };
-  }
-
-  return {
-    purpose: pick([
-      `"${safeName}" delivers a clearly scoped user capability with an observable outcome.`,
-      `The feature "${safeName}" defines an independent, testable workflow.`,
-      `"${safeName}" is implemented as a deterministic functional unit with explicit behavior.`,
-    ]),
-    actors: pick([
-      `Primary: end user invoking "${safeName}". Secondary: API and persistence services.`,
-      `Actors include users triggering "${safeName}" and backend services processing the request.`,
-      `Users interact with "${safeName}" while backend components validate and persist state.`,
-    ]),
-    trigger: pick([
-      `User explicitly initiates "${safeName}" through the interface.`,
-      `"${safeName}" is triggered by a concrete user action or defined system event.`,
-      `A UI event starts the "${safeName}" workflow.`,
-    ]),
-    preconditions: pick([
-      `Required inputs are present and validated before execution.`,
-      `Authentication and authorization requirements for "${safeName}" are satisfied.`,
-      `Dependent services are reachable and system state is consistent.`,
-    ]),
-    mainFlow: [
-      `System receives the "${safeName}" request and validates input.`,
-      `Business logic for "${safeName}" executes deterministically.`,
-      `Relevant data is created or updated atomically.`,
-      `UI reflects the result of "${safeName}" and confirms completion.`,
-    ],
-    alternateFlows: [
-      `Validation failure: system returns a clear error and performs no partial write.`,
-      `Transient failure: system logs the issue and offers a retry path.`,
-    ],
-    postconditions: `After "${safeName}" completes, resulting state is consistent, persisted, and available for follow-up actions.`,
-    dataImpact: `The "${safeName}" workflow reads and updates only in-scope entities required for this feature.`,
-    uiImpact: `UI surfaces loading, success, and error states for "${safeName}" consistently and transparently.`,
-    acceptanceCriteria: [
-      `"${safeName}" is verifiable by end users directly in the UI without manual reload.`,
-      `Error paths for "${safeName}" provide clear user feedback and keep state consistent.`,
-      `Data mutations caused by "${safeName}" are observable after execution.`,
-    ],
-  };
-}
-
 export function ensurePrdFeatureDepth(
   structure: PRDStructure,
   language: SupportedLanguage
@@ -742,7 +640,6 @@ export function ensurePrdFeatureDepth(
 
   for (let i = 0; i < (structure.features || []).length; i++) {
     const feature = { ...(structure.features[i] || {}) } as FeatureSpec;
-    const template = buildFeatureFieldTemplate(feature.name || feature.id, language, i);
     const hints = extractFieldHintsFromRaw(feature.rawContent || '');
     let changed = false;
 
@@ -770,10 +667,34 @@ export function ensurePrdFeatureDepth(
         (feature as any)[field] = hints.dataImpactHint;
       } else if (field === 'uiImpact' && hints.uiImpactHint) {
         (feature as any)[field] = hints.uiImpactHint;
-      } else {
-        (feature as any)[field] = (template as any)[field];
       }
-      changed = true;
+      // No generic template fallback — leave field empty for the reviewer to
+      // enrich with project-specific content via AI enrichment call.
+      if ((feature as any)[field] !== currentValue) changed = true;
+    }
+
+    // Second pass: ensure critical fields have minimal name-derived scaffolds
+    // as safety net in case AI enrichment fails downstream
+    const CRITICAL_SCAFFOLD_FIELDS: string[] = ['purpose', 'mainFlow', 'acceptanceCriteria'];
+    for (const critField of CRITICAL_SCAFFOLD_FIELDS) {
+      if (hasStructuredFeatureValue((feature as any)[critField])) continue;
+      const safeName = feature.name || feature.id;
+      if (critField === 'purpose') {
+        (feature as any)[critField] = language === 'de'
+          ? `${safeName} stellt die beschriebene Funktionalität bereit.`
+          : `${safeName} provides the described functionality.`;
+        changed = true;
+      } else if (critField === 'mainFlow') {
+        (feature as any)[critField] = language === 'de'
+          ? [`Nutzer initiiert ${safeName}.`, `System führt ${safeName} aus.`, `Ergebnis wird angezeigt.`]
+          : [`User initiates ${safeName}.`, `System executes ${safeName}.`, `Result is displayed.`];
+        changed = true;
+      } else if (critField === 'acceptanceCriteria') {
+        (feature as any)[critField] = language === 'de'
+          ? [`${safeName} kann erfolgreich ausgeführt werden.`, `Fehlerfälle liefern eine klare Fehlermeldung.`]
+          : [`${safeName} can be executed successfully.`, `Error cases produce a clear error message.`];
+        changed = true;
+      }
     }
 
     if (changed) expandedFeatures++;
@@ -838,25 +759,103 @@ export function validatePrdStructure(
       severity: 'error',
     });
   } else {
-    const emptyStructuredFeatures = structure.features.filter(feature => {
+    const INCOMPLETE_THRESHOLD = 5; // < 5 of 10 fields filled = incomplete
+    const incompleteFeatures: string[] = [];
+    const emptyFeatures: string[] = [];
+
+    for (const feature of structure.features) {
       const filledStructuredFields = FEATURE_STRUCTURED_FIELDS.reduce((count, field) => {
         const value = (feature as any)[field];
         if (Array.isArray(value)) return count + (value.length > 0 ? 1 : 0);
         return count + (hasText(value) ? 1 : 0);
       }, 0);
-      return filledStructuredFields === 0;
-    });
+      if (filledStructuredFields === 0) {
+        emptyFeatures.push(`${feature.id}: ${feature.name} (0/${FEATURE_STRUCTURED_FIELDS.length})`);
+      } else if (filledStructuredFields < INCOMPLETE_THRESHOLD) {
+        incompleteFeatures.push(`${feature.id}: ${feature.name} (${filledStructuredFields}/${FEATURE_STRUCTURED_FIELDS.length})`);
+      }
+    }
 
-    if (emptyStructuredFeatures.length === featureCount) {
+    if (emptyFeatures.length === featureCount) {
       issues.push({
         code: 'feature_specs_unstructured',
         message: 'All feature entries are unstructured. Each feature needs the 10-section specification template.',
         severity: 'error',
       });
-    } else if (emptyStructuredFeatures.length > 0) {
+    } else if (emptyFeatures.length > 0) {
       issues.push({
         code: 'feature_specs_partially_unstructured',
-        message: `${emptyStructuredFeatures.length} feature(s) are missing structured subsections.`,
+        message: `${emptyFeatures.length} feature(s) have no structured subsections: ${emptyFeatures.join('; ')}`,
+        severity: options?.mode === 'generate' ? 'error' : 'warning',
+      });
+    }
+    if (incompleteFeatures.length > 0) {
+      issues.push({
+        code: 'feature_specs_incomplete',
+        message: `${incompleteFeatures.length} feature(s) have incomplete specs (<${INCOMPLETE_THRESHOLD} of ${FEATURE_STRUCTURED_FIELDS.length} fields): ${incompleteFeatures.join('; ')}`,
+        severity: 'warning',
+      });
+    }
+
+    // Feature CONTENT quality check: verify filled fields have SUBSTANTIVE content
+    // (not just name-derived scaffolds or single-sentence boilerplate)
+    const thinFeatures: string[] = [];
+    const shallowFeatures: string[] = [];
+    for (const feature of structure.features) {
+      let substantialFieldCount = 0;
+      const featureNameLower = (feature.name || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+      const featureNameWords = new Set(featureNameLower.split(/\s+/).filter(w => w.length >= 3));
+
+      for (const field of FEATURE_STRUCTURED_FIELDS) {
+        const value = (feature as any)[field];
+        if (Array.isArray(value)) {
+          // Array fields: mainFlow needs >= 3 steps, acceptanceCriteria >= 2 items
+          const minItems = field === 'mainFlow' ? 3 : field === 'acceptanceCriteria' ? 2 : 1;
+          const meaningful = value.filter((entry: string) => String(entry || '').trim().length >= 10);
+          if (meaningful.length >= minItems) {
+            substantialFieldCount++;
+          }
+        } else if (typeof value === 'string') {
+          const text = value.trim();
+          // String fields: purpose needs >= 30 chars, others >= 20 chars
+          const minLen = field === 'purpose' ? 30 : 20;
+          if (text.length >= minLen) {
+            // Check for name-echo: if content is just the feature name rephrased
+            const textLower = text.toLowerCase().replace(/[^a-z0-9\s]/g, '');
+            const textWords = new Set(textLower.split(/\s+/).filter(w => w.length >= 3));
+            const overlap = [...featureNameWords].filter(w => textWords.has(w)).length;
+            const echoRatio = featureNameWords.size > 0 ? overlap / featureNameWords.size : 0;
+            // If >80% of feature name words appear in this field AND field is short, it's an echo
+            if (echoRatio > 0.8 && text.length < 60) {
+              // Name echo — not substantial
+            } else {
+              substantialFieldCount++;
+            }
+          }
+        }
+      }
+
+      if (substantialFieldCount > 0 && substantialFieldCount < 3) {
+        thinFeatures.push(`${feature.id}: ${feature.name} (${substantialFieldCount} substantial fields)`);
+      }
+      // Shallow: formally filled but lacking depth (has fields but < 4 are substantial)
+      if (substantialFieldCount < 4) {
+        shallowFeatures.push(`${feature.id}: ${feature.name} (${substantialFieldCount}/10 substantial)`);
+      }
+    }
+    // Thin features: > 30% threshold (lowered from 50%)
+    if (thinFeatures.length > 0 && thinFeatures.length > featureCount * 0.3) {
+      issues.push({
+        code: 'feature_content_thin',
+        message: `${thinFeatures.length} feature(s) have trivially thin content: ${thinFeatures.join('; ')}`,
+        severity: 'warning',
+      });
+    }
+    // Shallow features: formally filled but lacking substance
+    if (shallowFeatures.length > 0 && shallowFeatures.length > featureCount * 0.3) {
+      issues.push({
+        code: 'feature_content_shallow',
+        message: `${shallowFeatures.length}/${featureCount} feature(s) have shallow content (< 4 substantial fields): ${shallowFeatures.slice(0, 5).join('; ')}${shallowFeatures.length > 5 ? '...' : ''}`,
         severity: 'warning',
       });
     }
@@ -983,7 +982,14 @@ export function validatePrdStructure(
   }
 
   const fallbackSections = options?.fallbackSections || [];
-  if (fallbackSections.length > 3) {
+  const totalRequiredSections = REQUIRED_SECTION_DEFS.length;
+  if (options?.mode === 'generate' && fallbackSections.length > totalRequiredSections * 0.6) {
+    issues.push({
+      code: 'excessive_fallback_sections',
+      message: `${fallbackSections.length}/${totalRequiredSections} sections were auto-generated by the compiler. AI output is substantially incomplete.`,
+      severity: 'warning',
+    });
+  } else if (fallbackSections.length > 3) {
     issues.push({
       code: 'high_fallback_section_count',
       message: `${fallbackSections.length} sections were auto-generated by the compiler. AI output may be substantially incomplete.`,
@@ -1031,9 +1037,22 @@ export function compilePrdDocument(
   const language = detectLanguage(options.language, rawContent);
   const candidate = sanitizeMetaLeaksInStructure(safeParseStructure(rawContent)).structure;
   const candidateUnknownSections = collectUnknownSectionHeadings(candidate);
-  const improveBaseStructure = options.mode === 'improve' && hasText(options.existingContent)
-    ? sanitizeMetaLeaksInStructure(safeParseStructure(String(options.existingContent || ''))).structure
-    : null;
+
+  // Determine improve baseline: only merge structures when existing content
+  // has parseable features. If content exists but has no feature baseline
+  // (baselinePartial), use it as contextHint so the AI considers it without
+  // a structural merge that would produce empty results.
+  let improveBaseStructure: PRDStructure | null = null;
+  if (options.mode === 'improve' && hasText(options.existingContent)) {
+    const parsed = sanitizeMetaLeaksInStructure(safeParseStructure(String(options.existingContent || '')));
+    const parsedFeatureCount = Array.isArray(parsed.structure.features) ? parsed.structure.features.length : 0;
+    if (parsedFeatureCount > 0) {
+      improveBaseStructure = parsed.structure;
+    } else if (!options.contextHint) {
+      // baselinePartial: content exists but no features parsed — use as context
+      options = { ...options, contextHint: String(options.existingContent || '') };
+    }
+  }
   const merged = improveBaseStructure
     ? mergeStructuresForImproveWithDiagnostics(
       improveBaseStructure,
@@ -1084,10 +1103,10 @@ export function compilePrdDocument(
     strictLanguageConsistency,
     aggregationAppliedCount: aggregatedFeatureCount,
     aggregationNearDuplicateCount: aggregationAnalysis.nearDuplicates.length,
-    fallbackSections: withRequiredContext.addedSections,
+    fallbackSections: [...withRequiredContext.addedSections, ...withDepth.expandedSections],
   });
 
-  // Feature count regression guard (improve mode only)
+  // Feature count regression guard (improve mode)
   if (options.mode === 'improve' && improveBaseStructure) {
     const baselineCount = improveBaseStructure.features.length;
     const outputCount = withFeatureDepth.structure.features.length;
@@ -1102,6 +1121,27 @@ export function compilePrdDocument(
       if (severity === 'error') {
         quality.valid = false;
       }
+    }
+  }
+
+  // Feature loss guard (generate mode) — detect features lost during compilation pipeline
+  if (options.mode === 'generate' && !improveBaseStructure) {
+    const candidateFeatureCount = candidate.features.length;
+    const outputCount = withFeatureDepth.structure.features.length;
+    if (candidateFeatureCount > 0 && outputCount === 0) {
+      quality.issues.push({
+        code: 'feature_loss_during_compilation',
+        message: `All ${candidateFeatureCount} features from AI output were lost during compilation.`,
+        severity: 'error',
+      });
+      quality.valid = false;
+    } else if (candidateFeatureCount > 2 && outputCount < candidateFeatureCount * 0.5) {
+      quality.issues.push({
+        code: 'feature_loss_during_compilation',
+        message: `Feature count dropped from ${candidateFeatureCount} to ${outputCount} during generate compilation (${Math.round((1 - outputCount / candidateFeatureCount) * 100)}% loss).`,
+        severity: 'error',
+      });
+      quality.valid = false;
     }
   }
 

@@ -1,7 +1,10 @@
 // OpenRouter API Client for Dual-AI System
 // Based on HRP-17 Specification
+// ÄNDERUNG 04.03.2026: Direkte Provider-Aufrufe als Fallback hinzugefuegt
 
 import type { TokenUsage } from "@shared/schema";
+import { createProvider, type AIProvider } from "./providers/index";
+import { getBestDirectProvider, resolveProvidersForModel, isOpenRouterFreeModel } from "./modelRegistry";
 
 interface ModelTier {
   generator: string;
@@ -36,6 +39,8 @@ const DEFAULT_FREE_FALLBACK_CHAIN: readonly string[] = [
 
 const DEPRECATED_MODEL_IDS = new Set<string>([
   'deepseek/deepseek-r1-0528:free',
+  'deepseek-ai/deepseek-r1',       // NVIDIA EOL seit 26.01.2026
+  'deepseek-ai/deepseek-r1:free',  // :free Variante ebenfalls EOL
 ]);
 
 const DEFAULT_FALLBACK_MODEL_BY_TIER: Record<keyof ModelConfig, string> = {
@@ -208,15 +213,18 @@ class OpenRouterClient {
     let cooldownMs = 0;
     let reason = '';
 
-    if (message.includes('no longer available')) {
+    if (message.includes('no longer available') || message.includes('end of life') || message.includes('reached its end')) {
       cooldownMs = 24 * 60 * 60 * 1000;
       reason = 'model unavailable on provider';
+    } else if (message.includes('not a valid model') || message.includes('not found') || message.includes('nicht gefunden')) {
+      cooldownMs = 30 * 60 * 1000;
+      reason = 'model not found';
     } else if (message.includes('returned an empty response')) {
       cooldownMs = 10 * 60 * 1000;
       reason = 'repeated empty response';
-    } else if (message.includes('timed out')) {
-      cooldownMs = 5 * 60 * 1000;
-      reason = 'request timeout';
+    } else if (message.includes('timed out') || message.includes('fetch failed') || message.includes('econnrefused') || message.includes('provider error')) {
+      cooldownMs = 3 * 60 * 1000;
+      reason = 'provider connection error';
     } else if (message.includes('rate limit exceeded')) {
       cooldownMs = 2 * 60 * 1000;
       reason = 'rate limited';
@@ -235,10 +243,6 @@ class OpenRouterClient {
     temperature: number = 0.7,
     responseFormat?: { type: 'json_object' }
   ): Promise<{ content: string; usage: TokenUsage; model: string; finishReason?: string }> {
-    if (!this.apiKey) {
-      throw new Error('OpenRouter API key not configured');
-    }
-
     // Use preferred model if set, otherwise use tier-based model
     let modelName: string;
     if (this.preferredModels[modelType]) {
@@ -246,6 +250,30 @@ class OpenRouterClient {
     } else {
       const models = this.getModels();
       modelName = modelType === 'generator' ? models.generator : models.reviewer;
+    }
+
+    // ÄNDERUNG 04.03.2026: Versuche direkten Provider-Aufruf fuer bestimmte Modelle
+    const provider = this.detectProviderForModel(modelName);
+    console.log(`[OpenRouterClient] Model: ${modelName}, Detected provider: ${provider || 'openrouter'}`);
+    
+    if (provider && provider !== 'openrouter') {
+      console.log(`[OpenRouterClient] Attempting direct ${provider} call for ${modelName}`);
+      try {
+        const result = await this.callProviderDirectly(provider, modelName, systemPrompt, userPrompt, maxTokens, temperature);
+        console.log(`[OpenRouterClient] Direct ${provider} call successful for ${modelName}`);
+        return result;
+      } catch (error: any) {
+        console.warn(`[OpenRouterClient] Direct provider call failed for ${modelName}:`, error.message);
+        // Nicht zu OpenRouter fallen - NVIDIA-exklusive Modelle existieren dort nicht.
+        // callWithFallback() probiert das naechste Modell in der Chain.
+        throw new Error(`Direct ${provider} call failed for ${modelName}: ${error.message}`);
+      }
+    } else {
+      console.log(`[OpenRouterClient] Using OpenRouter for ${modelName}`);
+    }
+
+    if (!this.apiKey) {
+      throw new Error('OpenRouter API key not configured');
     }
 
     const requestBody: OpenRouterRequest = {
@@ -269,8 +297,8 @@ class OpenRouterClient {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': process.env.REPL_SLUG 
-            ? `https://${process.env.REPL_SLUG}.replit.app` 
+          'HTTP-Referer': process.env.REPL_SLUG
+            ? `https://${process.env.REPL_SLUG}.replit.app`
             : 'https://nexora.app',
           'X-Title': 'NEXORA - AI PRD Platform'
         },
@@ -382,6 +410,63 @@ class OpenRouterClient {
     }
   }
 
+  /**
+   * ÄNDERUNG 04.03.2026: Registry-basierte Provider-Erkennung.
+   * Nutzt die Model-Provider Registry statt Vendor-Prefix-Heuristik,
+   * um Modelle korrekt an den richtigen Provider zu routen.
+   */
+  private detectProviderForModel(modelName: string): AIProvider | null {
+    const provider = getBestDirectProvider(modelName);
+
+    if (provider) {
+      console.log(`[OpenRouterClient] Registry matched ${modelName} to provider: ${provider}`);
+    } else {
+      console.log(`[OpenRouterClient] No direct provider for ${modelName}, using OpenRouter`);
+    }
+
+    return provider;
+  }
+
+  /**
+   * ÄNDERUNG 04.03.2026: Ruft einen Provider direkt auf (nicht über OpenRouter)
+   */
+  private async callProviderDirectly(
+    provider: AIProvider,
+    modelName: string,
+    systemPrompt: string,
+    userPrompt: string,
+    maxTokens: number,
+    temperature: number
+  ): Promise<{ content: string; usage: TokenUsage; model: string; finishReason?: string }> {
+    const apiKey = process.env[`${provider.toUpperCase()}_API_KEY`] || '';
+    if (!apiKey) {
+      throw new Error(`${provider} API key not configured`);
+    }
+
+    const providerInstance = createProvider(provider, apiKey);
+    
+    const result = await providerInstance.callModel({
+      model: modelName,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature,
+      maxTokens,
+    });
+
+    return {
+      content: result.content,
+      usage: {
+        prompt_tokens: result.usage.inputTokens,
+        completion_tokens: result.usage.outputTokens,
+        total_tokens: result.usage.totalTokens,
+      },
+      model: result.model,
+      finishReason: result.finishReason,
+    };
+  }
+
   async callWithFallback(
     modelType: 'generator' | 'reviewer',
     systemPrompt: string,
@@ -431,6 +516,30 @@ class OpenRouterClient {
     }
     addIfNew(roleDefault, false);
 
+    // Cross-Provider-Fallbacks: Fuer :free Modelle in der Chain prüfen ob eine
+    // Direct-Provider-Variante (ohne :free) existiert und als Fallback anfuegen.
+    // Das stellt sicher, dass bei OpenRouter-Ausfall Direct-Provider genutzt werden.
+    for (const fb of fallbackChain) {
+      if (isOpenRouterFreeModel(fb)) {
+        const baseModel = fb.replace(/:free$/, '');
+        const directProviders = resolveProvidersForModel(baseModel);
+        if (directProviders.length > 0) {
+          addIfNew(baseModel, false);
+        }
+      }
+    }
+
+    // Direct-Provider kostenlose Modelle als letzte Fallbacks
+    if (process.env.NVIDIA_API_KEY) {
+      addIfNew('meta/llama-3.3-70b-instruct', false);
+    }
+    if (process.env.GROQ_API_KEY) {
+      addIfNew('llama-3.3-70b-versatile', false);
+    }
+    if (process.env.CEREBRAS_API_KEY) {
+      addIfNew('llama-3.3-70b', false);
+    }
+
     // Optional legacy behavior: allow using the other role's model as last-resort fallback.
     if (allowCrossRoleFallback) {
       addIfNew(crossRolePreferred, false);
@@ -473,6 +582,43 @@ class OpenRouterClient {
         this.applyFailureCooldown(attemptModel, error.message || '');
         errors.push(`${attemptModel}: ${error.message}`);
         console.warn(`${attemptModel} failed, trying next model...`, error.message);
+
+        // Provider-weite Fehler: Alle verbleibenden Modelle desselben Providers skippen,
+        // wenn ein Fehler den gesamten Provider betrifft (Auth oder Rate Limit).
+        const errMsg = (error.message || '').toLowerCase();
+        const failedIsOpenRouterOnly = getBestDirectProvider(attemptModel) === null;
+
+        if (
+          failedIsOpenRouterOnly && (
+            errMsg.includes('api key is invalid') ||
+            errMsg.includes('unauthorized') ||
+            errMsg.includes('key not configured')
+          )
+        ) {
+          for (const remaining of modelsToTry.slice(i + 1)) {
+            if (getBestDirectProvider(remaining.model) === null) {
+              setGlobalCooldown(remaining.model, 5 * 60 * 1000, 'openrouter auth failure');
+              console.warn(`[Auth-Skip] Cooldown set for ${remaining.model} (OpenRouter auth failure)`);
+            }
+          }
+        }
+
+        // OpenRouter Rate-Limit-Skip: Wenn OpenRouter 429 zurueckgibt, alle
+        // verbleibenden OpenRouter-only Modelle auf Cooldown setzen.
+        if (
+          failedIsOpenRouterOnly &&
+          errMsg.includes('rate limit exceeded') &&
+          !errMsg.includes('nvidia') &&
+          !errMsg.includes('groq') &&
+          !errMsg.includes('cerebras')
+        ) {
+          for (const remaining of modelsToTry.slice(i + 1)) {
+            if (getBestDirectProvider(remaining.model) === null) {
+              setGlobalCooldown(remaining.model, 2 * 60 * 1000, 'openrouter rate limited');
+              console.warn(`[Rate-Skip] Cooldown set for ${remaining.model} (OpenRouter rate limit)`);
+            }
+          }
+        }
       }
     }
 

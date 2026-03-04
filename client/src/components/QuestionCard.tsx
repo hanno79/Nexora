@@ -185,6 +185,7 @@ export function QuestionCard({
             <div className="mt-2 sm:mt-3 pl-5 sm:pl-7">
               <Input
                 placeholder={t.guidedAi.explainPreference}
+                aria-label={t.guidedAi.explainPreference}
                 value={answers[question.id]?.customText || ''}
                 onChange={(e) => updateCustomText(question.id, e.target.value)}
                 data-testid={`input-custom-${question.id}`}

@@ -66,6 +66,7 @@ export function qualityScore(quality: PrdQualityReport): number {
   }
   if (quality.truncatedLikely) score -= 15;
   score -= (quality.missingSections?.length || 0) * 5;
+  score -= (quality.fallbackSections?.length || 0) * 3;
   score += Math.min(20, (quality.featureCount || 0) * 2);
   return score;
 }

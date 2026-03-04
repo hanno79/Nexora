@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+/// <reference types="vitest" />
 import {
   compilePrdDocument,
   looksLikeTruncatedOutput,
@@ -434,9 +434,10 @@ describe('prdCompiler', () => {
 
     expect(compiled.quality.valid).toBe(true);
     expect(compiled.structure.features.length).toBe(2);
+    // Purpose is extracted from rawContent prose line
     expect(compiled.structure.features[0].purpose).toBeTruthy();
-    expect(compiled.structure.features[0].mainFlow?.length).toBeGreaterThan(0);
-    expect(compiled.structure.features[0].acceptanceCriteria?.length).toBeGreaterThan(0);
+    // mainFlow and acceptanceCriteria may be empty when no structured subsections
+    // are present in rawContent — generic boilerplate is no longer injected
   });
 
   it('improve mode ignores noisy regenerated feature catalogue intro and keeps baseline-first patching', () => {

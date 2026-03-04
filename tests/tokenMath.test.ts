@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+/// <reference types="vitest" />
 import { normalizeTokenCount, splitTokenCount } from '../server/tokenMath';
 
 describe('tokenMath', () => {

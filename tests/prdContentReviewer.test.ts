@@ -1,12 +1,30 @@
-import { describe, it, expect } from 'vitest';
-import { analyzeContentQuality } from '../server/prdContentReviewer';
+/// <reference types="vitest" />
+import { analyzeContentQuality, buildFeatureEnrichPrompt, parseFeatureEnrichResponse } from '../server/prdContentReviewer';
 import type { PRDStructure } from '../server/prdStructure';
 
 function makeStructure(overrides: Partial<PRDStructure> = {}): PRDStructure {
   return {
     features: [
-      { id: 'F-01', name: 'User Authentication', rawContent: 'User login and registration flow.' },
-      { id: 'F-02', name: 'Dashboard Analytics', rawContent: 'Analytics dashboard for user data visualization.' },
+      {
+        id: 'F-01', name: 'User Authentication',
+        rawContent: 'User login and registration flow.',
+        purpose: 'Authenticate users via OAuth2 for secure access to TaskFlow.',
+        actors: 'End user, OAuth2 provider (Google, GitHub)',
+        trigger: 'User clicks "Sign In" button on the landing page.',
+        preconditions: 'OAuth2 provider is reachable and configured.',
+        mainFlow: ['User clicks Sign In', 'System redirects to OAuth provider', 'Provider returns auth token', 'System creates session and redirects to dashboard'],
+        acceptanceCriteria: ['User can sign in via Google OAuth', 'Invalid tokens are rejected with 401', 'Session persists across page reloads'],
+      },
+      {
+        id: 'F-02', name: 'Dashboard Analytics',
+        rawContent: 'Analytics dashboard for user data visualization.',
+        purpose: 'Display task completion metrics and sprint velocity for project managers.',
+        actors: 'Project manager, team lead',
+        trigger: 'User navigates to the Analytics tab.',
+        preconditions: 'At least one sprint with completed tasks exists.',
+        mainFlow: ['System loads sprint data', 'Charts render velocity and burndown', 'User filters by date range'],
+        acceptanceCriteria: ['Dashboard loads within 2 seconds', 'Charts update on filter change', 'Empty state shown for no data'],
+      },
     ],
     otherSections: {},
     systemVision: 'TaskFlow is a project management tool that helps teams collaborate and track progress on software development tasks.',
@@ -228,6 +246,211 @@ describe('prdContentReviewer', () => {
       );
       expect(mismatchIssues.length).toBeGreaterThanOrEqual(1);
       expect(mismatchIssues[0].severity).toBe('warning');
+    });
+
+    it('detects features with incomplete structured fields', () => {
+      const structure = makeStructure({
+        features: [
+          {
+            id: 'F-01', name: 'Complete Feature',
+            rawContent: 'Full feature.',
+            purpose: 'Does something specific.',
+            actors: 'End user',
+            trigger: 'Click button',
+            preconditions: 'User is logged in',
+            mainFlow: ['Step 1', 'Step 2'],
+            acceptanceCriteria: ['Criterion 1'],
+          },
+          {
+            id: 'F-02', name: 'Sparse Feature',
+            rawContent: 'Sparse feature with only a purpose.',
+            purpose: 'This feature exists.',
+            // All other fields empty — should be flagged
+          },
+        ],
+      });
+
+      const result = analyzeContentQuality(structure);
+      const incompleteIssues = result.issues.filter(i => i.code === 'feature_fields_incomplete');
+      expect(incompleteIssues.length).toBe(1);
+      expect(incompleteIssues[0].sectionKey).toBe('feature:F-02');
+      expect(incompleteIssues[0].suggestedAction).toBe('enrich');
+      expect(incompleteIssues[0].message).toMatch(/Missing:/);
+    });
+
+    it('does not flag features with 5+ filled fields as incomplete', () => {
+      const structure = makeStructure(); // Default features have 6 fields each
+      const result = analyzeContentQuality(structure);
+      const incompleteIssues = result.issues.filter(i => i.code === 'feature_fields_incomplete');
+      expect(incompleteIssues).toHaveLength(0);
+    });
+
+    it('detects shallow features with thin boilerplate content', () => {
+      const structure = makeStructure({
+        features: [{
+          id: 'F-01', name: 'Scoring Algorithm',
+          rawContent: 'Scoring.',
+          purpose: 'Implementierung des Punktesystems.',  // 34 chars, but no detail
+          actors: 'Spieler.',                             // < 20 chars
+          trigger: 'Spielstart.',                         // < 20 chars
+          preconditions: 'Keine.',                        // < 20 chars
+          mainFlow: ['Berechnung von Punkten.'],          // only 1 step (needs 3)
+          alternateFlows: ['Keine.'],                     // < 10 chars item
+          postconditions: 'Punkte berechnet.',            // < 20 chars
+          dataImpact: 'Punkte.',                          // < 20 chars
+          uiImpact: 'Keine.',                             // < 20 chars
+          acceptanceCriteria: ['Punkte korrekt.'],        // only 1 item (needs 2)
+        }],
+      });
+      const result = analyzeContentQuality(structure);
+      const shallowIssues = result.issues.filter(i => i.code === 'feature_content_shallow');
+      expect(shallowIssues.length).toBe(1);
+      expect(shallowIssues[0].sectionKey).toBe('feature:F-01');
+      expect(shallowIssues[0].suggestedAction).toBe('enrich');
+    });
+
+    it('does not flag well-specified features as shallow', () => {
+      const structure = makeStructure(); // default features have substantial content
+      const result = analyzeContentQuality(structure);
+      const shallowIssues = result.issues.filter(i => i.code === 'feature_content_shallow');
+      expect(shallowIssues).toHaveLength(0);
+    });
+
+    it('detects fallback-filled sections via explicit fallbackSections list', () => {
+      const structure = makeStructure({
+        // Content doesn't match old FALLBACK_PATTERN regex, but section is known to be fallback-filled
+        definitionOfDone: 'A feature is complete when all acceptance criteria pass and code review is approved.',
+      });
+      const result = analyzeContentQuality(structure, {
+        fallbackSections: ['definitionOfDone'],
+      });
+
+      const fillerIssues = result.issues.filter(
+        i => i.code === 'compiler_fallback_filler' && i.sectionKey === 'definitionOfDone'
+      );
+      expect(fillerIssues.length).toBe(1);
+      expect(fillerIssues[0].severity).toBe('error');
+      expect(result.sectionsToRewrite).toContain('definitionOfDone');
+    });
+
+    it('detects template fallback via opening-line patterns (DE definitionOfDone)', () => {
+      const structure = makeStructure({
+        definitionOfDone: 'Ein Feature gilt als abgeschlossen wenn:\n- Alle Akzeptanzkriterien bestanden\n- Code-Review abgeschlossen\n- Tests decken Hauptfluss ab\n- Keine kritischen Bugs offen fuer: F-01 User Auth, F-02 Dashboard',
+      });
+      const result = analyzeContentQuality(structure);
+      const filler = result.issues.filter(i => i.code === 'compiler_fallback_filler' && i.sectionKey === 'definitionOfDone');
+      expect(filler.length).toBe(1);
+      expect(result.sectionsToRewrite).toContain('definitionOfDone');
+    });
+
+    it('detects template fallback via opening-line patterns (EN successCriteria)', () => {
+      const structure = makeStructure({
+        successCriteria: 'The project is successful when:\n- All features are implemented\n- Acceptance criteria pass\n- No critical bugs at release\n- Users complete core workflows end-to-end',
+      });
+      const result = analyzeContentQuality(structure);
+      const filler = result.issues.filter(i => i.code === 'compiler_fallback_filler' && i.sectionKey === 'successCriteria');
+      expect(filler.length).toBe(1);
+      expect(result.sectionsToRewrite).toContain('successCriteria');
+    });
+
+    it('detects template fallback via opening-line patterns (DE outOfScope)', () => {
+      const structure = makeStructure({
+        outOfScope: 'Folgende Aspekte sind fuer diese Version explizit NICHT im Scope:\n- Features ueber den Katalog hinaus\n- Integrationen ausserhalb der Boundaries\n- Performance-Optimierung ueber NFR-Ziele hinaus',
+      });
+      const result = analyzeContentQuality(structure);
+      const filler = result.issues.filter(i => i.code === 'compiler_fallback_filler' && i.sectionKey === 'outOfScope');
+      expect(filler.length).toBe(1);
+      expect(result.sectionsToRewrite).toContain('outOfScope');
+    });
+
+    it('detects template fallback via opening-line patterns (DE timelineMilestones)', () => {
+      const structure = makeStructure({
+        timelineMilestones: 'Die Lieferung ist in Phasen strukturiert:\n- Phase 1: Kerninfrastruktur\n- Phase 2: Umsetzung von F-01, F-02\n- Phase 3: Testing und Abnahme',
+      });
+      const result = analyzeContentQuality(structure);
+      const filler = result.issues.filter(i => i.code === 'compiler_fallback_filler' && i.sectionKey === 'timelineMilestones');
+      expect(filler.length).toBe(1);
+      expect(result.sectionsToRewrite).toContain('timelineMilestones');
+    });
+
+    it('does not flag project-specific sections as template fallback', () => {
+      // Custom project-specific content that happens to mention "abgeschlossen" but isn't template text
+      const structure = makeStructure({
+        definitionOfDone: 'Jedes Feature der TaskFlow-App gilt als abgeschlossen, sobald folgende projektspezifische Kriterien erfuellt sind:\n- OAuth2-Login funktioniert mit Google und GitHub\n- Dashboard zeigt Sprint-Velocity korrekt an',
+      });
+      const result = analyzeContentQuality(structure);
+      const filler = result.issues.filter(i => i.code === 'compiler_fallback_filler' && i.sectionKey === 'definitionOfDone');
+      expect(filler).toHaveLength(0);
+    });
+  });
+
+  describe('parseFeatureEnrichResponse', () => {
+    it('parses structured enrichment response into field map', () => {
+      const response = `=== F-01: Auth Login ===
+**purpose**: Authenticate users securely via OAuth2.
+**actors**: End user, Google OAuth provider
+**mainFlow**:
+1. User clicks Sign In button
+2. System redirects to Google OAuth
+3. Token returned and session created
+
+=== F-03: Dashboard ===
+**trigger**: User navigates to /dashboard
+**acceptanceCriteria**:
+- [ ] Dashboard loads under 2 seconds
+- [ ] Empty state shown when no data`;
+
+      const result = parseFeatureEnrichResponse(response, ['F-01', 'F-03']);
+      expect(result.size).toBe(2);
+
+      const f01 = result.get('F-01')!;
+      expect(f01.purpose).toMatch(/OAuth2/);
+      expect(f01.actors).toMatch(/Google/);
+      expect(f01.mainFlow).toHaveLength(3);
+
+      const f03 = result.get('F-03')!;
+      expect(f03.trigger).toMatch(/dashboard/);
+      expect(f03.acceptanceCriteria).toHaveLength(2);
+    });
+
+    it('ignores features not in the allowed ID list', () => {
+      const response = `=== F-99: Unknown ===
+**purpose**: Should be ignored.`;
+
+      const result = parseFeatureEnrichResponse(response, ['F-01']);
+      expect(result.size).toBe(0);
+    });
+
+    it('handles mixed-case feature IDs via case-insensitive matching', () => {
+      const response = `=== f-01: Auth Login ===
+**purpose**: Authenticate users securely via OAuth2.`;
+
+      // Caller passes lowercase IDs — should still match
+      const result = parseFeatureEnrichResponse(response, ['f-01']);
+      expect(result.size).toBe(1);
+      expect(result.get('F-01')).toBeDefined();
+      expect(result.get('F-01')!.purpose).toMatch(/OAuth2/);
+    });
+  });
+
+  describe('buildFeatureEnrichPrompt', () => {
+    it('generates prompt with project context and missing fields', () => {
+      const prompt = buildFeatureEnrichPrompt({
+        features: [
+          { id: 'F-01', name: 'Auth Login', rawContent: 'User authentication via OAuth.', missingFields: ['actors', 'mainFlow'] },
+        ],
+        projectContext: {
+          systemVision: 'A task management tool for dev teams.',
+          domainModel: 'Entities: User, Task, Project.',
+          otherFeatures: [{ id: 'F-02', name: 'Dashboard' }],
+        },
+        language: 'en',
+      });
+
+      expect(prompt).toContain('F-01: Auth Login');
+      expect(prompt).toContain('actors, mainFlow');
+      expect(prompt).toContain('task management');
+      expect(prompt).toContain('F-02: Dashboard');
     });
   });
 });

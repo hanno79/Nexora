@@ -22,6 +22,14 @@ interface AuthenticatedRequest extends Request {
 }
 import { asyncHandler } from "./asyncHandler";
 import { insertPrdSchema, users, aiPreferencesSchema } from "@shared/schema";
+// ÄNDERUNG 03.03.2026: Neue Provider Imports
+import {
+  getAllProviders,
+  getModelsForProvider,
+  getAllAvailableModels,
+  isProviderConfigured,
+  type AIProvider,
+} from "./providers/index";
 // Legacy Anthropic import removed – legacy endpoint disabled (see below)
 import { exportToLinear, checkLinearConnection } from "./linearHelper";
 import { exportToDart, updateDartDoc, checkDartConnection, getDartboards } from "./dartHelper";
@@ -51,6 +59,7 @@ import { logger } from "./logger";
 import { isIterativeClientDisconnected } from "./iterativeRequestGuard";
 import { splitTokenCount } from "./tokenMath";
 import { MODEL_TIERS, getDefaultFallbackModelForTier, sanitizeConfiguredModel, resolveModelTier, DEFAULT_FREE_FALLBACK_CHAIN } from "./openrouter";
+import { initializeModelRegistry } from "./modelRegistry";
 import { resolvePrdWorkflowMode } from "./prdWorkflowMode";
 import {
   buildCompilerRunDiagnostics,
@@ -187,9 +196,12 @@ const authRateLimiter = createRateLimiter(10, 60000);   // 10 auth attempts/min
 const errorRateLimiter = createRateLimiter(10, 60000);  // 10 error reports/min
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Initialize model-provider registry (must run before routes use provider detection)
+  await initializeModelRegistry();
+
   // Initialize templates
   await initializeTemplates();
-  
+
   // Auth middleware
   await setupAuth(app);
 
@@ -978,6 +990,156 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ models, tierDefaults: MODEL_TIERS });
   }));
 
+  // ÄNDERUNG 03.03.2026: Neue Provider API Endpunkte
+  // Alle verfügbaren Provider mit Konfigurationsstatus
+  app.get('/api/providers', isAuthenticated, asyncHandler(async (_req: AuthenticatedRequest, res) => {
+    const providers = getAllProviders().map(provider => ({
+      ...provider,
+      configured: isProviderConfigured(
+        provider.id,
+        process.env[provider.apiKeyEnv]
+      ),
+      apiKeyEnv: provider.apiKeyEnv,
+    }));
+    res.json({ providers });
+  }));
+
+  // Modelle für einen spezifischen Provider
+  app.get('/api/providers/:provider/models', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const { provider } = req.params;
+    const providerKey = provider as AIProvider;
+
+    if (!['openrouter', 'groq', 'cerebras', 'nvidia'].includes(providerKey)) {
+      return res.status(400).json({ message: 'Ungültiger Provider' });
+    }
+
+    const models = await getModelsForProvider(providerKey);
+    const providerConfig = getAllProviders().find(p => p.id === providerKey);
+    const configured = isProviderConfigured(
+      providerKey,
+      process.env[providerConfig?.apiKeyEnv || '']
+    );
+
+    res.json({
+      provider: providerKey,
+      configured,
+      models,
+    });
+  }));
+
+  // Alle verfügbaren Modelle (über alle Provider)
+  app.get('/api/models', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const { providers } = req.query;
+    
+    // Provider-Filter aus Query-Parametern
+    const selectedProviders = providers
+      ? String(providers).split(',').filter(p => ['openrouter', 'groq', 'cerebras', 'nvidia'].includes(p)) as AIProvider[]
+      : undefined;
+    
+    // Modelle von allen ausgewählten Providern laden
+    let allModels: any[] = [];
+    
+    // OpenRouter Modelle (immer wenn kein Filter oder explizit angefordert)
+    if (!selectedProviders || selectedProviders.includes('openrouter')) {
+      try {
+        const openRouterModels = await fetchOpenRouterModels();
+        allModels = allModels.concat(openRouterModels.map(m => ({
+          id: m.id,
+          name: m.name,
+          provider: 'openrouter' as AIProvider,
+          contextLength: m.context_length,
+          isFree: m.isFree,
+          pricing: {
+            input: parseFloat(m.pricing.prompt) * 1000000, // Convert to per 1M tokens
+            output: parseFloat(m.pricing.completion) * 1000000,
+          },
+          capabilities: ['chat', 'completion', 'streaming'],
+        })));
+      } catch (error) {
+        logger.warn('Failed to fetch OpenRouter models', { error });
+      }
+    }
+    
+    // Groq Modelle
+    if (!selectedProviders || selectedProviders.includes('groq')) {
+      try {
+        const groqModels = await getModelsForProvider('groq');
+        allModels = allModels.concat(groqModels);
+      } catch (error) {
+        logger.warn('Failed to fetch Groq models', { error });
+      }
+    }
+    
+    // Cerebras Modelle
+    if (!selectedProviders || selectedProviders.includes('cerebras')) {
+      try {
+        const cerebrasModels = await getModelsForProvider('cerebras');
+        allModels = allModels.concat(cerebrasModels);
+      } catch (error) {
+        logger.warn('Failed to fetch Cerebras models', { error });
+      }
+    }
+
+    // NVIDIA Modelle
+    if (!selectedProviders || selectedProviders.includes('nvidia')) {
+      try {
+        const nvidiaModels = await getModelsForProvider('nvidia');
+        allModels = allModels.concat(nvidiaModels);
+      } catch (error) {
+        logger.warn('Failed to fetch NVIDIA models', { error });
+      }
+    }
+
+    // Deduplizierung: Gleiche Model-ID von mehreren Providern → eine Zeile
+    // Bevorzuge Direct-Provider (schneller/gratis) ueber OpenRouter
+    const deduped = new Map<string, any>();
+    for (const model of allModels) {
+      const existing = deduped.get(model.id);
+      if (!existing) {
+        deduped.set(model.id, { ...model, availableProviders: [model.provider] });
+      } else {
+        if (!existing.availableProviders.includes(model.provider)) {
+          existing.availableProviders.push(model.provider);
+        }
+        // Direct-Provider bevorzugen
+        if (existing.provider === 'openrouter' && model.provider !== 'openrouter') {
+          deduped.set(model.id, { ...model, availableProviders: existing.availableProviders });
+        }
+      }
+    }
+    allModels = Array.from(deduped.values());
+
+    // Sortiere nach Name
+    allModels.sort((a, b) => a.name.localeCompare(b.name));
+
+    res.json({
+      models: allModels,
+      providers: selectedProviders || ['openrouter', 'groq', 'cerebras', 'nvidia'],
+      totalCount: allModels.length,
+      freeCount: allModels.filter(m => m.isFree).length,
+    });
+  }));
+
+  // Provider Status Check (API-Key gültig?)
+  app.get('/api/providers/:provider/status', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const { provider } = req.params;
+    const providerKey = provider as AIProvider;
+
+    if (!['openrouter', 'groq', 'cerebras', 'nvidia'].includes(providerKey)) {
+      return res.status(400).json({ message: 'Ungültiger Provider' });
+    }
+
+    const providerConfig = getAllProviders().find(p => p.id === providerKey);
+    const apiKey = process.env[providerConfig?.apiKeyEnv || ''];
+    const configured = isProviderConfigured(providerKey, apiKey);
+
+    res.json({
+      provider: providerKey,
+      configured,
+      hasApiKey: !!apiKey,
+    });
+  }));
+
   // Model status endpoint — returns in-memory cooldown state for pre-run checks
   app.get('/api/openrouter/model-status', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
     const cooldowns = getAllActiveCooldowns();
@@ -1095,6 +1257,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         compilerDiagnostics: assessed.compilerDiagnostics,
         finalizationStage: assessed.finalizationStage,
         autoSaveRequested: saveRequested,
+        effectiveMode: effectiveMode,
+        baselineFeatureCount: modeResolution?.assessment.featureCount ?? 0,
+        baselinePartial: modeResolution?.assessment.baselinePartial ?? false,
       };
 
       // Always return 200 when generatePRD() succeeded (no throw).
@@ -1354,6 +1519,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         iterationCount: result.iterations?.length || 0,
       });
 
+      const iterativeModeResolution = resolvePrdWorkflowMode({
+        requestedMode: finalMode,
+        existingContent: finalExistingContent || '',
+      });
+
       const assessed = assessCompilerOutcome({
         content: result.finalContent || (result as any).mergedPRD || '',
         mode: finalMode,
@@ -1372,6 +1542,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         qualityStatus: assessed.qualityStatus,
         compilerDiagnostics: assessed.compilerDiagnostics,
         finalizationStage: assessed.finalizationStage,
+        effectiveMode: finalMode,
+        baselineFeatureCount: iterativeModeResolution.assessment.featureCount,
+        baselinePartial: iterativeModeResolution.assessment.baselinePartial,
         finalReview: result.finalReview
           ? {
               model: result.finalReview.model,
@@ -1718,6 +1891,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         compilerDiagnostics: assessed.compilerDiagnostics,
         finalizationStage: assessed.finalizationStage,
         autoSaveRequested: saveRequested,
+        effectiveMode: result.workflowMode || 'generate',
+        baselineFeatureCount: assessed.compilerDiagnostics?.totalFeatureCount ?? 0,
+        baselinePartial: false,
       };
 
       if (assessed.qualityStatus !== 'passed') {
@@ -1916,6 +2092,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         qualityStatus: assessed.qualityStatus,
         compilerDiagnostics: assessed.compilerDiagnostics,
         finalizationStage: assessed.finalizationStage,
+        effectiveMode: result.workflowMode || 'generate',
+        baselineFeatureCount: assessed.compilerDiagnostics?.totalFeatureCount ?? 0,
+        baselinePartial: false,
       };
 
       // ÄNDERUNG 02.03.2025: SSE Event basierend auf assessed.status senden
@@ -2087,6 +2266,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         compilerDiagnostics: assessed.compilerDiagnostics,
         finalizationStage: assessed.finalizationStage,
         autoSaveRequested: saveRequested,
+        effectiveMode: result.workflowMode || requestedMode,
+        baselineFeatureCount: assessed.compilerDiagnostics?.totalFeatureCount ?? 0,
+        baselinePartial: false,
       };
 
       if (assessed.qualityStatus !== 'passed') {

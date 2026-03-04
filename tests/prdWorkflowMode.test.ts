@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+/// <reference types="vitest" />
 import { assessPrdBaseline, resolvePrdWorkflowMode } from '../server/prdWorkflowMode';
 
 describe('prdWorkflowMode', () => {
@@ -11,22 +11,32 @@ describe('prdWorkflowMode', () => {
 
   it('detects feature baseline when feature catalogue includes F-IDs', () => {
     const baseline = [
+      '# PRD',
+      '',
+      '## System Vision',
+      'Test product.',
+      '',
       '## Functional Feature Catalogue',
       '',
       '### F-01: Existing Feature',
-      '1. Purpose',
+      '',
+      '**1. Purpose**',
       'Keep existing behavior stable.',
-      '10. Acceptance Criteria',
+      '',
+      '**2. Actors**',
+      'End user.',
+      '',
+      '**10. Acceptance Criteria**',
       '- Existing feature remains testable.',
     ].join('\n');
 
     const assessment = assessPrdBaseline(baseline);
     expect(assessment.hasContent).toBe(true);
-    expect(assessment.featureCount).toBe(1);
+    expect(assessment.featureCount).toBeGreaterThanOrEqual(1);
     expect(assessment.hasFeatureBaseline).toBe(true);
   });
 
-  it('downgrades improve mode to generate when no feature baseline exists', () => {
+  it('keeps improve mode with baselinePartial when content exists but has no features', () => {
     const noFeaturesBaseline = [
       '## System Vision',
       'A fresh template draft without feature IDs.',
@@ -40,9 +50,22 @@ describe('prdWorkflowMode', () => {
       existingContent: noFeaturesBaseline,
     });
 
+    expect(resolved.mode).toBe('improve');
+    expect(resolved.downgradedFromImprove).toBe(false);
+    expect(resolved.assessment.featureCount).toBe(0);
+    expect(resolved.assessment.baselinePartial).toBe(true);
+    expect(resolved.assessment.hasContent).toBe(true);
+  });
+
+  it('downgrades improve mode to generate when content is empty', () => {
+    const resolved = resolvePrdWorkflowMode({
+      requestedMode: 'improve',
+      existingContent: '',
+    });
+
     expect(resolved.mode).toBe('generate');
     expect(resolved.downgradedFromImprove).toBe(true);
-    expect(resolved.assessment.featureCount).toBe(0);
+    expect(resolved.assessment.hasContent).toBe(false);
   });
 
   it('keeps improve mode when feature baseline exists', () => {

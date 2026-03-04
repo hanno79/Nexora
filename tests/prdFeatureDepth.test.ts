@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { extractFieldHintsFromRaw, ensurePrdFeatureDepth } from '../server/prdCompiler';
+/// <reference types="vitest" />
+import { extractFieldHintsFromRaw, ensurePrdFeatureDepth, validatePrdStructure } from '../server/prdCompiler';
 import type { PRDStructure } from '../server/prdParser';
 
 describe('extractFieldHintsFromRaw', () => {
@@ -143,7 +143,7 @@ Initialisiere die SQLite-Datenbank.
     expect(feature.mainFlow![0]).not.toMatch(/System nimmt die Anfrage/);
   });
 
-  it('falls back to template when rawContent has no extractable hints', () => {
+  it('provides minimal name-derived scaffolds when rawContent has no extractable hints', () => {
     const structure = makeStructure([{
       id: 'F-01',
       name: 'Test Feature',
@@ -153,10 +153,17 @@ Initialisiere die SQLite-Datenbank.
     const result = ensurePrdFeatureDepth(structure, 'en');
     const feature = result.structure.features[0];
 
-    // Should have template-generated content (non-empty)
-    expect(feature.mainFlow).toBeDefined();
-    expect(feature.mainFlow!.length).toBeGreaterThan(0);
-    expect(feature.purpose).toBeDefined();
+    // Critical fields get minimal name-derived scaffolds as safety net
+    expect(feature.purpose).toBe('Test Feature provides the described functionality.');
+    expect(feature.mainFlow).toEqual([
+      'User initiates Test Feature.',
+      'System executes Test Feature.',
+      'Result is displayed.',
+    ]);
+    expect(feature.acceptanceCriteria).toEqual([
+      'Test Feature can be executed successfully.',
+      'Error cases produce a clear error message.',
+    ]);
   });
 
   it('does not overwrite existing feature field values', () => {
@@ -199,5 +206,177 @@ Der Spieler hat mindestens eine Runde gespielt und einen gueltigen Score erzielt
     expect(feature.preconditions).toMatch(/Runde gespielt/);
     // Should NOT be generic template
     expect(feature.preconditions).not.toMatch(/benoetigten Eingaben/i);
+  });
+});
+
+describe('validatePrdStructure feature completeness signals', () => {
+  function makeValidStructure(features: Partial<PRDStructure['features'][0]>[]): PRDStructure {
+    return {
+      systemVision: 'A comprehensive project management tool for agile teams with sprint tracking and reporting.',
+      systemBoundaries: 'Web application deployed on Vercel with PostgreSQL backend and WebSocket real-time updates.',
+      domainModel: 'Core entities: Project, Task, User, Sprint with defined relationships and lifecycle states.',
+      globalBusinessRules: 'Each Task must have exactly one assignee. Sprint duration fixed at 2 weeks with no overlap.',
+      features: features.map((f, i) => ({
+        id: f.id || `F-${String(i + 1).padStart(2, '0')}`,
+        name: f.name || `Feature ${i + 1}`,
+        rawContent: f.rawContent || `### F-${String(i + 1).padStart(2, '0')}: Feature ${i + 1}\n\nDetailed description of feature ${i + 1} with multiple lines.\n\n1. Step one of the feature flow.\n2. Step two continues the workflow.`,
+        ...f,
+      })) as any,
+      nonFunctional: 'Page load time under 2 seconds for all routes. API response p95 under 200ms on standard hardware.',
+      errorHandling: 'All API errors return structured JSON with error code, message and timestamp for debugging.',
+      deployment: 'Next.js on Vercel with PostgreSQL on Supabase and Redis for session management and caching.',
+      definitionOfDone: 'All acceptance criteria pass, code review approved by 2 members, unit test coverage above 80%.',
+      outOfScope: 'Mobile native apps and offline mode are not included in this version of the product delivery.',
+      successCriteria: 'User adoption: 100 active teams within 3 months with average session duration over 15 minutes.',
+      timelineMilestones: 'Phase 1 (Week 1-4): Core task management. Phase 2 (Week 5-8): Sprint planning and analytics.',
+      otherSections: {},
+    };
+  }
+
+  it('reports feature_specs_incomplete for features with 1-4 filled fields', () => {
+    const structure = makeValidStructure([
+      {
+        id: 'F-01', name: 'Well Specified',
+        purpose: 'Manage user tasks.',
+        actors: 'End user, admin',
+        trigger: 'User creates a task',
+        preconditions: 'User is logged in',
+        mainFlow: ['Create task', 'Assign to user', 'Track progress'],
+        acceptanceCriteria: ['Task can be created', 'Task appears in list'],
+      },
+      {
+        id: 'F-02', name: 'Sparse Feature',
+        purpose: 'Some purpose.',
+        actors: 'End user',
+        // Only 2 fields filled — should be flagged as incomplete
+      },
+    ]);
+
+    const content = `## System Vision\n${structure.systemVision}\n## Features\n### F-01: Well Specified\n### F-02: Sparse Feature`;
+    const quality = validatePrdStructure(structure, content);
+
+    const incomplete = quality.issues.filter(i => i.code === 'feature_specs_incomplete');
+    expect(incomplete.length).toBe(1);
+    expect(incomplete[0].message).toContain('F-02');
+    expect(incomplete[0].message).toContain('2/10');
+    expect(incomplete[0].severity).toBe('warning');
+  });
+
+  it('does not report incomplete for features with 5+ filled fields', () => {
+    const structure = makeValidStructure([
+      {
+        id: 'F-01', name: 'Adequate Feature',
+        purpose: 'Manage tasks.',
+        actors: 'End user',
+        trigger: 'Click create',
+        preconditions: 'Logged in',
+        mainFlow: ['Step 1', 'Step 2'],
+        // 5 fields filled — should NOT be flagged
+      },
+    ]);
+
+    const content = `## System Vision\n${structure.systemVision}`;
+    const quality = validatePrdStructure(structure, content);
+
+    const incomplete = quality.issues.filter(i => i.code === 'feature_specs_incomplete');
+    expect(incomplete).toHaveLength(0);
+  });
+
+  it('reports feature_content_shallow for features with name-echo boilerplate', () => {
+    // All 4 features have fields filled but content is trivially thin / name-echo
+    const structure = makeValidStructure([
+      {
+        id: 'F-01', name: 'Split-View Map Rendering Engine',
+        purpose: 'Bereitstellung des geteilten Kartendarstellungs-Engines.',
+        actors: 'Spieler',
+        trigger: 'Spielstart',
+        preconditions: 'Keine.',
+        mainFlow: ['Anzeige der geteilten Karte.'],
+        alternateFlows: ['Keine.'],
+        postconditions: 'Geteilte Karte ist angezeigt.',
+        dataImpact: 'Keine.',
+        uiImpact: 'Geteilte Karte ist sichtbar.',
+        acceptanceCriteria: ['Geteilte Karte ist korrekt angezeigt.'],
+      },
+      {
+        id: 'F-02', name: 'Scoring Algorithm Implementation',
+        purpose: 'Implementierung des Punktesystems.',
+        actors: 'Spieler',
+        trigger: 'Spielstart',
+        preconditions: 'Keine.',
+        mainFlow: ['Berechnung von Punkten.'],
+        alternateFlows: ['Keine.'],
+        postconditions: 'Punkte sind berechnet.',
+        dataImpact: 'Punkte gespeichert.',
+        uiImpact: 'Keine.',
+        acceptanceCriteria: ['Punkte sind korrekt berechnet.'],
+      },
+      {
+        id: 'F-03', name: 'Game Summary Dashboard',
+        purpose: 'Bereitstellung des Spielzusammenfassungsdashboards.',
+        actors: 'Spieler',
+        trigger: 'Spielende.',
+        preconditions: 'Keine.',
+        mainFlow: ['Anzeige des Dashboards.'],
+        alternateFlows: ['Keine.'],
+        postconditions: 'Dashboard ist angezeigt.',
+        dataImpact: 'Keine.',
+        uiImpact: 'Dashboard ist sichtbar.',
+        acceptanceCriteria: ['Dashboard ist korrekt angezeigt.'],
+      },
+      {
+        id: 'F-04', name: 'Leaderboard Retrieval API',
+        purpose: 'Bereitstellung des API-Endpunkts fuer die Leaderboard-Abfrage.',
+        actors: 'Spieler',
+        trigger: 'Spielstart',
+        preconditions: 'Keine.',
+        mainFlow: ['Abfrage des Leaderboards.'],
+        alternateFlows: ['Keine.'],
+        postconditions: 'Leaderboard ist abgefragt.',
+        dataImpact: 'Keine.',
+        uiImpact: 'Keine.',
+        acceptanceCriteria: ['Leaderboard ist korrekt abgefragt.'],
+      },
+    ]);
+
+    const content = `## System Vision\n${structure.systemVision}`;
+    const quality = validatePrdStructure(structure, content);
+
+    const shallow = quality.issues.filter(i => i.code === 'feature_content_shallow');
+    expect(shallow.length).toBeGreaterThan(0);
+    expect(shallow[0].message).toContain('shallow');
+  });
+
+  it('does NOT report shallow for well-specified features', () => {
+    const structure = makeValidStructure([
+      {
+        id: 'F-01', name: 'User Authentication',
+        purpose: 'Authenticate users via OAuth2 for secure access to the application platform.',
+        actors: 'End user, OAuth2 provider (Google, GitHub)',
+        trigger: 'User clicks "Sign In" button on the landing page.',
+        preconditions: 'OAuth2 provider is reachable and configured in environment.',
+        mainFlow: [
+          'User clicks Sign In button on landing page',
+          'System redirects to OAuth provider authorization page',
+          'Provider returns auth token after user consent',
+          'System creates session and redirects to dashboard',
+        ],
+        alternateFlows: ['Invalid token: system shows error and redirects to login'],
+        postconditions: 'User has active session with valid auth token stored.',
+        dataImpact: 'Creates User entity and Session record in database.',
+        uiImpact: 'Dashboard component renders after successful authentication.',
+        acceptanceCriteria: [
+          'User can sign in via Google OAuth within 3 seconds',
+          'Invalid tokens are rejected with 401 Unauthorized',
+          'Session persists across page reloads for 24 hours',
+        ],
+      },
+    ]);
+
+    const content = `## System Vision\n${structure.systemVision}`;
+    const quality = validatePrdStructure(structure, content);
+
+    const shallow = quality.issues.filter(i => i.code === 'feature_content_shallow');
+    expect(shallow).toHaveLength(0);
   });
 });

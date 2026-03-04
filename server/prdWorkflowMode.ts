@@ -6,6 +6,8 @@ export interface PrdBaselineAssessment {
   hasContent: boolean;
   featureCount: number;
   hasFeatureBaseline: boolean;
+  /** Content exists but has no parseable feature catalogue — treat as context hint, not merge baseline */
+  baselinePartial: boolean;
 }
 
 export interface ResolvePrdWorkflowModeInput {
@@ -26,6 +28,7 @@ export function assessPrdBaseline(existingContent?: string | null): PrdBaselineA
       hasContent: false,
       featureCount: 0,
       hasFeatureBaseline: false,
+      baselinePartial: false,
     };
   }
 
@@ -36,12 +39,14 @@ export function assessPrdBaseline(existingContent?: string | null): PrdBaselineA
       hasContent: true,
       featureCount,
       hasFeatureBaseline: featureCount > 0,
+      baselinePartial: featureCount === 0,
     };
   } catch {
     return {
       hasContent: true,
       featureCount: 0,
       hasFeatureBaseline: false,
+      baselinePartial: true,
     };
   }
 }
@@ -61,6 +66,17 @@ export function resolvePrdWorkflowMode(
   }
 
   if (!assessment.hasFeatureBaseline) {
+    if (assessment.hasContent) {
+      // Content exists but no parseable features — stay in improve mode
+      // with baselinePartial flag so the compiler uses existing content
+      // as context hint instead of merge baseline. Never silently discard
+      // existing content.
+      return {
+        mode: 'improve',
+        assessment,
+        downgradedFromImprove: false,
+      };
+    }
     return {
       mode: 'generate',
       assessment,

@@ -1,4 +1,10 @@
 import type { FeatureSpec, PRDStructure } from './prdStructure';
+import {
+  hasText as _hasText,
+  cloneStructure as _cloneStructure,
+  tokenizeToSet,
+  jaccardSimilarity,
+} from './prdTextUtils';
 
 type SupportedLanguage = 'de' | 'en';
 type QualitySeverity = 'error' | 'warning';
@@ -192,9 +198,7 @@ const KNOWN_COMPILER_SCAFFOLD_PATTERNS: RegExp[] = [
   /die durch .* verursachten datenaenderungen sind.*nachvollziehbar/i,
 ];
 
-function hasText(value: unknown): boolean {
-  return typeof value === 'string' && value.trim().length > 0;
-}
+const hasText = _hasText;
 
 function normalizeText(value: string): string {
   return String(value || '')
@@ -332,13 +336,7 @@ function mergeArrayValues(baseValue: string[] | undefined, candidateValue: strin
   return merged.length > 0 ? merged : undefined;
 }
 
-function cloneStructure(structure: PRDStructure): PRDStructure {
-  return {
-    ...structure,
-    features: [...(structure.features || [])].map(feature => ({ ...feature })),
-    otherSections: { ...(structure.otherSections || {}) },
-  };
-}
+const cloneStructure = _cloneStructure;
 
 function sanitizeMetaLeakText(value: string): { text: string; removed: number } {
   const lines = String(value || '').split(/\r?\n/);
@@ -819,7 +817,15 @@ export function findFeatureAggregationCandidates(
         continue;
       }
 
-      const near = jac >= 0.74 || edit >= 0.85 || (sameCrudObjectCore && hasCrudActions);
+      // Shared core noun check: if two features share ≥2 content words in their
+      // object core (e.g. "Random Location Loader" / "Random Location API Service"),
+      // flag them as near-duplicates even if Jaccard/edit distance is below threshold.
+      const aCoreTokens = new Set(tokenize(aObjectCore || '').filter(t => t.length >= 3));
+      const bCoreTokens = tokenize(bObjectCore || '').filter(t => t.length >= 3);
+      const sharedCoreWords = bCoreTokens.filter(t => aCoreTokens.has(t)).length;
+      const sharedCoreMatch = sharedCoreWords >= 2;
+
+      const near = jac >= 0.74 || edit >= 0.85 || (sameCrudObjectCore && hasCrudActions) || sharedCoreMatch;
       if (near) {
         nearDuplicates.push({
           featureIds: [String(a.id || ''), String(b.id || '')],
@@ -1015,26 +1021,8 @@ const CROSS_SECTION_KEYS: Array<keyof PRDStructure> = [
   'successCriteria',
 ];
 
-function tokenizeForJaccard(text: string): Set<string> {
-  return new Set(
-    String(text || '')
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-      .split(/\s+/)
-      .filter(w => w.length >= 3)
-  );
-}
-
-function jaccardSim(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 && b.size === 0) return 1;
-  if (a.size === 0 || b.size === 0) return 0;
-  let intersection = 0;
-  for (const token of a) {
-    if (b.has(token)) intersection++;
-  }
-  const union = a.size + b.size - intersection;
-  return union > 0 ? intersection / union : 0;
-}
+const tokenizeForJaccard = tokenizeToSet;
+const jaccardSim = jaccardSimilarity;
 
 export function collectCrossSectionSimilarityIssues(structure: PRDStructure): QualityIssue[] {
   const issues: QualityIssue[] = [];

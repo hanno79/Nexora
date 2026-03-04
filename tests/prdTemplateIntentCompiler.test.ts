@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+/// <reference types="vitest" />
 import { compilePrdDocument } from '../server/prdCompiler';
 
 describe('prdTemplateIntent compiler integration', () => {
@@ -330,16 +330,16 @@ describe('prdTemplateIntent compiler integration', () => {
       'Web-Anwendung in Containerumgebung.',
       '',
       '## Definition of Done',
-      'Alle Features funktionieren und sind getestet.',
+      'Alle Features funktionieren, sind getestet und das Code-Review wurde abgeschlossen.',
       '',
       '## Out of Scope',
       'Keine mobilen Apps geplant, auch keine Desktop-Variante oder Offline-Betrieb.',
       '',
       '## Timeline & Milestones',
-      'Projektstart im Fruehjahr und Abschluss im Sommer.',
+      'Projektstart ist fuer das Fruehjahr vorgesehen, die Entwicklung laeuft ueber den Sommer bis zum Abschluss.',
       '',
       '## Success Criteria & Acceptance Testing',
-      'Nutzer verwenden die App regelmaessig.',
+      'Nutzer verwenden die App regelmaessig und die Kernfunktionen sind ohne Anleitung nutzbar.',
     ].join('\n');
 
     const compiled = compilePrdDocument(raw, {
@@ -699,7 +699,7 @@ describe('prdTemplateIntent compiler integration', () => {
 });
 
 describe('fallback section feature references', () => {
-  it('references up to 5 features in fallback sections when available', () => {
+  it('references up to 10 features in fallback sections when available', () => {
     // Build a PRD with 6 features but no Definition of Done section (triggers fallback)
     const featureNames = ['Auth Login', 'User Profile', 'Dashboard', 'Settings', 'Notifications', 'Reports'];
     const featureBlocks = featureNames.map((name, i) => {
@@ -729,10 +729,8 @@ describe('fallback section feature references', () => {
 
     // Definition of Done should be a fallback-generated section referencing features
     const dod = result.structure.definitionOfDone || '';
-    // Should reference at least 4 features (up to 5, not capped at 3)
+    // All 6 features should be referenced (cap is 10, so all 6 fit)
     const referencedFeatures = featureNames.filter(name => dod.includes(name));
-    expect(referencedFeatures.length).toBeGreaterThanOrEqual(4);
-    // The 6th feature (Reports) may or may not be included (cap is 5)
-    expect(referencedFeatures.length).toBeLessThanOrEqual(5);
+    expect(referencedFeatures.length).toBe(6);
   });
 });
