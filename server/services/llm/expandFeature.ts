@@ -1,4 +1,5 @@
 import type { OpenRouterClient } from '../../openrouter';
+import { setGlobalCooldown } from '../../openrouter';
 import type { TokenUsage } from "@shared/schema";
 import { enforceStructure } from './repairSection';
 import { FEATURE_EXPANSION } from '../../tokenBudgets';
@@ -46,7 +47,11 @@ Feature Name: \${featureName}
 2. Actors
 3. Trigger
 4. Preconditions
-5. Main Flow (numbered deterministic steps)
+5. Main Flow — MUST be written as numbered steps. Example:
+   1. System receives and validates the request.
+   2. System executes core logic.
+   3. System returns result.
+   Write at least 3 steps. Each step MUST start with "N. " (number + period + space).
 6. Alternate Flows
 7. Postconditions
 8. Data Impact
@@ -63,7 +68,7 @@ CRITICAL RULES
 - Be technically precise
 - Be deterministic
 - No vague language ("etc", "and more")
-- Main Flow must contain numbered implementation steps
+- Main Flow MUST contain at least 3 numbered steps (1. 2. 3.). Each step on a new line starting with "N. ". Prose paragraphs are NOT acceptable.
 - Alternate Flows must include at least one realistic edge case
 - Postconditions must describe resulting system state
 
@@ -311,6 +316,12 @@ export async function expandFeature(
     console.warn(`  ⚠️ ${featureId} validation failed — missing: ${validation.missing.join(', ')}`);
 
     if (attempt === 1) {
+      // If most sections are missing, the model produced unusable output.
+      // Set a short cooldown to force a different model on retry.
+      if (validation.missing.length >= 8) {
+        setGlobalCooldown(result.model, 60 * 1000, 'complete expansion failure');
+        console.log(`  🔄 ${featureId}: ${validation.missing.length} sections missing — rotating model`);
+      }
       console.log(`  🔄 Retrying ${featureId}...`);
       retried = true;
     } else {
@@ -339,17 +350,66 @@ export interface ParsedFeature {
 }
 
 export function parseFeatureList(featureListText: string): ParsedFeature[] {
+  // Beide Parser ausfuehren und den mit mehr Ergebnissen verwenden.
+  // Strict liefert bessere Beschreibungen (Short description), aber matched
+  // nicht bei fehlenden Leerzeilen, Markdown-Bold oder Bullet-Prefix.
+  const strict = parseFeatureListStrict(featureListText);
+  const lenient = parseFeatureListLenient(featureListText);
+
+  if (strict.length >= lenient.length) return strict;
+
+  console.warn(`Strict parser found ${strict.length} features, lenient found ${lenient.length} — using lenient`);
+  return lenient;
+}
+
+function parseFeatureListStrict(text: string): ParsedFeature[] {
   const features: ParsedFeature[] = [];
   const pattern = /F-(\d+):\s*(.+?)(?:\n|$)(?:Short description:\s*(.+?))?(?:\n|$)/gi;
   let match: RegExpExecArray | null;
 
-  while ((match = pattern.exec(featureListText)) !== null) {
+  while ((match = pattern.exec(text)) !== null) {
     const num = Number.parseInt(match[1], 10);
     if (!Number.isFinite(num) || num <= 0) {
       continue;
     }
     const name = match[2].trim();
     const desc = match[3]?.trim() || name;
+
+    features.push({
+      featureId: `F-${String(num).padStart(2, '0')}`,
+      featureName: name,
+      shortDescription: desc,
+    });
+  }
+
+  return features;
+}
+
+function parseFeatureListLenient(text: string): ParsedFeature[] {
+  const features: ParsedFeature[] = [];
+  const lines = text.split('\n');
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    // Match F-XX: Feature Name (optionally with markdown bold or leading bullet)
+    const match = line.match(/^(?:[-*]\s*)?(?:\*\*)?F-(\d+):\s*(?:\*\*)?\s*(.+?)(?:\*\*)?$/);
+    if (!match) continue;
+
+    const num = Number.parseInt(match[1], 10);
+    if (!Number.isFinite(num) || num <= 0) continue;
+
+    const name = match[2].trim().replace(/\*\*$/, '').trim();
+    let desc = name;
+
+    // Check next line for an optional description (any common prefix)
+    if (i + 1 < lines.length) {
+      const nextLine = lines[i + 1].trim();
+      const descMatch = nextLine.match(/^(?:Short description|Description|Beschreibung|Kurzbeschreibung):\s*(.+)/i);
+      if (descMatch) {
+        desc = descMatch[1].trim();
+        i++; // Skip the description line
+      }
+    }
 
     features.push({
       featureId: `F-${String(num).padStart(2, '0')}`,

@@ -89,6 +89,15 @@ const GROQ_MODELS_FALLBACK: AIModel[] = [
   },
 ];
 
+// Max output tokens for models with known limits (lower than typical token budgets)
+const GROQ_MAX_OUTPUT_TOKENS: Record<string, number> = {
+  'meta-llama/llama-4-maverick-17b-128e-instruct': 8192,
+  'gemma2-9b-it': 8192,
+  'llama3-70b-8192': 8192,
+  'llama3-8b-8192': 8192,
+  'llama-guard-3-8b': 8192,
+};
+
 export class GroqProvider extends BaseAIProvider {
   getProviderConfig(): ProviderConfig {
     return PROVIDER_METADATA.groq;
@@ -100,6 +109,11 @@ export class GroqProvider extends BaseAIProvider {
   }
 
   async getModels(): Promise<AIModel[]> {
+    // Ohne gueltigen API Key direkt Fallback nutzen (kein HTTP-Call)
+    if (!this.isConfigured()) {
+      return GROQ_MODELS_FALLBACK;
+    }
+
     // Versuche dynamisch Modelle von der API zu laden
     try {
       const response = await this.fetchWithTimeout(`${this.config.baseUrl}/models`, {
@@ -149,7 +163,8 @@ export class GroqProvider extends BaseAIProvider {
     };
 
     if (maxTokens) {
-      requestBody.max_tokens = maxTokens;
+      const modelLimit = GROQ_MAX_OUTPUT_TOKENS[model];
+      requestBody.max_tokens = modelLimit ? Math.min(maxTokens, modelLimit) : maxTokens;
     }
 
     try {

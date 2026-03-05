@@ -6,6 +6,11 @@ import type { TokenUsage } from "@shared/schema";
 import { createProvider, type AIProvider } from "./providers/index";
 import { getBestDirectProvider, resolveProvidersForModel, isOpenRouterFreeModel } from "./modelRegistry";
 
+/** Strip <think>...</think> reasoning blocks that some models emit. */
+function stripThinkTags(text: string): string {
+  return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+}
+
 interface ModelTier {
   generator: string;
   reviewer: string;
@@ -108,6 +113,31 @@ function getAllActiveCooldowns(): Record<string, { until: number; reason: string
     }
   }
   return result;
+}
+
+// --- Provider-level circuit breaker ---
+// When a direct provider (NVIDIA, Groq, Cerebras) fails with a timeout or connection
+// error, ALL models routed to that provider are skipped for the cooldown duration.
+// This prevents burning 5+ minutes trying multiple models on a down provider.
+const globalProviderCooldowns = new Map<string, { until: number; reason: string }>();
+
+function getProviderCooldownStatus(provider: string): { until: number; reason: string } | null {
+  const entry = globalProviderCooldowns.get(provider);
+  if (!entry) return null;
+  if (Date.now() >= entry.until) {
+    globalProviderCooldowns.delete(provider);
+    return null;
+  }
+  return entry;
+}
+
+function setProviderCooldown(provider: string, cooldownMs: number, reason: string): void {
+  globalProviderCooldowns.set(provider, { until: Date.now() + cooldownMs, reason });
+  console.warn(`[Circuit-Breaker] Provider ${provider} auf Cooldown (${Math.round(cooldownMs / 1000)}s): ${reason}`);
+}
+
+function clearProviderCooldown(provider: string): void {
+  globalProviderCooldowns.delete(provider);
 }
 
 // Model configuration with currently available models (verified Feb 2026)
@@ -225,7 +255,7 @@ class OpenRouterClient {
     } else if (message.includes('timed out') || message.includes('fetch failed') || message.includes('econnrefused') || message.includes('provider error')) {
       cooldownMs = 3 * 60 * 1000;
       reason = 'provider connection error';
-    } else if (message.includes('rate limit exceeded')) {
+    } else if (message.includes('rate limit exceeded') || message.includes('rate limit erreicht')) {
       cooldownMs = 2 * 60 * 1000;
       reason = 'rate limited';
     }
@@ -388,7 +418,7 @@ class OpenRouterClient {
       }
       
       return {
-        content: data.choices[0].message.content,
+        content: stripThinkTags(data.choices[0].message.content),
         usage: data.usage,
         model: data.model,
         finishReason: data.choices[0]?.finish_reason,
@@ -456,7 +486,7 @@ class OpenRouterClient {
     });
 
     return {
-      content: result.content,
+      content: stripThinkTags(result.content),
       usage: {
         prompt_tokens: result.usage.inputTokens,
         completion_tokens: result.usage.outputTokens,
@@ -493,6 +523,16 @@ class OpenRouterClient {
       if (activeCooldown) {
         console.warn(`Skipping ${sanitized} due to cooldown: ${activeCooldown.reason}`);
         return;
+      }
+
+      // Provider-Level Circuit Breaker: Skip models whose provider is on cooldown
+      const modelProvider = getBestDirectProvider(sanitized);
+      if (modelProvider && modelProvider !== 'openrouter') {
+        const providerCd = getProviderCooldownStatus(modelProvider);
+        if (providerCd) {
+          console.warn(`Skipping ${sanitized} — provider ${modelProvider} on cooldown: ${providerCd.reason}`);
+          return;
+        }
       }
 
       seen.add(sanitized);
@@ -561,6 +601,23 @@ class OpenRouterClient {
     for (let i = 0; i < modelsToTry.length; i++) {
       const { model: attemptModel, isPrimary } = modelsToTry[i];
 
+      // Skip models put on cooldown during this fallback run (e.g. by Circuit Breaker)
+      const modelCd = getGlobalCooldownStatus(attemptModel);
+      if (modelCd) {
+        console.warn(`Skipping ${attemptModel} due to cooldown: ${modelCd.reason}`);
+        continue;
+      }
+
+      // Provider-level cooldown check
+      const modelProvider = getBestDirectProvider(attemptModel);
+      if (modelProvider && modelProvider !== 'openrouter') {
+        const providerCd = getProviderCooldownStatus(modelProvider);
+        if (providerCd) {
+          console.warn(`Skipping ${attemptModel} — provider ${modelProvider} on cooldown: ${providerCd.reason}`);
+          continue;
+        }
+      }
+
       try {
         console.log(`Attempting ${modelType} with ${attemptModel} (${isPrimary ? 'primary' : 'fallback'})`);
 
@@ -616,6 +673,43 @@ class OpenRouterClient {
             if (getBestDirectProvider(remaining.model) === null) {
               setGlobalCooldown(remaining.model, 2 * 60 * 1000, 'openrouter rate limited');
               console.warn(`[Rate-Skip] Cooldown set for ${remaining.model} (OpenRouter rate limit)`);
+            }
+          }
+        }
+
+        // Direct-Provider Circuit Breaker: Wenn ein Direct-Provider (NVIDIA, Groq, Cerebras)
+        // mit Timeout oder Connection-Error fehlschlaegt, den gesamten Provider auf Cooldown
+        // setzen und alle verbleibenden Modelle dieses Providers sofort ueberspringen.
+        // Verhindert 5+ Minuten Wartezeit wenn ein Provider komplett down ist.
+        const failedProvider = getBestDirectProvider(attemptModel);
+        if (failedProvider && failedProvider !== 'openrouter') {
+          if (
+            errMsg.includes('timed out') ||
+            errMsg.includes('fetch failed') ||
+            errMsg.includes('econnrefused') ||
+            errMsg.includes('enotfound') ||
+            errMsg.includes('socket hang up')
+          ) {
+            setProviderCooldown(failedProvider, 5 * 60 * 1000, `timeout/connection error on ${attemptModel}`);
+            for (const remaining of modelsToTry.slice(i + 1)) {
+              const remainingProvider = getBestDirectProvider(remaining.model);
+              if (remainingProvider === failedProvider) {
+                setGlobalCooldown(remaining.model, 5 * 60 * 1000, `provider ${failedProvider} down`);
+                console.warn(`[Circuit-Breaker] Skipping ${remaining.model} (provider ${failedProvider} down)`);
+              }
+            }
+          }
+
+          // Direct-Provider Rate Limit: When a direct provider returns 429/rate limit,
+          // set provider-level cooldown to skip remaining models on that provider.
+          if (errMsg.includes('rate limit') || errMsg.includes('429')) {
+            setProviderCooldown(failedProvider, 2 * 60 * 1000, `rate limited on ${attemptModel}`);
+            for (const remaining of modelsToTry.slice(i + 1)) {
+              const remainingProvider = getBestDirectProvider(remaining.model);
+              if (remainingProvider === failedProvider) {
+                setGlobalCooldown(remaining.model, 2 * 60 * 1000, `provider ${failedProvider} rate limited`);
+                console.warn(`[Rate-Limit-CB] Skipping ${remaining.model} (provider ${failedProvider} rate limited)`);
+              }
             }
           }
         }
@@ -746,6 +840,9 @@ export {
   getGlobalCooldownStatus,
   setGlobalCooldown,
   clearGlobalCooldown,
+  getProviderCooldownStatus,
+  setProviderCooldown,
+  clearProviderCooldown,
 };
 export type { ModelTier, ModelConfig };
 

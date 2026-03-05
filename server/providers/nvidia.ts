@@ -163,6 +163,11 @@ export class NvidiaProvider extends BaseAIProvider {
   }
 
   async getModels(): Promise<AIModel[]> {
+    // Ohne gueltigen API Key direkt Fallback nutzen (kein HTTP-Call)
+    if (!this.isConfigured()) {
+      return NVIDIA_MODELS_FALLBACK;
+    }
+
     // Versuche dynamisch Modelle von der API zu laden
     try {
       const response = await this.fetchWithTimeout(`${this.config.baseUrl}/models`, {
