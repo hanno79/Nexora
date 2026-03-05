@@ -5,6 +5,9 @@ import {
   getOpenRouterClient,
   resolveModelTier,
   DEFAULT_FREE_FALLBACK_CHAIN,
+  DEFAULT_PRODUCTION_FALLBACK_CHAIN,
+  DEFAULT_PREMIUM_FALLBACK_CHAIN,
+  getDefaultFallbackChainForTier,
   clearGlobalCooldown,
   getAllActiveCooldowns,
   setGlobalCooldown,
@@ -30,10 +33,10 @@ describe('openrouter safe defaults', () => {
     expect(resolveModelTier('production')).toBe('production');
   });
 
-  it('uses free fallback defaults across all tiers', () => {
+  it('uses tier-appropriate fallback defaults', () => {
     expect(getDefaultFallbackModelForTier('development')).toBe('google/gemma-3-27b-it:free');
-    expect(getDefaultFallbackModelForTier('production')).toBe('google/gemma-3-27b-it:free');
-    expect(getDefaultFallbackModelForTier('premium')).toBe('google/gemma-3-27b-it:free');
+    expect(getDefaultFallbackModelForTier('production')).toBe('google/gemini-2.5-flash');
+    expect(getDefaultFallbackModelForTier('premium')).toBe('anthropic/claude-sonnet-4');
   });
 
   it('creates clients with development tier by default', () => {
@@ -342,5 +345,51 @@ describe('openrouter safe defaults', () => {
         process.env.NVIDIA_API_KEY = originalKey;
       }
     }
+  });
+
+  // --- Tier-Aware Fallback Chains ---
+
+  it('development tier fallback chain contains only free models', () => {
+    const chain = getDefaultFallbackChainForTier('development');
+    expect(chain).toBe(DEFAULT_FREE_FALLBACK_CHAIN);
+    for (const model of chain) {
+      expect(model).toMatch(/:free$/);
+    }
+  });
+
+  it('production tier fallback chain contains paid models', () => {
+    const chain = getDefaultFallbackChainForTier('production');
+    expect(chain).toBe(DEFAULT_PRODUCTION_FALLBACK_CHAIN);
+    expect(chain.length).toBeGreaterThanOrEqual(3);
+    // Must contain at least one paid model (no :free suffix)
+    const paidModels = chain.filter(m => !m.endsWith(':free'));
+    expect(paidModels.length).toBeGreaterThanOrEqual(2);
+    // Must also include free emergency fallbacks
+    const freeModels = chain.filter(m => m.endsWith(':free'));
+    expect(freeModels.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('premium tier fallback chain contains paid models', () => {
+    const chain = getDefaultFallbackChainForTier('premium');
+    expect(chain).toBe(DEFAULT_PREMIUM_FALLBACK_CHAIN);
+    const paidModels = chain.filter(m => !m.endsWith(':free'));
+    expect(paidModels.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('production tier fallback model is paid (not free)', () => {
+    const model = getDefaultFallbackModelForTier('production');
+    expect(model).not.toMatch(/:free$/);
+    expect(model).toBe('google/gemini-2.5-flash');
+  });
+
+  it('premium tier fallback model is paid (not free)', () => {
+    const model = getDefaultFallbackModelForTier('premium');
+    expect(model).not.toMatch(/:free$/);
+    expect(model).toBe('anthropic/claude-sonnet-4');
+  });
+
+  it('development tier fallback model remains free', () => {
+    const model = getDefaultFallbackModelForTier('development');
+    expect(model).toMatch(/:free$/);
   });
 });

@@ -42,6 +42,24 @@ const DEFAULT_FREE_FALLBACK_CHAIN: readonly string[] = [
   'openai/gpt-oss-120b:free',                              // 131K context
 ];
 
+// Paid fallback chains for production/premium tiers.
+// Mix of paid models (higher rate limits) + free emergency fallbacks at the end.
+const DEFAULT_PRODUCTION_FALLBACK_CHAIN: readonly string[] = [
+  'google/gemini-2.5-flash',                              // $0.15/1M input, fast
+  'mistralai/mistral-small-3.1-24b-instruct',             // $0.10/1M, EU-hosted
+  'meta-llama/llama-4-maverick-17b-128e-instruct',        // via Cerebras/Groq direct
+  'google/gemma-3-27b-it:free',                            // free emergency fallback
+  'meta-llama/llama-3.3-70b-instruct:free',                // free emergency fallback
+];
+
+const DEFAULT_PREMIUM_FALLBACK_CHAIN: readonly string[] = [
+  'anthropic/claude-sonnet-4',                             // top quality
+  'google/gemini-2.5-flash',                               // fast & cheap
+  'mistralai/mistral-small-3.1-24b-instruct',             // EU-hosted
+  'google/gemma-3-27b-it:free',                            // free emergency
+  'meta-llama/llama-3.3-70b-instruct:free',                // free emergency
+];
+
 const DEPRECATED_MODEL_IDS = new Set<string>([
   'deepseek/deepseek-r1-0528:free',
   'deepseek-ai/deepseek-r1',       // NVIDIA EOL seit 26.01.2026
@@ -50,9 +68,17 @@ const DEPRECATED_MODEL_IDS = new Set<string>([
 
 const DEFAULT_FALLBACK_MODEL_BY_TIER: Record<keyof ModelConfig, string> = {
   development: DEFAULT_FREE_FALLBACK_MODEL,
-  production: DEFAULT_FREE_FALLBACK_MODEL,
-  premium: DEFAULT_FREE_FALLBACK_MODEL,
+  production: 'google/gemini-2.5-flash',
+  premium: 'anthropic/claude-sonnet-4',
 };
+
+function getDefaultFallbackChainForTier(tier: keyof ModelConfig): readonly string[] {
+  switch (tier) {
+    case 'premium':    return DEFAULT_PREMIUM_FALLBACK_CHAIN;
+    case 'production': return DEFAULT_PRODUCTION_FALLBACK_CHAIN;
+    default:           return DEFAULT_FREE_FALLBACK_CHAIN;
+  }
+}
 
 export function sanitizeConfiguredModel(model: string | null | undefined): string | undefined {
   const normalized = (model || '').trim();
@@ -836,6 +862,9 @@ export {
   DEFAULT_FREE_FALLBACK_MODEL,
   DEFAULT_FALLBACK_MODEL_BY_TIER,
   DEFAULT_FREE_FALLBACK_CHAIN,
+  DEFAULT_PRODUCTION_FALLBACK_CHAIN,
+  DEFAULT_PREMIUM_FALLBACK_CHAIN,
+  getDefaultFallbackChainForTier,
   getAllActiveCooldowns,
   getGlobalCooldownStatus,
   setGlobalCooldown,
@@ -891,7 +920,7 @@ export async function createClientWithUserPreferences(
         const resolvedFallbackChain: string[] =
           activeTierModels.fallbackChain ??
           (Array.isArray(prefs.fallbackChain) ? prefs.fallbackChain : undefined) ??
-          [...DEFAULT_FREE_FALLBACK_CHAIN];
+          [...getDefaultFallbackChainForTier(tier)];
 
         if (log) {
           log('🤖 User AI preferences loaded:', {

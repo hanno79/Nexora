@@ -91,7 +91,6 @@ const GROQ_MODELS_FALLBACK: AIModel[] = [
 
 // Max output tokens for models with known limits (lower than typical token budgets)
 const GROQ_MAX_OUTPUT_TOKENS: Record<string, number> = {
-  'meta-llama/llama-4-maverick-17b-128e-instruct': 8192,
   'gemma2-9b-it': 8192,
   'llama3-70b-8192': 8192,
   'llama3-8b-8192': 8192,
