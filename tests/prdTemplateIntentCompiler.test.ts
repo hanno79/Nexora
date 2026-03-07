@@ -84,6 +84,63 @@ describe('prdTemplateIntent compiler integration', () => {
     ).toBe(true);
   });
 
+  it('flags template fallback openers as compiler quality errors before content review', () => {
+    // ÄNDERUNG 07.03.2026: Template-Fallback-Opener muessen bereits im Compiler
+    // statt erst spaet im Reviewer als Boilerplate auffallen.
+    const raw = [
+      '## System Vision',
+      'The release helps support teams resolve customer incidents with clearer ownership and faster escalation.',
+      '',
+      '## System Boundaries',
+      'The system covers ticket intake, routing, status updates, and operator tooling for support workflows.',
+      '',
+      '## Domain Model',
+      'Core entities are Ticket, EscalationPolicy, QueueAssignment, ResolutionNote, and SLAEvent with explicit relations.',
+      '',
+      '## Global Business Rules',
+      'Every escalation must preserve audit history, ownership changes, and SLA timestamps across queue transitions.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      '### F-01: Incident Queue Routing',
+      '1. Purpose',
+      'Routes incoming incidents to the correct support queue based on product area, urgency, and account tier.',
+      '10. Acceptance Criteria',
+      '- Incidents are routed automatically and can be reassigned with full audit visibility.',
+      '',
+      '## Non-Functional Requirements',
+      'Queue updates stay below two seconds, audit logs are durable, and operator actions remain RBAC-protected.',
+      '',
+      '## Error Handling & Recovery',
+      'Failed routing attempts are retried, surfaced to operators, and recorded with actionable diagnostics.',
+      '',
+      '## Deployment & Infrastructure',
+      'The service runs as a Node API with PostgreSQL persistence, background workers, and observability dashboards.',
+      '',
+      '## Definition of Done',
+      'Routing rules, audit logging, retries, dashboards, and regression coverage are implemented and reviewed.',
+      '',
+      '## Out of Scope',
+      'This release excludes customer-facing self-service changes and third-party helpdesk migrations.',
+      '',
+      '## Timeline & Milestones',
+      'Phase 1 delivers routing rules, Phase 2 covers operator tooling, and Phase 3 focuses on rollout hardening.',
+      '',
+      '## Success Criteria & Acceptance Testing',
+      'The project is successful when:\n- All features are implemented\n- Acceptance criteria pass\n- No critical bugs reach release\n- Operators can complete the main workflow end-to-end',
+    ].join('\n');
+
+    const compiled = compilePrdDocument(raw, {
+      mode: 'generate',
+      language: 'en',
+    });
+
+    expect(compiled.quality.valid).toBe(false);
+    expect(
+      compiled.quality.issues.some(issue => issue.code === 'generic_section_boilerplate_successCriteria')
+    ).toBe(true);
+  });
+
   it('fails technical template runs when technical semantic signals are missing', () => {
     const raw = [
       '## System Vision',
@@ -264,6 +321,10 @@ describe('prdTemplateIntent compiler integration', () => {
       templateCategory: 'technical',
     });
 
+    expect(compiled.quality.valid).toBe(true);
+    expect(
+      compiled.quality.issues.some(issue => issue.code === 'template_semantic_feature_signal_mismatch')
+    ).toBe(false);
     expect(
       compiled.quality.issues.some(issue => issue.code === 'template_semantic_feature_signal_mismatch_technical')
     ).toBe(false);

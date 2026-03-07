@@ -336,6 +336,62 @@ describe('prdQualitySignals', () => {
     expect(analysis.nearDuplicates).toHaveLength(0);
   });
 
+  it('ignoriert rawContent-heading-overlap wenn strukturierte feature-felder befuellt sind', () => {
+    const structure = baseStructure();
+    structure.features = [
+      {
+        id: 'F-05',
+        name: 'Regional Gate Coordination Launch',
+        rawContent: '1. Purpose\n2. Actors\n10. Acceptance Criteria',
+        purpose: 'Validate vendor contracts before shipment release.',
+        actors: 'Compliance lead',
+        mainFlow: ['Review vendor contracts', 'Escalate missing signatures'],
+        acceptanceCriteria: ['Unsigned contracts block shipment release.'],
+      },
+      {
+        id: 'F-06',
+        name: 'Launch Coordination Tracker for Regional Gate',
+        rawContent: '1. Purpose\n2. Actors\n10. Acceptance Criteria',
+        purpose: 'Publish analytics snapshots to executive reporting.',
+        actors: 'Reporting lead',
+        mainFlow: ['Generate analytics snapshots', 'Deliver weekly summary'],
+        acceptanceCriteria: ['Executive dashboard shows weekly analytics summary.'],
+      },
+    ];
+
+    const analysis = findFeatureAggregationCandidates(structure.features, 'technical', 'en');
+
+    expect(analysis.candidates).toHaveLength(0);
+  });
+
+  it('begrenzt inhaltsgestuetzte mid-confidence-hochstufung auf technische und product-launch-kategorien', () => {
+    const structure = baseStructure();
+    structure.features = [
+      {
+        id: 'F-07',
+        name: 'Regional Gate Coordination Launch',
+        rawContent: 'Supports coordinated market rollout planning with launch readiness checkpoints.',
+        purpose: 'Provide launch teams with one readiness workflow for rollout gating and dependency review.',
+        actors: 'Launch operations team',
+        mainFlow: ['Run readiness checks', 'Review dependencies', 'Track rollout approvals'],
+        acceptanceCriteria: ['The workflow tracks rollout approvals and readiness dependencies in one place.'],
+      },
+      {
+        id: 'F-08',
+        name: 'Launch Coordination Tracker for Regional Gate',
+        rawContent: 'Tracks coordinated market rollout planning with launch readiness checkpoints.',
+        purpose: 'Provide launch teams with one readiness workflow for rollout gating and dependency review.',
+        actors: 'Launch operations team',
+        mainFlow: ['Run readiness checks', 'Review dependencies', 'Track rollout approvals'],
+        acceptanceCriteria: ['The workflow tracks rollout approvals and readiness dependencies in one place.'],
+      },
+    ];
+
+    const analysis = findFeatureAggregationCandidates(structure.features, 'feature', 'en');
+
+    expect(analysis.candidates).toHaveLength(0);
+  });
+
   it('meldet Login und Passwort-Reset nicht als Near-Duplicate nur wegen generischer Auth-Begriffe', () => {
     const structure = baseStructure();
     structure.features = [

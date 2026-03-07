@@ -355,16 +355,20 @@ function isEpicCapabilitySplitPair(aName: string, bName: string): boolean {
 // ÄNDERUNG 07.03.2026: Mid-Confidence-Namensähnlichkeiten zusätzlich über strukturierte Feature-Inhalte absichern.
 // Erlaubt konservative Hochstufung zu Aggregationskandidaten, ohne globale Namensschwellen zu lockern.
 function collectComparableFeatureTokens(feature: FeatureSpec): string[] {
-  const values: string[] = [String(feature.rawContent || '').trim()];
+  const structuredValues: string[] = [];
 
   for (const field of FEATURE_STRING_FIELDS) {
-    values.push(String((feature as any)[field] || '').trim());
+    structuredValues.push(String((feature as any)[field] || '').trim());
   }
 
   for (const field of FEATURE_ARRAY_FIELDS) {
     const entries = Array.isArray((feature as any)[field]) ? (feature as any)[field] : [];
-    values.push(...entries.map(entry => String(entry || '').trim()));
+    structuredValues.push(...entries.map(entry => String(entry || '').trim()));
   }
+
+  const values = structuredValues.some(Boolean)
+    ? structuredValues
+    : [String(feature.rawContent || '').trim()];
 
   return Array.from(new Set(
     values
@@ -872,6 +876,8 @@ export function findFeatureAggregationCandidates(
 ): FeatureAggregationAnalysis {
   const candidates: FeatureAggregationCandidate[] = [];
   const nearDuplicates: FeatureNearDuplicatePair[] = [];
+  const normalizedCategory = String(category || '').trim().toLowerCase();
+  const allowContentBackedNear = normalizedCategory === 'technical' || normalizedCategory === 'product-launch';
 
   const edgePairs: Array<{ a: number; b: number; reason: 'name_similarity' | 'crud_family'; tokenJaccard: number; editSimilarity: number }> = [];
 
@@ -892,14 +898,15 @@ export function findFeatureAggregationCandidates(
       const bObjectCore = extractCrudObjectCore(bName);
       const sameCrudObjectCore = !!aObjectCore && !!bObjectCore && normalizeText(aObjectCore) === normalizeText(bObjectCore);
       const hasCrudActions = extractCrudActionTokens(aName).length > 0 && extractCrudActionTokens(bName).length > 0;
-      const epicCapabilitySplit = String(category || '').trim().toLowerCase() === 'epic'
+      const epicCapabilitySplit = normalizedCategory === 'epic'
         && isEpicCapabilitySplitPair(aName, bName);
 
       const highByThreshold = jac >= 0.82 || edit >= 0.9 || (jac >= 0.8 && edit >= 0.8);
       const highByCrudFamily = sameCrudObjectCore && hasCrudActions && (jac >= 0.72 || edit >= 0.82);
       const nearByCrudFamily = sameCrudObjectCore && hasCrudActions && (jac >= 0.58 || edit >= 0.72);
       // ÄNDERUNG 07.03.2026: Mid-Confidence-Fälle nur dann hochstufen, wenn zusätzlich starkes Inhalts-Overlap vorliegt.
-      const highByContentBackedNear = !epicCapabilitySplit
+      const highByContentBackedNear = allowContentBackedNear
+        && !epicCapabilitySplit
         && hasStrongFeatureContentOverlap(a, b)
         && (jac >= 0.74 || edit >= 0.85 || nearByCrudFamily);
 

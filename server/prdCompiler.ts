@@ -720,6 +720,9 @@ export function validatePrdStructure(
   const missingSections: string[] = [];
   const strictCanonical = options?.strictCanonical !== false;
   const unknownSectionHeadings = options?.unknownSectionHeadings || [];
+  const knownFallbackSections = new Set((options?.fallbackSections || []).map(section =>
+    String(section || '').toLowerCase().replace(/[^a-z]/g, '')
+  ));
 
   for (const def of REQUIRED_SECTION_DEFS) {
     const value = structure[def.key];
@@ -742,7 +745,15 @@ export function validatePrdStructure(
       });
     }
 
-    if (isGenericFallback(String(value || ''))) {
+    const normalizedSectionKey = String(def.key).toLowerCase().replace(/[^a-z]/g, '');
+    const wasCompilerFilled = [...knownFallbackSections].some(section =>
+      section.includes(normalizedSectionKey) || normalizedSectionKey.includes(section)
+    );
+
+    // ÄNDERUNG 07.03.2026: Template-/Fallback-Boilerplate soll frueh erkannt
+    // werden, aber nicht die bewusst vom Compiler selbst eingefuegten
+    // Recovery-Sektionen doppelt als generische Modellausgabe bestrafen.
+    if (!wasCompilerFilled && isGenericFallback(String(value || ''))) {
       issues.push({
         code: `generic_section_boilerplate_${String(def.key)}`,
         message: `Section appears generic and not context-specific: ${def.label}`,
@@ -925,6 +936,7 @@ export function validatePrdStructure(
     structure,
     content: assembled,
     mode: options?.mode || 'generate',
+    fallbackSections: options?.fallbackSections || [],
   });
   for (const issue of templateSemanticIssues) {
     issues.push(issue);

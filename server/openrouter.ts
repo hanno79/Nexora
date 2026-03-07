@@ -569,6 +569,18 @@ class OpenRouterClient {
       modelsToTry.push({ model: sanitized, isPrimary });
     };
 
+    // ÄNDERUNG 07.03.2026: Modelle, die bereits vor dem Lauf auf Cooldown
+    // waren oder waehrend des aktuellen Laufs neu auf Cooldown fallen,
+    // werden fuer den kontrollierten Last-Resort-Retry gesammelt.
+    const rememberCooldownSkippedModel = (model: string, isPrimary: boolean, reason: string) => {
+      const existingIndex = cooldownSkippedModels.findIndex(entry => entry.model === model);
+      if (existingIndex >= 0) {
+        cooldownSkippedModels[existingIndex] = { model, isPrimary, reason };
+        return;
+      }
+      cooldownSkippedModels.push({ model, isPrimary, reason });
+    };
+
     const primary = this.preferredModels[modelType];
     // Support both new fallback chain and legacy single fallback
     const fallbackChain = this.preferredFallbackChain.length > 0
@@ -661,6 +673,10 @@ class OpenRouterClient {
         }
       } catch (error: any) {
         this.applyFailureCooldown(attemptModel, error.message || '');
+        const appliedCooldown = getGlobalCooldownStatus(attemptModel);
+        if (appliedCooldown) {
+          rememberCooldownSkippedModel(attemptModel, isPrimary, appliedCooldown.reason);
+        }
         errors.push(`${attemptModel}: ${error.message}`);
         console.warn(`${attemptModel} failed, trying next model...`, error.message);
 
@@ -738,7 +754,7 @@ class OpenRouterClient {
       const modelCd = getGlobalCooldownStatus(attemptModel);
       if (modelCd) {
         console.warn(`Skipping ${attemptModel} due to cooldown: ${modelCd.reason}`);
-        cooldownSkippedModels.push({ model: attemptModel, isPrimary, reason: modelCd.reason });
+        rememberCooldownSkippedModel(attemptModel, isPrimary, modelCd.reason);
         continue;
       }
 
