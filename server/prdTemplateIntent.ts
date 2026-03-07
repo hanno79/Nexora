@@ -650,11 +650,28 @@ const COMPILER_FALLBACK_PATTERNS: RegExp[] = [
   /ist f(?:ue|ü)r dieses .+explizit beschrieben\.\s*(?:Kernfokus sind die Feature-Workflows|Der Kontext umfasst|Der Abschnitt wird).+Die Aussagen sind umsetzbar,? testbar und f(?:ue|ü)r diese Version verbindlich\./i,
 ];
 
-/** Detects both legacy static fallbacks AND the old compiler-generated fallback template. */
+// ÄNDERUNG 07.03.2026: Template-Fallback-Opener zentralisieren, damit dieselben
+// Boilerplate-Texte bereits im Compiler statt erst spaet im Reviewer erkannt werden.
+const TEMPLATE_FALLBACK_OPENERS: RegExp[] = [
+  /^A feature is complete when:/m,
+  /^Ein Feature gilt als abgeschlossen wenn:/m,
+  /explicitly OUT OF SCOPE for this (?:version|epic)/i,
+  /explizit NICHT im Scope/i,
+  /^(?:Die )?Lieferung ist in (?:Phasen|Meilensteine)/m,
+  /^Delivery is structured in (?:phases|milestones)/m,
+  /^(?:Das )?Projekt ist erfolgreich wenn:/m,
+  /^The project is successful when:/m,
+  /^(?:Der )?Launch is(?:t)? (?:erfolgreich|successful) (?:wenn|when):/m,
+  /^Launch[- ](?:timeline|Zeitplan):/im,
+  /^Performance:\s*API[- ](?:latency|Latenz)\s*p95/m,
+];
+
+/** Detects legacy fallbacks, old compiler boilerplate, and template fallback openers. */
 export function isGenericFallback(value: string): boolean {
   if (isLegacyGenericFallback(value)) return true;
   const text = String(value || '').trim();
-  return COMPILER_FALLBACK_PATTERNS.some(pattern => pattern.test(text));
+  return COMPILER_FALLBACK_PATTERNS.some(pattern => pattern.test(text))
+    || TEMPLATE_FALLBACK_OPENERS.some(pattern => pattern.test(text));
 }
 
 export function collectPlaceholderIssues(params: {
@@ -718,6 +735,7 @@ export function collectTemplateSemanticIssues(params: {
   structure: PRDStructure;
   content: string;
   mode: 'generate' | 'improve';
+  fallbackSections?: string[];
 }): TemplateSemanticIssue[] {
   const category = normalizeTemplateCategory(params.category);
   const profile = TEMPLATE_PROFILES[category];
@@ -726,6 +744,9 @@ export function collectTemplateSemanticIssues(params: {
   const issues: TemplateSemanticIssue[] = [];
   const severity: 'error' | 'warning' = params.mode === 'generate' ? 'error' : 'warning';
   const hardSeverity: 'error' = 'error';
+  const knownFallbackSections = new Set((params.fallbackSections || []).map(section =>
+    String(section || '').toLowerCase().replace(/[^a-z]/g, '')
+  ));
   const featureNames = (params.structure.features || [])
     .map(feature => String(feature.name || '').trim())
     .filter(Boolean);
@@ -743,7 +764,12 @@ export function collectTemplateSemanticIssues(params: {
   for (const requiredSection of profile.semanticSignals.requiredSections) {
     const value = String((params.structure as any)[requiredSection] || '').trim();
     if (!value) continue;
-    if (isGenericFallback(value)) {
+    const normalizedSectionKey = String(requiredSection).toLowerCase().replace(/[^a-z]/g, '');
+    const wasCompilerFilled = [...knownFallbackSections].some(section =>
+      section.includes(normalizedSectionKey) || normalizedSectionKey.includes(section)
+    );
+
+    if (!wasCompilerFilled && isGenericFallback(value)) {
       issues.push({
         code: `template_semantic_boilerplate_${requiredSection}`,
         message: `Section "${requiredSection}" contains generic boilerplate and is not template-specific.`,
@@ -773,14 +799,13 @@ export function collectTemplateSemanticIssues(params: {
   }
 
   if (featureNames.length > 0 && (profile.semanticSignals.featureNameSignals || []).length > 0) {
-    // ÄNDERUNG 07.03.2026: Technical-Template-Features dürfen bei neutraleren Titeln
-    // über klar technische Feature-Inhalte zählen, damit semantisch technische Runs
-    // nicht nur wegen fehlender Titel-Signalwörter hart durchfallen.
+    // ÄNDERUNG 07.03.2026: Template-Semantik soll nicht nur an Feature-Titeln hängen.
+    // Wenn der eigentliche Feature-Inhalt klar template-spezifisch ist, darf das auch
+    // bei neutraleren Namen für die Signal-Ratio zählen.
     const matchedFeatureCount = params.structure.features.filter(feature => {
       const name = String(feature.name || '').trim();
       const matchesByName = (profile.semanticSignals.featureNameSignals || []).some(signal => signal.test(name));
       if (matchesByName) return true;
-      if (category !== 'technical') return false;
 
       const featureText = [
         feature.rawContent,

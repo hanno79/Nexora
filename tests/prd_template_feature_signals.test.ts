@@ -124,4 +124,79 @@ describe('feature template signal regression', () => {
       compiled.quality.issues.some(issue => issue.code === 'template_semantic_feature_signal_mismatch_technical')
     ).toBe(false);
   });
+
+  it('akzeptiert product-launch-inhalte trotz neutralerer feature-titel ohne signal-mismatch', () => {
+    // ÄNDERUNG 07.03.2026: Product-Launch-Runs dürfen nicht nur wegen neutralerer
+    // Feature-Namen scheitern, wenn Purpose/Flows/Akzeptanz klar launch-spezifisch sind.
+    const raw = [
+      '## System Vision',
+      'A launch PRD coordinates go-to-market execution, launch readiness, and measurable adoption outcomes.',
+      '',
+      '## System Boundaries',
+      'Scope covers rollout preparation, stakeholder alignment, enablement assets, activation analytics, and launch-day coordination.',
+      '',
+      '## Domain Model',
+      'Entities include LaunchWave, StakeholderGroup, ChannelPack, ActivationMetric, and ApprovalGate.',
+      '',
+      '## Global Business Rules',
+      'Every launch wave requires stakeholder sign-off, channel readiness, and adoption tracking before rollout approval.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      '### F-01: Asset Hub',
+      '1. Purpose',
+      'Centralizes launch messaging, rollout assets, and stakeholder approval tasks for the first market wave.',
+      '10. Acceptance Criteria',
+      '- Channel enablement material is complete before launch readiness review.',
+      '',
+      '### F-02: Field Workspace',
+      '1. Purpose',
+      'Coordinates partner enablement, beta communication, and regional distribution handoffs before go-live.',
+      '10. Acceptance Criteria',
+      '- Regional stakeholders confirm rollout readiness and communication timing.',
+      '',
+      '### F-03: Insight Review',
+      '1. Purpose',
+      'Tracks activation, adoption, and conversion signals during the first 30 days after release.',
+      '10. Acceptance Criteria',
+      '- Adoption and conversion metrics are visible for every rollout channel.',
+      '',
+      '### F-04: Decision Board',
+      '1. Purpose',
+      'Collects go/no-go evidence, launch blockers, and stakeholder sign-off before the rollout date.',
+      '10. Acceptance Criteria',
+      '- Open readiness blockers prevent final launch approval until resolved.',
+      '',
+      '## Non-Functional Requirements',
+      'Launch dashboards update hourly and stakeholder evidence remains audit-ready.',
+      '',
+      '## Error Handling & Recovery',
+      'Blocked rollout waves trigger escalation, corrective communication, and rollback planning.',
+      '',
+      '## Deployment & Infrastructure',
+      'Launch operations run with scheduled release windows, analytics ingestion, and notification automation.',
+      '',
+      '## Definition of Done',
+      'Launch readiness, stakeholder approvals, and adoption dashboards are complete and reviewed.',
+      '',
+      '## Out of Scope',
+      'Post-launch expansion work and unrelated product redesigns are excluded from this release wave.',
+      '',
+      '## Timeline & Milestones',
+      'Phase 1 asset preparation, Phase 2 enablement, Phase 3 rollout, Phase 4 launch monitoring and adoption review.',
+      '',
+      '## Success Criteria & Acceptance Testing',
+      'Launch success is measured by activation, adoption, stakeholder sign-off, and stable rollout execution.',
+    ].join('\n');
+
+    const compiled = compilePrdDocument(raw, {
+      mode: 'generate',
+      language: 'en',
+      templateCategory: 'product-launch',
+    });
+
+    expect(
+      compiled.quality.issues.some(issue => issue.code === 'template_semantic_feature_signal_mismatch_product-launch')
+    ).toBe(false);
+  });
 });

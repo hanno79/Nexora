@@ -10,6 +10,7 @@ import { test, expect, request } from '@playwright/test';
 import { compilePrdDocument } from '../server/prdCompiler';
 import { qualityScore } from '../server/prdCompilerFinalizer';
 import { getAuthHeader } from './helpers/clerk-auth';
+import { persistSmokeReport } from './helpers/smoke-report-persistence';
 import fs from 'fs';
 import path from 'path';
 
@@ -374,12 +375,14 @@ test('Smoke: all 12 PRD combinations (4 templates × 3 methods)', async () => {
     }
   }
 
-  // Write results to file
-  const reportPath = path.join(
-    process.cwd(),
-    `.tmp_smoke_${SELECTED_TEMPLATES.join('_')}__${SELECTED_METHODS.join('_')}_results.json`
-  );
-  fs.writeFileSync(reportPath, JSON.stringify({ timestamp: new Date().toISOString(), results }, null, 2));
+  // ÄNDERUNG 07.03.2026: Smoke-Artefakte dauerhaft unter documentation/smoke_results ablegen,
+  // damit Einzel- und Vollruns spaeter reproduzierbar ausgewertet werden koennen.
+  const persistedReport = persistSmokeReport({
+    baseDir: process.cwd(),
+    templates: [...SELECTED_TEMPLATES],
+    methods: [...SELECTED_METHODS],
+    results,
+  });
 
   // Print summary table
   console.log('\n' + '='.repeat(90));
@@ -408,7 +411,8 @@ test('Smoke: all 12 PRD combinations (4 templates × 3 methods)', async () => {
   console.log('-'.repeat(90));
   console.log(`  Total: ${results.length} | Passed: ${passCount} | Failed: ${results.length - passCount}`);
   console.log('='.repeat(90));
-  console.log(`\n  Results saved to: ${reportPath}\n`);
+  console.log(`\n  Results saved to: ${persistedReport.timestampedReportPath}`);
+  console.log(`  Latest selection snapshot: ${persistedReport.latestReportPath}\n`);
 
   // Final assertions — alle angeforderten Kombinationen müssen ein Ergebnis haben
   expect(results.length, `Alle ${EXPECTED_RESULT_COUNT} angeforderten Kombinationen sollten Ergebnisse haben`).toBe(EXPECTED_RESULT_COUNT);
