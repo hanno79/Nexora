@@ -78,6 +78,8 @@ const FEATURE_ARRAY_FIELDS: Array<keyof FeatureSpec> = [
 const NAME_STOP_WORDS = new Set([
   'a', 'an', 'the', 'and', 'or', 'for', 'with', 'without', 'to', 'of', 'in', 'on', 'by', 'from',
   'der', 'die', 'das', 'und', 'oder', 'mit', 'ohne', 'von', 'zu', 'im', 'in', 'auf', 'fuer', 'fur',
+  // ÄNDERUNG 07.03.2026: Label-Tokens aus "Feature Name:" dürfen Near-Duplicate-Heuristiken nicht verzerren.
+  'name',
   'feature', 'funktion', 'funktionalitaet', 'capability', 'module', 'system', 'workflow', 'prozess',
   'management', 'verwaltung', 'service', 'tool', 'plattform', 'platform',
 ]);
@@ -92,6 +94,18 @@ const CRUD_ACTION_TOKENS = new Set([
   'bearbeiten', 'aendern', 'aenderung', 'aktualisieren',
   'loeschen', 'entfernen', 'archivieren',
   'verwalten',
+]);
+
+// ÄNDERUNG 07.03.2026: Generische Domänen- und Flow-Begriffe sollen keine Shared-Core-Duplikate auslösen.
+// Verhindert Falschpositive wie Login vs. Passwort-Reset oder unterschiedliche Checkout-Teilschritte.
+const GENERIC_SHARED_CORE_TOKENS = new Set([
+  'account', 'accounts', 'admin', 'admins', 'auth', 'authentication', 'audit',
+  'cart', 'carts',
+  'email', 'emails', 'event', 'events', 'factor', 'factors', 'login', 'mfa',
+  'item', 'items',
+  'otp', 'password', 'security', 'session', 'sessions', 'signin', 'totp',
+  'user', 'users',
+  'checkout', 'entry', 'entries', 'flow', 'journey', 'multi', 'stage', 'stages', 'step', 'steps', 'wizard',
 ]);
 
 const EN_MARKERS = new Set([
@@ -109,6 +123,7 @@ const DE_MARKERS = new Set([
 const EN_ACTION_MARKERS = new Set([
   'create', 'add', 'edit', 'update', 'delete', 'remove', 'view', 'list', 'search', 'manage',
   'import', 'export', 'save', 'load', 'submit', 'approve', 'review', 'track', 'sync', 'configure',
+  'integration',
 ]);
 
 const DE_ACTION_MARKERS = new Set([
@@ -296,6 +311,45 @@ function extractCrudObjectCore(name: string): string {
   const tokens = tokenize(name).filter(token => !NAME_STOP_WORDS.has(token));
   const filtered = tokens.filter(token => !CRUD_ACTION_TOKENS.has(token));
   return filtered.slice(0, 4).join(' ');
+}
+
+function normalizeOverlapToken(token: string): string {
+  if (token.endsWith('ies') && token.length > 4) return `${token.slice(0, -3)}y`;
+  if (token.endsWith('s') && token.length > 3) return token.slice(0, -1);
+  return token;
+}
+
+function tokenOverlapRatio(a: string[], b: string[]): number {
+  const sa = new Set(a.map(normalizeOverlapToken).filter(Boolean));
+  const sb = new Set(b.map(normalizeOverlapToken).filter(Boolean));
+  if (sa.size === 0 || sb.size === 0) return 0;
+
+  let intersection = 0;
+  for (const token of Array.from(sa)) {
+    if (sb.has(token)) intersection++;
+  }
+  return intersection / Math.min(sa.size, sb.size);
+}
+
+function isEpicCapabilitySplitPair(aName: string, bName: string): boolean {
+  const normalizedA = normalizeText(aName);
+  const normalizedB = normalizeText(bName);
+  const [longerName, shorterName] = normalizedA.length >= normalizedB.length
+    ? [aName, bName]
+    : [bName, aName];
+
+  const longerNormalized = normalizeText(longerName);
+  if (!/\b(?:with|and)\b/.test(longerNormalized)) return false;
+
+  const shorterTokens = tokenizeFeatureName(shorterName);
+  if (shorterTokens.length < 2) return false;
+
+  const segments = longerNormalized
+    .split(/\b(?:with|and)\b/)
+    .map(segment => segment.trim())
+    .filter(Boolean);
+
+  return segments.some(segment => tokenOverlapRatio(tokenizeFeatureName(segment), shorterTokens) >= 0.8);
 }
 
 function compareFeatureId(aId: string, bId: string): number {
@@ -777,7 +831,7 @@ export function collectBoilerplateRepetitionIssues(structure: PRDStructure): Qua
 
 export function findFeatureAggregationCandidates(
   features: FeatureSpec[],
-  _category?: string | null,
+  category?: string | null,
   _language: SupportedLanguage = 'en'
 ): FeatureAggregationAnalysis {
   const candidates: FeatureAggregationCandidate[] = [];
@@ -805,6 +859,7 @@ export function findFeatureAggregationCandidates(
 
       const highByThreshold = jac >= 0.82 || edit >= 0.9 || (jac >= 0.8 && edit >= 0.8);
       const highByCrudFamily = sameCrudObjectCore && hasCrudActions && (jac >= 0.72 || edit >= 0.82);
+      const nearByCrudFamily = sameCrudObjectCore && hasCrudActions && (jac >= 0.58 || edit >= 0.72);
 
       if (highByThreshold || highByCrudFamily) {
         edgePairs.push({
@@ -820,12 +875,17 @@ export function findFeatureAggregationCandidates(
       // Shared core noun check: if two features share ≥2 content words in their
       // object core (e.g. "Random Location Loader" / "Random Location API Service"),
       // flag them as near-duplicates even if Jaccard/edit distance is below threshold.
-      const aCoreTokens = new Set(tokenize(aObjectCore || '').filter(t => t.length >= 3));
-      const bCoreTokens = tokenize(bObjectCore || '').filter(t => t.length >= 3);
+      const aCoreTokens = new Set(
+        tokenize(aObjectCore || '').filter(t => t.length >= 3 && !GENERIC_SHARED_CORE_TOKENS.has(t))
+      );
+      const bCoreTokens = tokenize(bObjectCore || '')
+        .filter(t => t.length >= 3 && !GENERIC_SHARED_CORE_TOKENS.has(t));
       const sharedCoreWords = bCoreTokens.filter(t => aCoreTokens.has(t)).length;
-      const sharedCoreMatch = sharedCoreWords >= 2;
+      const sharedCoreMatch = sharedCoreWords >= 2 && !(sameCrudObjectCore && hasCrudActions);
+      const epicCapabilitySplit = String(category || '').trim().toLowerCase() === 'epic'
+        && isEpicCapabilitySplitPair(aName, bName);
 
-      const near = jac >= 0.74 || edit >= 0.85 || (sameCrudObjectCore && hasCrudActions) || sharedCoreMatch;
+      const near = jac >= 0.74 || edit >= 0.85 || nearByCrudFamily || (sharedCoreMatch && !epicCapabilitySplit);
       if (near) {
         nearDuplicates.push({
           featureIds: [String(a.id || ''), String(b.id || '')],

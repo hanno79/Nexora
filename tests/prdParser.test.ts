@@ -161,6 +161,21 @@ describe('parsePRDToStructure', () => {
     expect(result.features.length).toBeGreaterThanOrEqual(1);
   });
 
+  it('entfernt das Prefix "Feature Name:" auch im Heading-Format', () => {
+    const markdown = [
+      '## Feature Catalogue',
+      '',
+      '### F-02: Feature Name: Password Reset Request',
+      '1. Purpose',
+      'Users can request a password reset email.',
+    ].join('\n');
+
+    const result = parsePRDToStructure(markdown);
+
+    expect(result.features).toHaveLength(1);
+    expect(result.features[0].name).toBe('Password Reset Request');
+  });
+
   it('handles empty markdown', () => {
     const result = parsePRDToStructure('');
     expect(result.features).toEqual([]);

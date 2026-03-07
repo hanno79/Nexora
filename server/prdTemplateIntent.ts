@@ -89,7 +89,9 @@ const TEMPLATE_PROFILES: Record<PrdTemplateCategory, TemplateProfile> = {
       requiredSections: ['systemVision', 'successCriteria'],
       minFeatureCount: 4,
       featureNameSignals: [
-        /\b(create|update|delete|view|list|manage|sync|validate|import|export|register|capture|filter|sort|search|display|track|report)\b/i,
+        // ÄNDERUNG 07.03.2026: Zusätzliche generische Aktionsverben decken reale Feature-Namen
+        // wie „Configure Session Lifetime“ oder „Change User Password“ im Feature-Template ab.
+        /\b(create|update|delete|view|list|manage|sync|validate|import|export|register|capture|filter|sort|search|display|track|report|retrieve|configure|change|remove|send|revoke|reset|generate)\b/i,
         /(?:erstellen|bearbeiten|l[oö]schen|anzeigen|auflisten|verwalten|synchronisieren|validieren|import|export|anlegen|[aä]ndern|aktualisieren|konfigurieren|erfassen|registrieren|filtern|sortieren|suchen|speichern|laden)/i,
         /(?:verwaltung|erfassung|steuerung|anzeige|[uü]bersicht|konfiguration|synchronisation|validierung|registrierung|integration|automatisierung|authentifizierung|autorisierung|darstellung|speicherung|filterung|sortierung|suche|eingabe|ausgabe|berechnung|[aä]nderung|aktualisierung|benachrichtigung)/i,
         /\b(user|nutzer|workflow|prozess|task|aufgabe|freigabe|approval|notification|benachrichtigung|dashboard|profil|einstellung|daten|liste|tabelle|status|eintrag|bug|feature|idee)\b/i,
@@ -157,12 +159,14 @@ const TEMPLATE_PROFILES: Record<PrdTemplateCategory, TemplateProfile> = {
       'Emphasize architecture, data model, operational reliability, and integration contracts.',
       'Capture security, performance, and observability expectations explicitly.',
       'Feature catalogue should map to technical capabilities, not generic consumer app flows.',
+      'Prefer explicit technical feature names such as gateway, routing, rate limiting, JWT key rotation, caching, circuit breaker, metrics, tracing, or deployment.',
       'At least 40% of feature names must contain technical intent terms (API, architecture, schema, integration, security, observability, deployment).',
     ],
     promptRulesDe: [
       'Betone Architektur, Datenmodell, Betriebssicherheit und Integrationsvertraege.',
       'Sicherheits-, Performance- und Observability-Anforderungen muessen explizit sein.',
       'Der Feature-Katalog soll technische Faehigkeiten abbilden, nicht generische Consumer-App-Flows.',
+      'Bevorzuge explizite technische Feature-Namen wie Gateway, Routing, Rate Limiting, JWT-Key-Rotation, Caching, Circuit Breaker, Metriken, Tracing oder Deployment.',
       'Mindestens 40% der Feature-Namen muessen technische Begriffe enthalten (API, Architektur, Schema, Integration, Sicherheit, Observability, Deployment).',
     ],
     semanticSignals: {
@@ -173,8 +177,10 @@ const TEMPLATE_PROFILES: Record<PrdTemplateCategory, TemplateProfile> = {
       requiredSections: ['domainModel', 'deployment', 'nonFunctional'],
       minFeatureCount: 4,
       featureNameSignals: [
-        /\b(api|schnittstelle|architektur|architecture|schema|datenmodell|database|migration|integrat(?:ion|ions?)|vertrag|contract)\b/i,
-        /\b(sicherheit|security|performance|latenz|reliability|zuverlaessigkeit|observability|monitoring|deployment|infrastruktur)\b/i,
+        // ÄNDERUNG 07.03.2026: Reale technische Smoke-Features nutzen oft
+        // Gateway-/Routing-/Rate-Limit-/Caching-/JWT-/Circuit-Breaker-Begriffe.
+        /\b(api|schnittstelle|gateway|proxy|routing|router|architektur|architecture|schema|datenmodell|database|migration|integrat(?:ion|ions?)|vertrag|contract|jwt|rbac|oauth|authentifizier(?:ung|en)|authentication|cache|caching|ttl|rate[- ]?limit(?:ing)?|throttl(?:e|ing)|circuit[- ]?breaker|retry|failover|load[- ]?balanc(?:e|ing)|idempoten(?:t|z|cy))\b/i,
+        /\b(sicherheit|security|performance|latenz|reliability|zuverlaessigkeit|observability|monitoring|metrics|metriken|telemetry|telemetrie|tracing|alerting|deployment|infrastruktur)\b/i,
       ],
       minFeatureSignalRatio: 0.4,
       disallowedFeatureNameSignals: [

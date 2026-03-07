@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pickNextFallbackModel, pickBestDegradedResult } from '../server/prdQualityFallback';
+import { pickNextFallbackModel, pickBestDegradedResult, shouldRejectDegradedResult } from '../server/prdQualityFallback';
 import { PrdCompilerQualityError, qualityScore } from '../server/prdCompilerFinalizer';
 import type { PrdQualityReport } from '../server/prdCompiler';
 
@@ -111,6 +111,24 @@ describe('pickBestDegradedResult', () => {
     expect(result!.qualityScore).toBeGreaterThan(qualityScore(primaryQuality));
   });
 
+  it('prefers the compiled failure snapshot over raw repair content', () => {
+    const primaryError = new PrdCompilerQualityError('primary failed', makeQualityReport({
+      issues: [{ severity: 'warning', code: 'high_fallback_section_count', message: 'fallback sections remain' }],
+      featureCount: 6,
+    }), [
+      { content: 'raw repair draft', model: 'model-a', usage: { prompt_tokens: 0, completion_tokens: 60, total_tokens: 60 } },
+    ], {
+      content: 'compiled canonical content',
+      structure: { features: [{ id: 'F-01', name: 'Compiled feature', rawContent: 'Compiled detail' }], otherSections: {} } as any,
+    });
+
+    const result = pickBestDegradedResult(primaryError, new Error('runtime timeout'));
+
+    expect(result).not.toBeNull();
+    expect(result!.content).toBe('compiled canonical content');
+    expect(result!.structure.features).toHaveLength(1);
+  });
+
   it('returns null when neither has repair attempts', () => {
     const primaryError = new PrdCompilerQualityError('primary', makeQualityReport(), []);
     const fallbackError = new Error('runtime error');
@@ -130,5 +148,15 @@ describe('pickBestDegradedResult', () => {
     const result = pickBestDegradedResult(primaryError, fallbackError);
     expect(result).not.toBeNull();
     expect(result!.repairAttempts).toHaveLength(2);
+  });
+
+  it('marks excessive fallback degradation as non-acceptable when requested', () => {
+    const rejected = shouldRejectDegradedResult({
+      quality: makeQualityReport({
+        issues: [{ severity: 'warning', code: 'excessive_fallback_sections', message: 'too many fallback sections' }],
+      }),
+    }, ['excessive_fallback_sections']);
+
+    expect(rejected).toBe(true);
   });
 });

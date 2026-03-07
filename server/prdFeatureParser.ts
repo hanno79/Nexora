@@ -89,6 +89,19 @@ interface SplitPoint {
   name: string;
 }
 
+// ÄNDERUNG 07.03.2026: Entfernt das Modell-/Fallback-Präfix "Feature Name:" zentral,
+// damit alle Parser-Pfade konsistente, saubere Feature-Namen liefern.
+function normalizeFeatureDisplayName(name: string, fallbackId: string): string {
+  const normalizedName = String(name || '')
+    .trim()
+    .replace(/\*+/g, '')
+    .trim()
+    .replace(/^Feature\s+Name\s*:?\s*/i, '')
+    .trim();
+
+  return normalizedName || fallbackId;
+}
+
 export function parseFeatureBlocks(body: string): { features: FeatureSpec[]; introText: string } {
   const features: FeatureSpec[] = [];
   const bodyWithNewline = '\n' + body;
@@ -100,7 +113,7 @@ export function parseFeatureBlocks(body: string): { features: FeatureSpec[]; int
     splitPoints.push({
       index,
       id: normalizedId,
-      name: (name || normalizedId).trim() || normalizedId,
+      name: normalizeFeatureDisplayName(name, normalizedId),
     });
   };
 
@@ -142,7 +155,7 @@ export function parseFeatureBlocks(body: string): { features: FeatureSpec[]; int
     const rawName = nameMatch
       ? nameMatch[1].trim().replace(/\*+/g, '').trim()
       : featureId;
-    const featureName = rawName.replace(/^Feature\s+Name:\s*/i, '').trim() || featureId;
+    const featureName = normalizeFeatureDisplayName(rawName, featureId);
 
     addSplitPoint(boldMatch.index, featureId, featureName);
   }

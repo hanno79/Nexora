@@ -9,6 +9,8 @@ import {
   sanitizeMetaLeaksInStructure,
 } from '../server/prdQualitySignals';
 
+// ÄNDERUNG 07.03.2026: Near-Duplicate-Regressionen für Auth-Domäne ergänzt
+
 function baseStructure(): PRDStructure {
   return {
     systemVision: 'A deterministic PRD compiler for collaborative product planning.',
@@ -145,6 +147,27 @@ describe('prdQualitySignals', () => {
     expect(issues.some(i => i.code === 'language_mismatch_feature_names_majority')).toBe(false);
   });
 
+  it('does not flag short English feature names with integration nouns as German mismatch', () => {
+    const structure = baseStructure();
+    structure.features = [
+      {
+        id: 'F-14',
+        name: 'Shipment Tracking Integration',
+        rawContent: 'Shipment tracking is integrated into the order detail view.',
+      },
+      {
+        id: 'F-15',
+        name: 'Inventory Management',
+        rawContent: 'Inventory levels remain visible to operators.',
+      },
+    ];
+
+    const issues = collectLanguageConsistencyIssues(structure, 'en', 'epic');
+
+    expect(issues.some(i => i.code === 'language_mismatch_feature_name')).toBe(false);
+    expect(issues.some(i => i.code === 'language_mismatch_feature_names_majority')).toBe(false);
+  });
+
   it('escalates to error when majority of feature names are in wrong language', () => {
     const structure = baseStructure();
     structure.features = [
@@ -250,5 +273,147 @@ describe('prdQualitySignals', () => {
     const applied = applyConservativeFeatureAggregation(structure, analysis.candidates, 'en');
     expect(applied.aggregatedFeatureCount).toBeGreaterThanOrEqual(1);
     expect(applied.structure.features.length).toBeLessThan(structure.features.length);
+  });
+
+  it('meldet Login und Passwort-Reset nicht als Near-Duplicate nur wegen generischer Auth-Begriffe', () => {
+    const structure = baseStructure();
+    structure.features = [
+      {
+        id: 'F-01',
+        name: 'Email and Password Login',
+        rawContent: 'Users log in with email and password.',
+      },
+      {
+        id: 'F-02',
+        name: 'Password Reset via Email Link',
+        rawContent: 'Users reset passwords through an email link.',
+      },
+    ];
+
+    const analysis = findFeatureAggregationCandidates(structure.features, 'feature', 'en');
+
+    expect(analysis.candidates).toHaveLength(0);
+    expect(analysis.nearDuplicates).toHaveLength(0);
+  });
+
+  it('meldet Request und Confirmation trotz Prefix "Feature Name:" nicht als Near-Duplicate', () => {
+    const structure = baseStructure();
+    structure.features = [
+      {
+        id: 'F-02',
+        name: 'Feature Name: Password Reset Request',
+        rawContent: 'Users request a password reset email.',
+      },
+      {
+        id: 'F-03',
+        name: 'Feature Name: Password Reset Confirmation',
+        rawContent: 'Users confirm a password reset with a token and new password.',
+      },
+    ];
+
+    const analysis = findFeatureAggregationCandidates(structure.features, 'feature', 'en');
+
+    expect(analysis.candidates).toHaveLength(0);
+    expect(analysis.nearDuplicates).toHaveLength(0);
+  });
+
+  it('meldet unterschiedliche checkout-teilschritte nicht als Near-Duplicate', () => {
+    const structure = baseStructure();
+    structure.features = [
+      {
+        id: 'F-03',
+        name: 'Multi-step Checkout - Shipping Address Entry',
+        rawContent: 'Customers enter and validate their shipping address during checkout.',
+      },
+      {
+        id: 'F-04',
+        name: 'Multi-step Checkout - Payment Entry with Stripe Integration',
+        rawContent: 'Customers enter payment details and complete Stripe-backed payment authorization.',
+      },
+    ];
+
+    const analysis = findFeatureAggregationCandidates(structure.features, 'epic', 'en');
+
+    expect(analysis.candidates).toHaveLength(0);
+    expect(analysis.nearDuplicates).toHaveLength(0);
+  });
+
+  it('meldet unterschiedliche cart-item-crud-aktionen nicht als Near-Duplicate', () => {
+    const structure = baseStructure();
+    structure.features = [
+      {
+        id: 'F-06',
+        name: 'Cart Item Addition',
+        rawContent: 'Customers add an item to the shopping cart.',
+      },
+      {
+        id: 'F-07',
+        name: 'Cart Item Quantity Modification',
+        rawContent: 'Customers increase or decrease quantities for an existing cart item.',
+      },
+      {
+        id: 'F-08',
+        name: 'Cart Item Removal',
+        rawContent: 'Customers remove an item from the shopping cart.',
+      },
+    ];
+
+    const analysis = findFeatureAggregationCandidates(structure.features, 'epic', 'en');
+
+    expect(analysis.candidates).toHaveLength(0);
+    expect(analysis.nearDuplicates).toHaveLength(0);
+  });
+
+  it('meldet epic-hauptfeatures mit klaren teilfaehigkeiten nicht als Near-Duplicate', () => {
+    const structure = baseStructure();
+    structure.features = [
+      {
+        id: 'F-05',
+        name: 'Real-time Order Tracking with Status Updates',
+        rawContent: 'Customers track order progress and receive status updates.',
+      },
+      {
+        id: 'F-13',
+        name: 'Real-Time Order Tracking',
+        rawContent: 'Customers view the current fulfillment status for an order.',
+      },
+      {
+        id: 'F-06',
+        name: 'Warehouse Inventory Management with Low-stock Alerts',
+        rawContent: 'Operators manage inventory and receive low-stock alerts.',
+      },
+      {
+        id: 'F-16',
+        name: 'Low-Stock Alert Generation',
+        rawContent: 'The system generates low-stock alerts for warehouse teams.',
+      },
+    ];
+
+    const analysis = findFeatureAggregationCandidates(structure.features, 'epic', 'en');
+
+    expect(analysis.candidates).toHaveLength(0);
+    expect(analysis.nearDuplicates).toHaveLength(0);
+  });
+
+  it('erkennt weiterhin fachlich ähnliche Shared-Core-Features als Near-Duplicate', () => {
+    const structure = baseStructure();
+    structure.features = [
+      {
+        id: 'F-01',
+        name: 'Random Location Loader',
+        rawContent: 'Loads a random location into the editor.',
+      },
+      {
+        id: 'F-02',
+        name: 'Random Location API Service',
+        rawContent: 'Provides an API service for random location loading.',
+      },
+    ];
+
+    const analysis = findFeatureAggregationCandidates(structure.features, 'feature', 'en');
+
+    expect(analysis.candidates).toHaveLength(0);
+    expect(analysis.nearDuplicates).toHaveLength(1);
+    expect(analysis.nearDuplicates[0].featureIds).toEqual(['F-01', 'F-02']);
   });
 });

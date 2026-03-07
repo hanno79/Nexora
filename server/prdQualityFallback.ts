@@ -35,6 +35,15 @@ export interface DegradedResult extends FinalizeWithCompilerGatesResult {
   fallbackModel?: string;
 }
 
+export function shouldRejectDegradedResult(
+  result: Pick<FinalizeWithCompilerGatesResult, 'quality'> | null | undefined,
+  blockedIssueCodes: string[]
+): boolean {
+  if (!result || blockedIssueCodes.length === 0) return false;
+  const blockedCodes = new Set(blockedIssueCodes.map(code => code.toLowerCase()));
+  return result.quality.issues.some(issue => blockedCodes.has(String(issue.code || '').toLowerCase()));
+}
+
 /**
  * Compare two quality-gate failures and return the best content as a degraded
  * result (HTTP 200 with warning) instead of throwing.
@@ -43,7 +52,9 @@ export function pickBestDegradedResult(
   primaryError: PrdCompilerQualityError,
   fallbackError: unknown,
 ): DegradedResult | null {
-  // Extract the best repair attempt from primary (highest score heuristic: last attempt)
+  // ÄNDERUNG 07.03.2026: Degradierter Fallback muss den kompilierten Beststand
+  // zurückgeben. Der rohe letzte Repair-Text kann später erneut starke
+  // Compiler-Fallbacks auslösen und passt nicht zuverlässig zur gespeicherten Quality.
   const primaryAttempts = primaryError.repairAttempts;
   const primaryScore = qualityScore(primaryError.quality);
 
@@ -64,20 +75,18 @@ export function pickBestDegradedResult(
   const bestAttempts = fallbackScore > primaryScore ? fallbackAttempts : primaryAttempts;
   const bestScore = Math.max(primaryScore, fallbackScore);
 
-  // We need content to return. Take the best repair attempt or the initial
-  // content that was compiled (stored in the error's quality report indirectly).
-  // The last repair attempt is typically the best we have.
+  // Bevorzugt den echten kompilierten Fehlstand. Nur wenn dieser nicht vorhanden
+  // ist, fällt der Code auf den letzten Repair-Entwurf zurück.
   const bestAttempt = bestAttempts.length > 0
     ? bestAttempts[bestAttempts.length - 1]
     : null;
+  const bestContent = bestError.compiledContent || bestAttempt?.content || null;
 
-  if (!bestAttempt) return null;
+  if (!bestContent) return null;
 
-  // We don't have the compiled structure from the error (it's thrown away).
-  // Return a minimal degraded result — the caller will need to re-compile.
   return {
-    content: bestAttempt.content,
-    structure: { features: [] } as any, // Will be re-compiled by caller if needed
+    content: bestContent,
+    structure: bestError.compiledStructure || ({ features: [] } as any),
     quality: bestError.quality,
     qualityScore: bestScore,
     repairAttempts: [...primaryAttempts, ...fallbackAttempts],

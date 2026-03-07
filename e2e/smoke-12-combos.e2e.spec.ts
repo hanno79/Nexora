@@ -6,18 +6,18 @@
  *
  * Run: npx playwright test e2e/smoke-12-combos.e2e.spec.ts
  */
-import { test, expect } from '@playwright/test';
+import { test, expect, request } from '@playwright/test';
 import { compilePrdDocument } from '../server/prdCompiler';
 import { qualityScore } from '../server/prdCompilerFinalizer';
 import { getAuthHeader } from './helpers/clerk-auth';
 import fs from 'fs';
 import path from 'path';
 
-const TEMPLATES = ['feature', 'epic', 'technical', 'product-launch'] as const;
-const METHODS = ['simple', 'iterative', 'guided'] as const;
+const ALL_TEMPLATES = ['feature', 'epic', 'technical', 'product-launch'] as const;
+const ALL_METHODS = ['simple', 'iterative', 'guided'] as const;
 
-type Template = (typeof TEMPLATES)[number];
-type Method = (typeof METHODS)[number];
+type Template = (typeof ALL_TEMPLATES)[number];
+type Method = (typeof ALL_METHODS)[number];
 
 const PROJECT_IDEAS: Record<Template, string> = {
   feature:
@@ -45,8 +45,41 @@ interface ComboResult {
   error?: string;
 }
 
+interface TemplateApiRecord {
+  id: string;
+  name: string;
+  category: string;
+  isDefault?: string | null;
+  isMeta?: string | null;
+}
+
 const BASE_URL = 'http://localhost:5000';
+const INITIAL_SMOKE_CONTENT = 'SMOKE-TEST-INITIALINHALT: Wird im Lauf durch das generierte PRD ersetzt.';
+const AI_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
 const results: ComboResult[] = [];
+
+// ÄNDERUNG 06.03.2026: Einzelne Smoke-Kombinationen via Umgebungsvariablen steuerbar machen.
+function readTemplateSelection(): Template[] {
+  const raw = process.env.SMOKE_TEMPLATE?.trim();
+  if (!raw) return [...ALL_TEMPLATES];
+  if (!(ALL_TEMPLATES as readonly string[]).includes(raw)) {
+    throw new Error(`Ungültiger SMOKE_TEMPLATE-Wert: ${raw}`);
+  }
+  return [raw as Template];
+}
+
+function readMethodSelection(): Method[] {
+  const raw = process.env.SMOKE_METHOD?.trim();
+  if (!raw) return [...ALL_METHODS];
+  if (!(ALL_METHODS as readonly string[]).includes(raw)) {
+    throw new Error(`Ungültiger SMOKE_METHOD-Wert: ${raw}`);
+  }
+  return [raw as Method];
+}
+
+const SELECTED_TEMPLATES = readTemplateSelection();
+const SELECTED_METHODS = readMethodSelection();
+const EXPECTED_RESULT_COUNT = SELECTED_TEMPLATES.length * SELECTED_METHODS.length;
 
 async function authHeaders(): Promise<Record<string, string>> {
   const auth = await getAuthHeader();
@@ -58,6 +91,97 @@ function delay(ms: number): Promise<void> {
 }
 
 type ApiResult = { content: string; modelsUsed: string[]; tokens: number };
+
+// ÄNDERUNG 06.03.2026: Langläufer-Requests mit explizitem Timeout über
+// Playwright-API-Context senden, damit generate-dual nicht in Node-fetch scheitert.
+async function postJsonWithLongTimeout<TResponse>(
+  apiPath: string,
+  requestBody: unknown,
+  errorLabel: string,
+): Promise<TResponse> {
+  const headers = await authHeaders();
+  const apiContext = await request.newContext({
+    baseURL: BASE_URL,
+    extraHTTPHeaders: headers,
+  });
+
+  try {
+    const res = await apiContext.post(apiPath, {
+      data: requestBody,
+      timeout: AI_REQUEST_TIMEOUT_MS,
+    });
+    if (!res.ok()) {
+      const text = await res.text();
+      throw new Error(`${errorLabel} failed (${res.status()}): ${text.substring(0, 200)}`);
+    }
+    return await res.json() as TResponse;
+  } finally {
+    await apiContext.dispose();
+  }
+}
+
+async function fetchTemplates(): Promise<TemplateApiRecord[]> {
+  const headers = await authHeaders();
+  const res = await fetch(`${BASE_URL}/api/templates`, {
+    method: 'GET',
+    headers,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`templates fetch failed (${res.status}): ${text.substring(0, 200)}`);
+  }
+  return await res.json();
+}
+
+function resolveTemplateRecord(templates: TemplateApiRecord[], template: Template): TemplateApiRecord {
+  const candidates = templates.filter(item => item.category === template);
+  const preferred = candidates.find(item => item.isDefault === 'true' && item.isMeta !== 'true')
+    ?? candidates.find(item => item.isMeta !== 'true')
+    ?? candidates[0];
+
+  if (!preferred) {
+    throw new Error(`Kein Template mit Kategorie "${template}" gefunden`);
+  }
+
+  return preferred;
+}
+
+async function createPrdForTemplate(template: Template, templateId: string): Promise<string> {
+  const headers = await authHeaders();
+  const res = await fetch(`${BASE_URL}/api/prds`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      title: `Smoke ${template} ${new Date().toISOString()}`,
+      description: `Automatisch erzeugtes Smoke-Test-PRD für das Template ${template}.`,
+      content: INITIAL_SMOKE_CONTENT,
+      templateId,
+      language: 'en',
+      status: 'draft',
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`create prd failed (${res.status}): ${text.substring(0, 200)}`);
+  }
+  const data = await res.json();
+  if (!data?.id) {
+    throw new Error(`create prd returned no id for template ${template}`);
+  }
+  return data.id;
+}
+
+async function preparePrdIdsByTemplate(): Promise<Record<Template, string>> {
+  const templates = await fetchTemplates();
+  const prdEntries = await Promise.all(SELECTED_TEMPLATES.map(async (template) => {
+    const templateRecord = resolveTemplateRecord(templates, template);
+    const prdId = await createPrdForTemplate(template, templateRecord.id);
+    console.log(`  [SETUP] ${template} → Template "${templateRecord.name}" (${templateRecord.id}) | PRD ${prdId}`);
+    return [template, prdId] as const;
+  }));
+
+  return Object.fromEntries(prdEntries) as Record<Template, string>;
+}
 
 /** Retry wrapper: retries a call up to `retries` times with delay between attempts. */
 async function withRetry(
@@ -76,29 +200,24 @@ async function withRetry(
       return await fn();
     } catch (e: any) {
       lastError = e;
-      const isRetryable = /500|502|503|429|rate limit|empty response|fetch failed|ECONNRESET/i.test(e.message || '');
+      const isRetryable = /500|502|503|429|rate limit|empty response|fetch failed|ECONNRESET|timed out|timeout/i.test(e.message || '');
       if (!isRetryable || attempt === retries) throw e;
     }
   }
   throw lastError;
 }
 
-async function callSimple(template: Template): Promise<ApiResult> {
+async function callSimple(template: Template, prdId: string): Promise<ApiResult> {
   return withRetry(async () => {
-    const headers = await authHeaders(); // fresh JWT per attempt
-    const res = await fetch(`${BASE_URL}/api/ai/generate-dual`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        userInput: PROJECT_IDEAS[template],
-        mode: 'generate',
-      }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`generate-dual failed (${res.status}): ${text.substring(0, 200)}`);
-    }
-    const data = await res.json();
+    const data = await postJsonWithLongTimeout<{
+      finalContent?: string;
+      modelsUsed?: string[];
+      totalTokens?: number;
+    }>('/api/ai/generate-dual', {
+      userInput: PROJECT_IDEAS[template],
+      mode: 'generate',
+      prdId,
+    }, 'generate-dual');
     return {
       content: data.finalContent || '',
       modelsUsed: data.modelsUsed || [],
@@ -107,24 +226,20 @@ async function callSimple(template: Template): Promise<ApiResult> {
   }, `simple/${template}`);
 }
 
-async function callIterative(template: Template): Promise<ApiResult> {
+async function callIterative(template: Template, prdId: string): Promise<ApiResult> {
   return withRetry(async () => {
-    const headers = await authHeaders(); // fresh JWT per attempt
-    const res = await fetch(`${BASE_URL}/api/ai/generate-iterative`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        additionalRequirements: PROJECT_IDEAS[template],
-        mode: 'generate',
-        iterationCount: 2,
-        useFinalReview: false,
-      }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`generate-iterative failed (${res.status}): ${text.substring(0, 200)}`);
-    }
-    const data = await res.json();
+    const data = await postJsonWithLongTimeout<{
+      finalContent?: string;
+      mergedPRD?: string;
+      modelsUsed?: string[];
+      totalTokens?: number;
+    }>('/api/ai/generate-iterative', {
+      additionalRequirements: PROJECT_IDEAS[template],
+      mode: 'generate',
+      iterationCount: 2,
+      useFinalReview: false,
+      prdId,
+    }, 'generate-iterative');
     return {
       content: data.finalContent || data.mergedPRD || '',
       modelsUsed: data.modelsUsed || [],
@@ -133,22 +248,17 @@ async function callIterative(template: Template): Promise<ApiResult> {
   }, `iterative/${template}`);
 }
 
-async function callGuided(template: Template): Promise<ApiResult> {
+async function callGuided(template: Template, prdId: string): Promise<ApiResult> {
   return withRetry(async () => {
-    const headers = await authHeaders(); // fresh JWT per attempt
-    const res = await fetch(`${BASE_URL}/api/ai/guided-skip`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        projectIdea: PROJECT_IDEAS[template],
-        mode: 'generate',
-      }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`guided-skip failed (${res.status}): ${text.substring(0, 200)}`);
-    }
-    const data = await res.json();
+    const data = await postJsonWithLongTimeout<{
+      prdContent?: string;
+      modelsUsed?: string[];
+      tokensUsed?: number;
+    }>('/api/ai/guided-skip', {
+      projectIdea: PROJECT_IDEAS[template],
+      mode: 'generate',
+      prdId,
+    }, 'guided-skip');
     return {
       content: data.prdContent || '',
       modelsUsed: data.modelsUsed || [],
@@ -220,14 +330,18 @@ function validateAndRecord(
 }
 
 /**
- * Single test that runs all 12 combinations sequentially.
+ * Single test that runs all selected combinations sequentially.
  * This avoids serial-mode skip-on-failure while keeping rate-limit-safe ordering.
  */
 test('Smoke: all 12 PRD combinations (4 templates × 3 methods)', async () => {
   test.setTimeout(1_800_000); // 30 minutes for all 12 combos (free models are slow + retries)
+  results.length = 0;
+  console.log(`  [FILTER] Templates: ${SELECTED_TEMPLATES.join(', ')} | Methoden: ${SELECTED_METHODS.join(', ')}`);
+  const prdIdsByTemplate = await preparePrdIdsByTemplate();
 
-  for (const template of TEMPLATES) {
-    for (const method of METHODS) {
+  for (const template of SELECTED_TEMPLATES) {
+    const prdId = prdIdsByTemplate[template];
+    for (const method of SELECTED_METHODS) {
       const start = Date.now();
 
       let content = '';
@@ -239,7 +353,7 @@ test('Smoke: all 12 PRD combinations (4 templates × 3 methods)', async () => {
         const callFn = method === 'simple' ? callSimple
           : method === 'iterative' ? callIterative
           : callGuided;
-        const result = await callFn(template);
+        const result = await callFn(template, prdId);
         content = result.content;
         modelsUsed = result.modelsUsed;
         tokens = result.tokens;
@@ -261,12 +375,15 @@ test('Smoke: all 12 PRD combinations (4 templates × 3 methods)', async () => {
   }
 
   // Write results to file
-  const reportPath = path.join(process.cwd(), '.tmp_smoke_12_results.json');
+  const reportPath = path.join(
+    process.cwd(),
+    `.tmp_smoke_${SELECTED_TEMPLATES.join('_')}__${SELECTED_METHODS.join('_')}_results.json`
+  );
   fs.writeFileSync(reportPath, JSON.stringify({ timestamp: new Date().toISOString(), results }, null, 2));
 
   // Print summary table
   console.log('\n' + '='.repeat(90));
-  console.log('  SMOKE TEST SUMMARY (12 Combinations)');
+  console.log(`  SMOKE TEST SUMMARY (${EXPECTED_RESULT_COUNT} Kombinationen)`);
   console.log('='.repeat(90));
   console.log(
     '  Template'.padEnd(18) +
@@ -293,8 +410,8 @@ test('Smoke: all 12 PRD combinations (4 templates × 3 methods)', async () => {
   console.log('='.repeat(90));
   console.log(`\n  Results saved to: ${reportPath}\n`);
 
-  // Final assertions — all combos should have completed
-  expect(results.length, 'All 12 combinations should have results').toBe(12);
+  // Final assertions — alle angeforderten Kombinationen müssen ein Ergebnis haben
+  expect(results.length, `Alle ${EXPECTED_RESULT_COUNT} angeforderten Kombinationen sollten Ergebnisse haben`).toBe(EXPECTED_RESULT_COUNT);
 
   // Check for API failures (hard fail)
   const apiFailures = results.filter(r => r.error);

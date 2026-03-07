@@ -1,3 +1,4 @@
+import { lazy, Suspense, type ComponentType } from "react";
 import { Switch, Route } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -8,15 +9,35 @@ import { ErrorBoundary, PageErrorBoundary } from "@/components/ErrorBoundary";
 import { I18nProvider } from "@/lib/i18n";
 import { useAuth } from "@/hooks/useAuth";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
-import NotFound from "@/pages/not-found";
-import Landing from "@/pages/Landing";
-import SignInPage from "@/pages/SignInPage";
-import SignUpPage from "@/pages/SignUpPage";
-import Dashboard from "@/pages/Dashboard";
-import Templates from "@/pages/Templates";
-import CreateTemplate from "@/pages/CreateTemplate";
-import Editor from "@/pages/Editor";
-import Settings from "@/pages/Settings";
+
+// ÄNDERUNG 06.03.2026: Seiten werden lazy geladen, damit der initiale Frontend-Bundle kleiner bleibt.
+const NotFound = lazy(() => import("@/pages/not-found"));
+const Landing = lazy(() => import("@/pages/Landing"));
+const SignInPage = lazy(() => import("@/pages/SignInPage"));
+const SignUpPage = lazy(() => import("@/pages/SignUpPage"));
+const Dashboard = lazy(() => import("@/pages/Dashboard"));
+const Templates = lazy(() => import("@/pages/Templates"));
+const CreateTemplate = lazy(() => import("@/pages/CreateTemplate"));
+const Editor = lazy(() => import("@/pages/Editor"));
+const Settings = lazy(() => import("@/pages/Settings"));
+
+function PageLoader() {
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center">
+      <LoadingSpinner />
+    </div>
+  );
+}
+
+function renderLazyPage(PageComponent: ComponentType) {
+  return (
+    <PageErrorBoundary>
+      <Suspense fallback={<PageLoader />}>
+        <PageComponent />
+      </Suspense>
+    </PageErrorBoundary>
+  );
+}
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -31,22 +52,22 @@ function Router() {
 
   return (
     <Switch>
-      <Route path="/sign-in">{() => <PageErrorBoundary><SignInPage /></PageErrorBoundary>}</Route>
-      <Route path="/sign-in/*">{() => <PageErrorBoundary><SignInPage /></PageErrorBoundary>}</Route>
-      <Route path="/sign-up">{() => <PageErrorBoundary><SignUpPage /></PageErrorBoundary>}</Route>
-      <Route path="/sign-up/*">{() => <PageErrorBoundary><SignUpPage /></PageErrorBoundary>}</Route>
+      <Route path="/sign-in">{() => renderLazyPage(SignInPage)}</Route>
+      <Route path="/sign-in/*">{() => renderLazyPage(SignInPage)}</Route>
+      <Route path="/sign-up">{() => renderLazyPage(SignUpPage)}</Route>
+      <Route path="/sign-up/*">{() => renderLazyPage(SignUpPage)}</Route>
       {!isAuthenticated ? (
-        <Route path="/" component={Landing} />
+        <Route path="/">{() => renderLazyPage(Landing)}</Route>
       ) : (
         <>
-          <Route path="/">{() => <PageErrorBoundary><Dashboard /></PageErrorBoundary>}</Route>
-          <Route path="/templates">{() => <PageErrorBoundary><Templates /></PageErrorBoundary>}</Route>
-          <Route path="/templates/create">{() => <PageErrorBoundary><CreateTemplate /></PageErrorBoundary>}</Route>
-          <Route path="/editor/:id">{() => <PageErrorBoundary><Editor /></PageErrorBoundary>}</Route>
-          <Route path="/settings">{() => <PageErrorBoundary><Settings /></PageErrorBoundary>}</Route>
+          <Route path="/">{() => renderLazyPage(Dashboard)}</Route>
+          <Route path="/templates">{() => renderLazyPage(Templates)}</Route>
+          <Route path="/templates/create">{() => renderLazyPage(CreateTemplate)}</Route>
+          <Route path="/editor/:id">{() => renderLazyPage(Editor)}</Route>
+          <Route path="/settings">{() => renderLazyPage(Settings)}</Route>
         </>
       )}
-      <Route component={NotFound} />
+      <Route>{() => renderLazyPage(NotFound)}</Route>
     </Switch>
   );
 }

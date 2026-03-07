@@ -540,16 +540,20 @@ class OpenRouterClient {
     // 4) optional cross-role fallbacks (only when explicitly enabled)
     const seen = new Set<string>();
     const modelsToTry: Array<{ model: string; isPrimary: boolean }> = [];
+    const cooldownSkippedModels: Array<{ model: string; isPrimary: boolean; reason: string }> = [];
+
+    const isLastResortCooldownOverrideAllowed = (reason: string): boolean => {
+      const normalizedReason = (reason || '').toLowerCase();
+      if (!normalizedReason) return true;
+      if (normalizedReason.includes('auth')) return false;
+      if (normalizedReason.includes('not found')) return false;
+      if (normalizedReason.includes('unavailable')) return false;
+      return true;
+    };
 
     const addIfNew = (model: string | undefined, isPrimary: boolean) => {
       const sanitized = sanitizeConfiguredModel(model);
       if (!sanitized || seen.has(sanitized)) return;
-
-      const activeCooldown = this.getActiveCooldown(sanitized);
-      if (activeCooldown) {
-        console.warn(`Skipping ${sanitized} due to cooldown: ${activeCooldown.reason}`);
-        return;
-      }
 
       // Provider-Level Circuit Breaker: Skip models whose provider is on cooldown
       const modelProvider = getBestDirectProvider(sanitized);
@@ -575,6 +579,7 @@ class OpenRouterClient {
     const crossRolePreferred = this.preferredModels[modelType === 'generator' ? 'reviewer' : 'generator'];
     const crossRoleTierDefault = modelType === 'generator' ? tierModels.reviewer : tierModels.generator;
     const allowCrossRoleFallback = process.env.ALLOW_CROSS_ROLE_MODEL_FALLBACK === 'true';
+    const allowDirectProviderBaseFallback = this.tier !== 'development';
 
     addIfNew(primary, true);
     for (const fb of fallbackChain) {
@@ -582,28 +587,32 @@ class OpenRouterClient {
     }
     addIfNew(roleDefault, false);
 
-    // Cross-Provider-Fallbacks: Fuer :free Modelle in der Chain prüfen ob eine
-    // Direct-Provider-Variante (ohne :free) existiert und als Fallback anfuegen.
-    // Das stellt sicher, dass bei OpenRouter-Ausfall Direct-Provider genutzt werden.
-    for (const fb of fallbackChain) {
-      if (isOpenRouterFreeModel(fb)) {
-        const baseModel = fb.replace(/:free$/, '');
-        const directProviders = resolveProvidersForModel(baseModel);
-        if (directProviders.length > 0) {
-          addIfNew(baseModel, false);
+    // ÄNDERUNG 06.03.2026: Im Development-Tier keine Basisvariante ohne :free
+    // aus Free-Fallbacks ableiten, damit Smoke-Runs kostenneutral bleiben.
+    if (allowDirectProviderBaseFallback) {
+      for (const fb of fallbackChain) {
+        if (isOpenRouterFreeModel(fb)) {
+          const baseModel = fb.replace(/:free$/, '');
+          const directProviders = resolveProvidersForModel(baseModel);
+          if (directProviders.length > 0) {
+            addIfNew(baseModel, false);
+          }
         }
       }
     }
 
-    // Direct-Provider kostenlose Modelle als letzte Fallbacks
-    if (process.env.NVIDIA_API_KEY) {
-      addIfNew('meta/llama-3.3-70b-instruct', false);
-    }
-    if (process.env.GROQ_API_KEY) {
-      addIfNew('llama-3.3-70b-versatile', false);
-    }
-    if (process.env.CEREBRAS_API_KEY) {
-      addIfNew('llama-3.3-70b', false);
+    // ÄNDERUNG 07.03.2026: Im Development-Tier keine direkten Last-Resort-
+    // Provider-Fallbacks anhängen, damit Free-Smoke-Runs kostenneutral bleiben.
+    if (allowDirectProviderBaseFallback) {
+      if (process.env.NVIDIA_API_KEY) {
+        addIfNew('meta/llama-3.3-70b-instruct', false);
+      }
+      if (process.env.GROQ_API_KEY) {
+        addIfNew('llama-3.3-70b-versatile', false);
+      }
+      if (process.env.CEREBRAS_API_KEY) {
+        addIfNew('llama-3.3-70b', false);
+      }
     }
 
     // Optional legacy behavior: allow using the other role's model as last-resort fallback.
@@ -624,28 +633,17 @@ class OpenRouterClient {
       throw new Error('No usable AI models are configured after filtering unavailable/deprecated entries. Please update AI settings.');
     }
 
-    for (let i = 0; i < modelsToTry.length; i++) {
-      const { model: attemptModel, isPrimary } = modelsToTry[i];
-
-      // Skip models put on cooldown during this fallback run (e.g. by Circuit Breaker)
-      const modelCd = getGlobalCooldownStatus(attemptModel);
-      if (modelCd) {
-        console.warn(`Skipping ${attemptModel} due to cooldown: ${modelCd.reason}`);
-        continue;
-      }
-
-      // Provider-level cooldown check
-      const modelProvider = getBestDirectProvider(attemptModel);
-      if (modelProvider && modelProvider !== 'openrouter') {
-        const providerCd = getProviderCooldownStatus(modelProvider);
-        if (providerCd) {
-          console.warn(`Skipping ${attemptModel} — provider ${modelProvider} on cooldown: ${providerCd.reason}`);
-          continue;
-        }
-      }
-
+    const tryModelWithFallback = async (
+      attemptModel: string,
+      isPrimary: boolean,
+      mode: 'normal' | 'cooldown-override',
+      currentIndex: number
+    ): Promise<{ content: string; usage: TokenUsage; model: string; tier: string; usedFallback: boolean; finishReason?: string } | null> => {
       try {
-        console.log(`Attempting ${modelType} with ${attemptModel} (${isPrimary ? 'primary' : 'fallback'})`);
+        console.log(
+          `Attempting ${modelType} with ${attemptModel} (` +
+          `${isPrimary ? 'primary' : 'fallback'}${mode === 'cooldown-override' ? ', cooldown override' : ''})`
+        );
 
         const savedPreferred = this.preferredModels[modelType];
         this.preferredModels[modelType] = attemptModel;
@@ -678,7 +676,7 @@ class OpenRouterClient {
             errMsg.includes('key not configured')
           )
         ) {
-          for (const remaining of modelsToTry.slice(i + 1)) {
+          for (const remaining of modelsToTry.slice(currentIndex + 1)) {
             if (getBestDirectProvider(remaining.model) === null) {
               setGlobalCooldown(remaining.model, 5 * 60 * 1000, 'openrouter auth failure');
               console.warn(`[Auth-Skip] Cooldown set for ${remaining.model} (OpenRouter auth failure)`);
@@ -686,22 +684,11 @@ class OpenRouterClient {
           }
         }
 
-        // OpenRouter Rate-Limit-Skip: Wenn OpenRouter 429 zurueckgibt, alle
-        // verbleibenden OpenRouter-only Modelle auf Cooldown setzen.
-        if (
-          failedIsOpenRouterOnly &&
-          errMsg.includes('rate limit exceeded') &&
-          !errMsg.includes('nvidia') &&
-          !errMsg.includes('groq') &&
-          !errMsg.includes('cerebras')
-        ) {
-          for (const remaining of modelsToTry.slice(i + 1)) {
-            if (getBestDirectProvider(remaining.model) === null) {
-              setGlobalCooldown(remaining.model, 2 * 60 * 1000, 'openrouter rate limited');
-              console.warn(`[Rate-Skip] Cooldown set for ${remaining.model} (OpenRouter rate limit)`);
-            }
-          }
-        }
+        // ÄNDERUNG 07.03.2026: OpenRouter-Rate-Limits nicht mehr pauschal auf
+        // alle verbleibenden OpenRouter-Modelle propagieren. Einzelne Free-
+        // Modelle koennen limitiert sein, waehrend andere noch funktionieren.
+        // Das fehlgeschlagene Modell bekommt weiterhin seinen eigenen Cooldown
+        // ueber applyFailureCooldown().
 
         // Direct-Provider Circuit Breaker: Wenn ein Direct-Provider (NVIDIA, Groq, Cerebras)
         // mit Timeout oder Connection-Error fehlschlaegt, den gesamten Provider auf Cooldown
@@ -717,7 +704,7 @@ class OpenRouterClient {
             errMsg.includes('socket hang up')
           ) {
             setProviderCooldown(failedProvider, 5 * 60 * 1000, `timeout/connection error on ${attemptModel}`);
-            for (const remaining of modelsToTry.slice(i + 1)) {
+            for (const remaining of modelsToTry.slice(currentIndex + 1)) {
               const remainingProvider = getBestDirectProvider(remaining.model);
               if (remainingProvider === failedProvider) {
                 setGlobalCooldown(remaining.model, 5 * 60 * 1000, `provider ${failedProvider} down`);
@@ -730,7 +717,7 @@ class OpenRouterClient {
           // set provider-level cooldown to skip remaining models on that provider.
           if (errMsg.includes('rate limit') || errMsg.includes('429')) {
             setProviderCooldown(failedProvider, 2 * 60 * 1000, `rate limited on ${attemptModel}`);
-            for (const remaining of modelsToTry.slice(i + 1)) {
+            for (const remaining of modelsToTry.slice(currentIndex + 1)) {
               const remainingProvider = getBestDirectProvider(remaining.model);
               if (remainingProvider === failedProvider) {
                 setGlobalCooldown(remaining.model, 2 * 60 * 1000, `provider ${failedProvider} rate limited`);
@@ -739,6 +726,71 @@ class OpenRouterClient {
             }
           }
         }
+
+        return null;
+      }
+    };
+
+    for (let i = 0; i < modelsToTry.length; i++) {
+      const { model: attemptModel, isPrimary } = modelsToTry[i];
+
+      // Skip models put on cooldown during this fallback run (e.g. by Circuit Breaker)
+      const modelCd = getGlobalCooldownStatus(attemptModel);
+      if (modelCd) {
+        console.warn(`Skipping ${attemptModel} due to cooldown: ${modelCd.reason}`);
+        cooldownSkippedModels.push({ model: attemptModel, isPrimary, reason: modelCd.reason });
+        continue;
+      }
+
+      // Provider-level cooldown check
+      const modelProvider = getBestDirectProvider(attemptModel);
+      if (modelProvider && modelProvider !== 'openrouter') {
+        const providerCd = getProviderCooldownStatus(modelProvider);
+        if (providerCd) {
+          console.warn(`Skipping ${attemptModel} — provider ${modelProvider} on cooldown: ${providerCd.reason}`);
+          continue;
+        }
+      }
+
+      const result = await tryModelWithFallback(attemptModel, isPrimary, 'normal', i);
+      if (result) {
+        return result;
+      }
+    }
+
+    // ÄNDERUNG 07.03.2026: Wenn nach dem regulaeren Durchlauf nur noch Modell-
+    // Cooldowns uebrig sind, fuehren wir einen letzten kontrollierten Versuch
+    // ueber diese Kandidaten aus. Das verhindert, dass Guided-/Expansion-Pfade
+    // auf einen kuenstlichen 0-/1-Modell-Zustand kollabieren.
+    const cooldownOverrideCandidates = cooldownSkippedModels.filter(({ reason }) =>
+      isLastResortCooldownOverrideAllowed(reason)
+    );
+    if (cooldownOverrideCandidates.length > 0) {
+      console.warn(
+        `Last-resort retry: ${cooldownOverrideCandidates.length} cooled-down ${modelType} model(s) ` +
+        `are retried after the regular fallback chain was exhausted.`
+      );
+    }
+
+    for (const { model: attemptModel, isPrimary, reason } of cooldownOverrideCandidates) {
+      const modelProvider = getBestDirectProvider(attemptModel);
+      if (modelProvider && modelProvider !== 'openrouter') {
+        const providerCd = getProviderCooldownStatus(modelProvider);
+        if (providerCd) {
+          console.warn(`Skipping ${attemptModel} even in last resort — provider ${modelProvider} still on cooldown: ${providerCd.reason}`);
+          continue;
+        }
+      }
+
+      console.warn(`Retrying ${attemptModel} despite active cooldown: ${reason}`);
+      const result = await tryModelWithFallback(
+        attemptModel,
+        isPrimary,
+        'cooldown-override',
+        modelsToTry.findIndex(({ model }) => model === attemptModel)
+      );
+      if (result) {
+        return result;
       }
     }
 

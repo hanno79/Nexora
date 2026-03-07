@@ -11,11 +11,20 @@
  * with project-specific content derived from the Feature Catalogue.
  */
 
+// ÄNDERUNG 07.03.2026: Semantische Feature-Prüfung und Feature-Placeholder-Enrichment ergänzt
+// Formal gefüllte, aber inhaltlich falsch zugeordnete Features werden jetzt gezielt umgeschrieben
+
 import type { PRDStructure } from './prdStructure';
 import { getTemplateProfile, isGenericFallback, type RequiredSectionKey } from './prdTemplateIntent';
 import { tokenizeToSet, jaccardSimilarity } from './prdTextUtils';
 import { parsePRDToStructure } from './prdParser';
 import { assembleStructureToMarkdown } from './prdAssembler';
+import {
+  analyzeFeatureSemanticIssues,
+  extractFeatureTargetFields,
+  FEATURE_ENRICHABLE_FIELDS,
+  isFeatureForceRewriteIssue,
+} from './prdFeatureSemantics';
 import { CANONICAL_PRD_HEADINGS } from './prdCompiler';
 import { buildTemplateInstruction } from './prdTemplateIntent';
 import { logger } from './logger';
@@ -368,16 +377,16 @@ export function analyzeContentQuality(
     }
   }
 
+  for (const issue of analyzeFeatureSemanticIssues(structure.features || [])) {
+    issues.push(issue);
+  }
+
   // 5. Feature field incompleteness — detect features with mostly empty structured fields
-  const FEATURE_FIELDS = [
-    'purpose', 'actors', 'trigger', 'preconditions', 'mainFlow',
-    'alternateFlows', 'postconditions', 'dataImpact', 'uiImpact', 'acceptanceCriteria',
-  ] as const;
   const INCOMPLETE_FIELD_THRESHOLD = 5;
 
   for (const feature of structure.features || []) {
     const missingFields: string[] = [];
-    for (const field of FEATURE_FIELDS) {
+    for (const field of FEATURE_ENRICHABLE_FIELDS) {
       const value = (feature as any)[field];
       const filled = Array.isArray(value) ? value.length > 0 : Boolean(value && String(value).trim());
       if (!filled) missingFields.push(field);
@@ -386,7 +395,7 @@ export function analyzeContentQuality(
       issues.push({
         code: 'feature_fields_incomplete',
         sectionKey: `feature:${feature.id}`,
-        message: `Feature "${feature.id}: ${feature.name}" has ${FEATURE_FIELDS.length - missingFields.length}/${FEATURE_FIELDS.length} fields filled. Missing: ${missingFields.join(', ')}`,
+        message: `Feature "${feature.id}: ${feature.name}" has ${FEATURE_ENRICHABLE_FIELDS.length - missingFields.length}/${FEATURE_ENRICHABLE_FIELDS.length} fields filled. Missing: ${missingFields.join(', ')}`,
         severity: 'warning',
         suggestedAction: 'enrich',
       });
@@ -400,7 +409,7 @@ export function analyzeContentQuality(
     let substantialCount = 0;
     const shallowFields: string[] = [];
 
-    for (const field of FEATURE_FIELDS) {
+    for (const field of FEATURE_ENRICHABLE_FIELDS) {
       const value = (feature as any)[field];
       let isSubstantial = false;
 
@@ -514,8 +523,7 @@ export function analyzeContentQuality(
 // ---------------------------------------------------------------------------
 
 const ENRICHABLE_FIELDS = [
-  'purpose', 'actors', 'trigger', 'preconditions', 'mainFlow',
-  'alternateFlows', 'postconditions', 'dataImpact', 'uiImpact', 'acceptanceCriteria',
+  ...FEATURE_ENRICHABLE_FIELDS,
 ] as const;
 
 export function buildFeatureEnrichPrompt(params: {
@@ -537,7 +545,7 @@ export function buildFeatureEnrichPrompt(params: {
       ? `\nRaw description:\n${f.rawContent.slice(0, 800)}`
       : '';
     return `### ${f.id}: ${f.name}
-Missing fields: ${f.missingFields.join(', ')}${rawSnippet}`;
+Target fields: ${f.missingFields.join(', ')}${rawSnippet}`;
   }).join('\n\n');
 
   const otherFeatureList = projectContext.otherFeatures
@@ -558,11 +566,12 @@ FEATURES TO ENRICH:
 ${featureBlocks}
 
 INSTRUCTIONS:
-1. For each feature, generate ONLY the missing fields listed above.
+1. For each feature, generate ONLY the target fields listed above.
 2. ${langNote}
 3. Each field must be project-specific — reference the actual feature, its domain, and its interactions with other features.
 4. Do NOT generate generic template text. Every sentence must be specific to this exact feature in this exact project.
-5. Field format rules:
+5. If the current feature content contradicts the feature name, rewrite the requested fields so they match the feature name exactly and do not copy behavior from neighboring features.
+6. Field format rules:
    - purpose: 1-2 sentences describing what this feature achieves
    - actors: Who triggers and who is affected (e.g., "User", "Admin", "Backend Service")
    - trigger: What action or event starts this feature
@@ -588,7 +597,7 @@ For each feature, output a labeled block:
 - [ ] ...
 - [ ] ...
 
-Only output the fields that were listed as missing. Do NOT output fields that already exist.`;
+Only output the fields that were listed above. Do NOT output any extra fields.`;
 }
 
 export function parseFeatureEnrichResponse(
@@ -741,28 +750,33 @@ export async function reviewAndRefineContent(options: {
 
   // Step 2: Feature enrichment — fill incomplete OR shallow features via targeted AI call
   const enrichIssues = reviewResult.issues.filter(i =>
-    i.code === 'feature_fields_incomplete' || i.code === 'feature_content_shallow'
+    i.code === 'feature_fields_incomplete'
+      || i.code === 'feature_content_shallow'
+      || i.code === 'feature_semantic_mismatch'
+      || i.code === 'feature_placeholder_content'
   );
   if (enrichIssues.length > 0) {
-    const featuresToEnrich = enrichIssues.map(issue => {
+    const enrichTargets = new Map<string, { id: string; name: string; rawContent?: string; missingFields: string[] }>();
+    const forceReplaceFeatureIds = new Set<string>();
+
+    for (const issue of enrichIssues) {
       const fId = issue.sectionKey.replace('feature:', '');
       const feature = (structure.features || []).find(f => f.id === fId);
-      // For incomplete: extract missing fields from message
-      const missingMatch = issue.message.match(/Missing: (.+)$/);
-      // For shallow: extract shallow fields from message
-      const shallowMatch = issue.message.match(/Shallow: (.+)$/);
-      const missingFields = missingMatch
-        ? missingMatch[1].split(', ').map(s => s.trim())
-        : shallowMatch
-          ? shallowMatch[1].split(', ').map(s => s.trim())
-          : [];
-      return {
+      const targetFields = extractFeatureTargetFields(issue.message);
+      const existing = enrichTargets.get(fId) || {
         id: fId,
         name: feature?.name || fId,
         rawContent: feature?.rawContent,
-        missingFields,
+        missingFields: [],
       };
-    }).filter(f => f.missingFields.length > 0);
+      existing.missingFields = Array.from(new Set([...existing.missingFields, ...targetFields]));
+      enrichTargets.set(fId, existing);
+      if (isFeatureForceRewriteIssue(issue.code)) {
+        forceReplaceFeatureIds.add(fId);
+      }
+    }
+
+    const featuresToEnrich = Array.from(enrichTargets.values()).filter(f => f.missingFields.length > 0);
 
     if (featuresToEnrich.length > 0) {
       const enrichPrompt = buildFeatureEnrichPrompt({
@@ -801,13 +815,14 @@ export async function reviewAndRefineContent(options: {
                 if (!fields) return feature;
                 const updated = { ...feature };
                 const isShallow = shallowFeatureIds.has(feature.id);
+                const forceReplace = forceReplaceFeatureIds.has(feature.id);
                 for (const [key, value] of Object.entries(fields)) {
                   const existing = (updated as any)[key];
                   const isEmpty = Array.isArray(existing)
                     ? existing.length === 0
                     : !existing || !String(existing).trim();
                   // For shallow features: also replace if enrichment is substantially longer
-                  const shouldReplace = isEmpty || (isShallow && (() => {
+                  const shouldReplace = forceReplace || isEmpty || (isShallow && (() => {
                     const existingLen = Array.isArray(existing) ? existing.join(' ').length : String(existing || '').length;
                     const newLen = Array.isArray(value) ? (value as string[]).join(' ').length : String(value || '').length;
                     return newLen > existingLen * 1.5; // Replace if enrichment is 50%+ longer

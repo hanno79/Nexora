@@ -20,7 +20,7 @@ import { eq } from 'drizzle-orm';
 import { DbGuidedSessionStore, type GuidedSessionStorePort } from './guidedSessionStore';
 import { logger } from './logger';
 import { finalizeWithCompilerGates, PrdCompilerQualityError } from './prdCompilerFinalizer';
-import { pickNextFallbackModel, pickBestDegradedResult } from './prdQualityFallback';
+import { pickNextFallbackModel, pickBestDegradedResult, shouldRejectDegradedResult } from './prdQualityFallback';
 import { resolvePrdWorkflowMode } from './prdWorkflowMode';
 import { buildTemplateInstruction } from './prdTemplateIntent';
 import { detectContentLanguage } from './prdLanguageDetector';
@@ -35,6 +35,7 @@ import {
   GUIDED_FOLLOWUP,
   PRD_FINAL_GENERATION,
   REPAIR_PASS,
+  CONTENT_REVIEW_REFINE,
 } from './tokenBudgets';
 
 interface ConversationContext {
@@ -536,6 +537,7 @@ Generate a complete, professional PRD.`;
   }): Promise<GuidedGenerationResult> {
     const { client, systemPrompt, userPrompt, mode, existingContent, contentLanguage, templateCategory } = params;
     const language = detectContentLanguage(contentLanguage, `${userPrompt}\n${existingContent || ''}`);
+    const langInstruction = getLanguageInstruction(language);
     const modelsUsed = new Set<string>();
     let totalTokens = 0;
 
@@ -597,6 +599,20 @@ Generate a complete, professional PRD.`;
           finishReason: repairResult.finishReason,
         };
       },
+      // ÄNDERUNG 06.03.2026: Guided nutzt jetzt denselben Refine-Pfad wie Simple/Iterative.
+      contentRefineGenerator: async (refinePrompt: string) => {
+        const refineResult = await client.callWithFallback(
+          'generator',
+          'You are a PRD content refinement specialist. Follow the instructions precisely.' + langInstruction,
+          refinePrompt,
+          CONTENT_REVIEW_REFINE
+        );
+        return {
+          content: refineResult.content,
+          model: refineResult.model,
+          usage: refineResult.usage,
+        };
+      },
     } as const;
 
     let finalized;
@@ -643,6 +659,13 @@ Generate a complete, professional PRD.`;
       } catch (fallbackError) {
         const degraded = pickBestDegradedResult(error, fallbackError);
         if (degraded) {
+          if (shouldRejectDegradedResult(degraded, [
+            'content_review_blocked_excessive_fallback',
+            'excessive_fallback_sections',
+          ])) {
+            logger.warn('Both models failed quality gates and still produced excessive compiler fallback sections; rejecting degraded result');
+            throw fallbackError instanceof PrdCompilerQualityError ? fallbackError : error;
+          }
           logger.warn('Both models failed quality gates — returning best degraded result');
           finalized = degraded;
         } else {

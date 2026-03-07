@@ -50,12 +50,21 @@ export interface FinalizeWithCompilerGatesResult {
 export class PrdCompilerQualityError extends Error {
   readonly quality: PrdQualityReport;
   readonly repairAttempts: CompilerModelResult[];
+  readonly compiledContent?: string;
+  readonly compiledStructure?: PRDStructure;
 
-  constructor(message: string, quality: PrdQualityReport, repairAttempts: CompilerModelResult[]) {
+  constructor(
+    message: string,
+    quality: PrdQualityReport,
+    repairAttempts: CompilerModelResult[],
+    compiledResult?: { content: string; structure: PRDStructure }
+  ) {
     super(message);
     this.name = 'PrdCompilerQualityError';
     this.quality = quality;
     this.repairAttempts = repairAttempts;
+    this.compiledContent = compiledResult?.content;
+    this.compiledStructure = compiledResult?.structure;
   }
 }
 
@@ -69,6 +78,14 @@ export function qualityScore(quality: PrdQualityReport): number {
   score -= (quality.fallbackSections?.length || 0) * 3;
   score += Math.min(20, (quality.featureCount || 0) * 2);
   return score;
+}
+
+function hasQualityIssue(quality: PrdQualityReport, code: string): boolean {
+  return quality.issues.some(issue => issue.code === code);
+}
+
+function hasContentReviewError(review: ContentReviewResult | undefined, code: string): boolean {
+  return Boolean(review?.issues.some(issue => issue.severity === 'error' && issue.code === code));
 }
 
 function shouldRepair(
@@ -272,7 +289,8 @@ export async function finalizeWithCompilerGates(
     throw new PrdCompilerQualityError(
       `PRD compiler quality gate failed after ${repairAttempts.length} repair attempt(s): ${details}`,
       compiled.quality,
-      repairAttempts
+      repairAttempts,
+      { content: compiled.content, structure: compiled.structure }
     );
   }
 
@@ -303,6 +321,36 @@ export async function finalizeWithCompilerGates(
       }
       // If recompile degraded quality, keep the pre-refinement version
     }
+  }
+
+  const shouldBlockExcessiveFallbackReview = Boolean(
+    options.contentRefineGenerator
+    && hasQualityIssue(compiled.quality, 'excessive_fallback_sections')
+    && hasContentReviewError(contentReview, 'compiler_fallback_filler')
+  );
+
+  if (shouldBlockExcessiveFallbackReview) {
+    // ÄNDERUNG 07.03.2026: Den kompilierten Fehlstand im Error mitführen, damit
+    // degradierte Fallback-Pfade nicht den rohen Repair-Text statt des echten
+    // Compiler-Ergebnisses zurückgeben.
+    const blockedQuality: PrdQualityReport = {
+      ...compiled.quality,
+      valid: false,
+      issues: [
+        ...compiled.quality.issues,
+        {
+          code: 'content_review_blocked_excessive_fallback',
+          message: 'Content review still detected compiler-generated fallback filler after refinement attempts.',
+          severity: 'error',
+        },
+      ],
+    };
+    throw new PrdCompilerQualityError(
+      'PRD compiler quality gate failed after content review: compiler-generated fallback filler remains.',
+      blockedQuality,
+      repairAttempts,
+      { content: compiled.content, structure: compiled.structure }
+    );
   }
 
   return {

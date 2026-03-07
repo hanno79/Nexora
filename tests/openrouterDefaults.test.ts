@@ -1,3 +1,12 @@
+/*
+Author: rahn
+Datum: 07.03.2026
+Version: 1.1
+Beschreibung: Regressionstests fuer sichere OpenRouter-Defaults und Fallback-Ketten.
+*/
+
+// ÄNDERUNG 07.03.2026: Development-Tier darf keine direkten Last-Resort-Provider-Fallbacks anhängen.
+
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   OpenRouterClient,
@@ -122,10 +131,96 @@ describe('openrouter safe defaults', () => {
       client.callWithFallback('generator', 'system', 'user', 64)
     ).rejects.toThrow('All');
 
+    // ÄNDERUNG 06.03.2026: Im Development-Tier sind kostenlose Direktprovider erlaubt,
+    // aber keine Paid-Default-Fallbacks aus Production/Premium.
+    const paidFallbackModels = new Set([
+      ...DEFAULT_PRODUCTION_FALLBACK_CHAIN,
+      ...DEFAULT_PREMIUM_FALLBACK_CHAIN,
+    ]);
+
     expect(attemptedModels.length).toBeGreaterThan(0);
-    expect(attemptedModels.every((m) => m.endsWith(':free'))).toBe(true);
+    expect(attemptedModels.some((m) => paidFallbackModels.has(m))).toBe(false);
     expect(attemptedModels.some((m) => m.includes('gemini-2.5-flash'))).toBe(false);
     expect(attemptedModels.some((m) => m.includes('claude-sonnet-4'))).toBe(false);
+  });
+
+  it('leitet im development-tier keine direkte basisvariante aus free-fallbacks ab', async () => {
+    const originalNvidiaKey = process.env.NVIDIA_API_KEY;
+    process.env.NVIDIA_API_KEY = 'nvapi-test';
+
+    try {
+      const client = new OpenRouterClient('test-key', 'development');
+      const attemptedModels: string[] = [];
+      client.setPreferredModel('generator', 'nvidia/nemotron-3-nano-30b-a3b:free');
+      client.setFallbackChain(['google/gemma-3-27b-it:free']);
+
+      vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer') => {
+        const currentModel = String((client as any).preferredModels?.[modelType] || '');
+        attemptedModels.push(currentModel);
+        throw new Error('forced failure');
+      });
+
+      await expect(
+        client.callWithFallback('generator', 'system', 'user', 64)
+      ).rejects.toThrow('All');
+
+      expect(attemptedModels).toContain('google/gemma-3-27b-it:free');
+      expect(attemptedModels).not.toContain('google/gemma-3-27b-it');
+    } finally {
+      if (originalNvidiaKey === undefined) {
+        delete process.env.NVIDIA_API_KEY;
+      } else {
+        process.env.NVIDIA_API_KEY = originalNvidiaKey;
+      }
+    }
+  });
+
+  it('haengt im development-tier keine direkten last-resort-provider-fallbacks an', async () => {
+    const originalNvidiaKey = process.env.NVIDIA_API_KEY;
+    const originalGroqKey = process.env.GROQ_API_KEY;
+    const originalCerebrasKey = process.env.CEREBRAS_API_KEY;
+    process.env.NVIDIA_API_KEY = 'nvapi-test';
+    process.env.GROQ_API_KEY = 'groq-test';
+    process.env.CEREBRAS_API_KEY = 'cerebras-test';
+
+    try {
+      const client = new OpenRouterClient('test-key', 'development');
+      const attemptedModels: string[] = [];
+      client.setPreferredModel('generator', 'nvidia/nemotron-3-nano-30b-a3b:free');
+      client.setFallbackChain(['google/gemma-3-27b-it:free']);
+
+      vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer') => {
+        const currentModel = String((client as any).preferredModels?.[modelType] || '');
+        attemptedModels.push(currentModel);
+        throw new Error('forced failure');
+      });
+
+      await expect(
+        client.callWithFallback('generator', 'system', 'user', 64)
+      ).rejects.toThrow('All');
+
+      expect(attemptedModels).toContain('nvidia/nemotron-3-nano-30b-a3b:free');
+      expect(attemptedModels).toContain('google/gemma-3-27b-it:free');
+      expect(attemptedModels).not.toContain('meta/llama-3.3-70b-instruct');
+      expect(attemptedModels).not.toContain('llama-3.3-70b-versatile');
+      expect(attemptedModels).not.toContain('llama-3.3-70b');
+    } finally {
+      if (originalNvidiaKey === undefined) {
+        delete process.env.NVIDIA_API_KEY;
+      } else {
+        process.env.NVIDIA_API_KEY = originalNvidiaKey;
+      }
+      if (originalGroqKey === undefined) {
+        delete process.env.GROQ_API_KEY;
+      } else {
+        process.env.GROQ_API_KEY = originalGroqKey;
+      }
+      if (originalCerebrasKey === undefined) {
+        delete process.env.CEREBRAS_API_KEY;
+      } else {
+        process.env.CEREBRAS_API_KEY = originalCerebrasKey;
+      }
+    }
   });
 
   it('DEFAULT_FREE_FALLBACK_CHAIN contains at least 4 free models', () => {
@@ -217,6 +312,34 @@ describe('openrouter safe defaults', () => {
     clearGlobalCooldown('model-x:free');
     clearGlobalCooldown('model-y:free');
     for (const m of attemptedModels) clearGlobalCooldown(m);
+  });
+
+  it('tries remaining openrouter fallbacks after one free model hits a rate limit', async () => {
+    clearGlobalCooldown('model-a:free');
+    clearGlobalCooldown('model-b:free');
+
+    const client = new OpenRouterClient('test-key', 'development');
+    client.setPreferredModel('generator', 'model-a:free');
+    client.setFallbackChain(['model-b:free']);
+
+    const attemptedModels: string[] = [];
+    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer') => {
+      const currentModel = String((client as any).preferredModels?.[modelType] || '');
+      attemptedModels.push(currentModel);
+      if (currentModel === 'model-b:free') {
+        return { content: 'ok', usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }, model: currentModel };
+      }
+      throw new Error('Rate limit exceeded. OpenRouter has temporarily limited your requests.');
+    });
+
+    const result = await client.callWithFallback('generator', 'system', 'user', 64);
+
+    expect(result.model).toBe('model-b:free');
+    expect(attemptedModels).toContain('model-a:free');
+    expect(attemptedModels).toContain('model-b:free');
+
+    clearGlobalCooldown('model-a:free');
+    clearGlobalCooldown('model-b:free');
   });
 
   // --- Rate Limit (German message) Cooldown ---
