@@ -773,15 +773,40 @@ export function collectTemplateSemanticIssues(params: {
   }
 
   if (featureNames.length > 0 && (profile.semanticSignals.featureNameSignals || []).length > 0) {
-    const matchedFeatureCount = featureNames.filter(name =>
-      (profile.semanticSignals.featureNameSignals || []).some(signal => signal.test(name))
-    ).length;
+    // ÄNDERUNG 07.03.2026: Technical-Template-Features dürfen bei neutraleren Titeln
+    // über klar technische Feature-Inhalte zählen, damit semantisch technische Runs
+    // nicht nur wegen fehlender Titel-Signalwörter hart durchfallen.
+    const matchedFeatureCount = params.structure.features.filter(feature => {
+      const name = String(feature.name || '').trim();
+      const matchesByName = (profile.semanticSignals.featureNameSignals || []).some(signal => signal.test(name));
+      if (matchesByName) return true;
+      if (category !== 'technical') return false;
+
+      const featureText = [
+        feature.rawContent,
+        feature.purpose,
+        feature.actors,
+        feature.trigger,
+        feature.preconditions,
+        feature.postconditions,
+        feature.dataImpact,
+        feature.uiImpact,
+        ...(feature.mainFlow || []),
+        ...(feature.alternateFlows || []),
+        ...(feature.acceptanceCriteria || []),
+      ]
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+        .join('\n');
+
+      return (profile.semanticSignals.featureNameSignals || []).some(signal => signal.test(featureText));
+    }).length;
     const ratio = Math.max(0, Math.min(1, profile.semanticSignals.minFeatureSignalRatio || 0));
     const minRequired = Math.max(1, Math.ceil(featureNames.length * ratio));
     if (matchedFeatureCount < minRequired) {
       issues.push({
         code: `template_semantic_feature_signal_mismatch_${category}`,
-        message: `Template "${category}" feature semantics mismatch: only ${matchedFeatureCount}/${featureNames.length} feature names contain required template-specific signals.`,
+        message: `Template "${category}" feature semantics mismatch: only ${matchedFeatureCount}/${featureNames.length} features contain required template-specific signals.`,
         severity: hardSeverity,
       });
     }

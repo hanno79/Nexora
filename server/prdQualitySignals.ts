@@ -352,6 +352,42 @@ function isEpicCapabilitySplitPair(aName: string, bName: string): boolean {
   return segments.some(segment => tokenOverlapRatio(tokenizeFeatureName(segment), shorterTokens) >= 0.8);
 }
 
+// ÄNDERUNG 07.03.2026: Mid-Confidence-Namensähnlichkeiten zusätzlich über strukturierte Feature-Inhalte absichern.
+// Erlaubt konservative Hochstufung zu Aggregationskandidaten, ohne globale Namensschwellen zu lockern.
+function collectComparableFeatureTokens(feature: FeatureSpec): string[] {
+  const values: string[] = [String(feature.rawContent || '').trim()];
+
+  for (const field of FEATURE_STRING_FIELDS) {
+    values.push(String((feature as any)[field] || '').trim());
+  }
+
+  for (const field of FEATURE_ARRAY_FIELDS) {
+    const entries = Array.isArray((feature as any)[field]) ? (feature as any)[field] : [];
+    values.push(...entries.map(entry => String(entry || '').trim()));
+  }
+
+  return Array.from(new Set(
+    values
+      .flatMap(value => tokenize(value))
+      .map(normalizeOverlapToken)
+      .filter(token => token.length >= 4)
+      .filter(token => !NAME_STOP_WORDS.has(token))
+      .filter(token => !GENERIC_SHARED_CORE_TOKENS.has(token))
+  ));
+}
+
+function hasStrongFeatureContentOverlap(a: FeatureSpec, b: FeatureSpec): boolean {
+  const aTokens = collectComparableFeatureTokens(a);
+  const bTokens = collectComparableFeatureTokens(b);
+  if (aTokens.length < 3 || bTokens.length < 3) return false;
+
+  const bTokenSet = new Set(bTokens);
+  const sharedCount = aTokens.filter(token => bTokenSet.has(token)).length;
+  const overlap = tokenOverlapRatio(aTokens, bTokens);
+
+  return sharedCount >= 3 && overlap >= 0.6;
+}
+
 function compareFeatureId(aId: string, bId: string): number {
   const parseNum = (id: string): number => {
     const match = String(id || '').trim().toUpperCase().match(/^F-(\d{1,})$/);
@@ -856,12 +892,18 @@ export function findFeatureAggregationCandidates(
       const bObjectCore = extractCrudObjectCore(bName);
       const sameCrudObjectCore = !!aObjectCore && !!bObjectCore && normalizeText(aObjectCore) === normalizeText(bObjectCore);
       const hasCrudActions = extractCrudActionTokens(aName).length > 0 && extractCrudActionTokens(bName).length > 0;
+      const epicCapabilitySplit = String(category || '').trim().toLowerCase() === 'epic'
+        && isEpicCapabilitySplitPair(aName, bName);
 
       const highByThreshold = jac >= 0.82 || edit >= 0.9 || (jac >= 0.8 && edit >= 0.8);
       const highByCrudFamily = sameCrudObjectCore && hasCrudActions && (jac >= 0.72 || edit >= 0.82);
       const nearByCrudFamily = sameCrudObjectCore && hasCrudActions && (jac >= 0.58 || edit >= 0.72);
+      // ÄNDERUNG 07.03.2026: Mid-Confidence-Fälle nur dann hochstufen, wenn zusätzlich starkes Inhalts-Overlap vorliegt.
+      const highByContentBackedNear = !epicCapabilitySplit
+        && hasStrongFeatureContentOverlap(a, b)
+        && (jac >= 0.74 || edit >= 0.85 || nearByCrudFamily);
 
-      if (highByThreshold || highByCrudFamily) {
+      if (highByThreshold || highByCrudFamily || highByContentBackedNear) {
         edgePairs.push({
           a: i,
           b: j,
@@ -882,8 +924,6 @@ export function findFeatureAggregationCandidates(
         .filter(t => t.length >= 3 && !GENERIC_SHARED_CORE_TOKENS.has(t));
       const sharedCoreWords = bCoreTokens.filter(t => aCoreTokens.has(t)).length;
       const sharedCoreMatch = sharedCoreWords >= 2 && !(sameCrudObjectCore && hasCrudActions);
-      const epicCapabilitySplit = String(category || '').trim().toLowerCase() === 'epic'
-        && isEpicCapabilitySplitPair(aName, bName);
 
       const near = jac >= 0.74 || edit >= 0.85 || nearByCrudFamily || (sharedCoreMatch && !epicCapabilitySplit);
       if (near) {

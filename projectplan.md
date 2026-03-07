@@ -17,6 +17,7 @@ Beschreibung: Arbeitsplan zur Stabilisierung des Compiler-Verhaltens über alle 
 <!-- ÄNDERUNG 07.03.2026: `product-launch/iterative` erfolgreich bestaetigt - echter Einzel-Run ist mit Score 117 gruen; einzig verbleibend ist jetzt noch `product-launch/guided` -->
 <!-- ÄNDERUNG 07.03.2026: `product-launch/guided` erfolgreich bestaetigt - echter Einzel-Run ist mit Score 114 gruen; damit sind jetzt alle 12 Smoke-Kombinationen im Container erfolgreich stabilisiert -->
 <!-- ÄNDERUNG 07.03.2026: Vollstaendige Stabilitaetsauswertung der 12 erfolgreichen Runs dokumentiert - wichtigste Restthemen sind Near-Duplicates, Guided-/Fallback-Druck, spaet erkannte Boilerplate-Sektionen, noch zu feature-name-getriebene Template-Semantik und fehlende Artefaktpersistenz -->
+<!-- ÄNDERUNG 07.03.2026: P1-Minimalfix und sequenzielle Revalidierung abgeschlossen - `technical/simple` (117), `technical/guided` (117), `product-launch/iterative` (110), `product-launch/guided` (117) und `epic/guided` (117) sind im Container erneut gruen -->
 
 ## Problemanalyse
 
@@ -60,16 +61,16 @@ Beschreibung: Arbeitsplan zur Stabilisierung des Compiler-Verhaltens über alle 
 ## Stabilitaetsauswertung 07.03.2026
 
 - 12/12 Smoke-Kombinationen sind im Container gruen; es gibt aktuell keine harten Compiler- oder Workflow-Blocker mehr.
-- Die verbleibenden Qualitaetsauffaelligkeiten konzentrieren sich auf `epic/guided`, `technical/simple`, `technical/guided`, `product-launch/iterative` und `product-launch/guided`.
-- Hauptrestproblem ist Near-Duplicate-/Aggregation-Verhalten: der Compiler merged nur High-Confidence-Faelle automatisch und laesst mittlere Faelle als Warning sichtbar.
+- Die zuvor P1-betroffenen Kombinationen `technical/simple`, `technical/guided`, `product-launch/iterative`, `product-launch/guided` und `epic/guided` wurden nach Minimal-Fix strikt sequenziell erneut validiert und sind alle gruen.
+- P1 ist damit umgesetzt: Mid-Confidence-Near-Duplicates werden jetzt nur mit zusaetzlich starkem strukturiertem Inhalts-Overlap hochgestuft, statt Namensnaehe global zu lockern.
 - Guided ist der sensitivste Pfad: unter Rate-Limit-/Fallback-Druck steigen Tokenverbrauch, Laufzeit und inhaltliche Drift deutlicher als bei `simple` oder `iterative`.
 - Compiler-Fallback-Sektionen werden inzwischen erkannt und koennen geblockt werden, entstehen architektonisch aber weiterhin relativ spaet und muessen haeufig erst im Content-Review umgeschrieben werden.
-- Template-Semantik ist verbessert, aber teilweise noch zu stark ueber Feature-Namen statt ueber den eigentlichen Feature-Inhalt abgesichert.
+- Die Template-Semantik ist zusaetzlich abgesichert: fuer `technical` zaehlen jetzt bei neutraleren Titeln auch klar technische Feature-Inhalte; eine breitere inhaltsbasierte Absicherung bleibt als P4 offen.
 - Die Persistenz der Smoke-Artefakte ist unvollstaendig: fuer die Querschnittsauswertung lagen nur noch 6 von 12 Result-JSONs direkt im Container vor.
 
 ## Priorisierte naechste Verbesserungen
 
-- [ ] P1: Near-Duplicates frueher und templatespezifischer reduzieren, damit weniger `feature_near_duplicates_unmerged` in den finalen Runs verbleiben.
+- [x] P1: Near-Duplicates frueher und templatespezifischer reduzieren, damit weniger `feature_near_duplicates_unmerged` in den finalen Runs verbleiben.
 - [ ] P2: Guided unter Rate-Limit-/Fallback-Druck robuster machen, damit Qualitaet, Laufzeit und Kosten weniger stark schwanken.
 - [ ] P3: Compiler-Fallback-Sektionen frueher minimieren statt erst spaet im Content-Review umzuschreiben.
 - [ ] P4: Template-Semantik staerker inhaltsbasiert pruefen, nicht nur ueber Feature-Namen und Signalwoerter.
