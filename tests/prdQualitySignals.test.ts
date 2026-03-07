@@ -275,6 +275,67 @@ describe('prdQualitySignals', () => {
     expect(applied.structure.features.length).toBeLessThan(structure.features.length);
   });
 
+  // ÄNDERUNG 07.03.2026: Positive Regressionen für inhaltsgestützte Mid-Confidence-Aggregation ergänzt.
+  it('stuft technische crud-familien mit starkem inhalts-overlap als aggregationskandidat hoch', () => {
+    const structure = baseStructure();
+    structure.features = [
+      {
+        id: 'F-01',
+        name: 'Create Release Rollout Plan',
+        rawContent: 'Creates a rollout plan with market gates, success metrics, and approval notes.',
+        purpose: 'Create the rollout artifact for launch managers and release coordination.',
+        actors: 'Launch manager',
+        mainFlow: ['Define market gates', 'Attach success metrics', 'Store rollout plan'],
+        acceptanceCriteria: ['The rollout plan contains market gates, success metrics, and approval notes.'],
+      },
+      {
+        id: 'F-02',
+        name: 'Update Release Rollout Plan',
+        rawContent: 'Updates a rollout plan with market gates, success metrics, and approval notes.',
+        purpose: 'Update the rollout artifact for launch managers and release coordination.',
+        actors: 'Launch manager',
+        mainFlow: ['Revise market gates', 'Adjust success metrics', 'Store rollout plan'],
+        acceptanceCriteria: ['The rollout plan contains market gates, success metrics, and approval notes.'],
+      },
+    ];
+
+    const analysis = findFeatureAggregationCandidates(structure.features, 'technical', 'en');
+
+    expect(analysis.candidates).toHaveLength(1);
+    expect(analysis.candidates[0].featureIds).toEqual(['F-01', 'F-02']);
+    expect(analysis.nearDuplicates).toHaveLength(0);
+  });
+
+  it('stuft product-launch-mid-confidence-faelle mit starkem inhalts-overlap als aggregationskandidat hoch', () => {
+    const structure = baseStructure();
+    structure.features = [
+      {
+        id: 'F-03',
+        name: 'Launch Readiness Checklist Automation for Regional Rollout Gating',
+        rawContent: 'Automates rollout gating with launch readiness checks, dependency review, and approval tracking.',
+        purpose: 'Provide launch teams with one readiness workflow for rollout gating and dependency review.',
+        actors: 'Launch operations team',
+        mainFlow: ['Run readiness checks', 'Review dependencies', 'Track rollout approvals'],
+        acceptanceCriteria: ['The workflow tracks rollout approvals and readiness dependencies in one place.'],
+      },
+      {
+        id: 'F-04',
+        name: 'Launch Readiness Checklist Automation for International Rollout Gating',
+        rawContent: 'Automates rollout gating with launch readiness checks, dependency review, and approval tracking.',
+        purpose: 'Provide launch teams with one readiness workflow for rollout gating and dependency review.',
+        actors: 'Launch operations team',
+        mainFlow: ['Run readiness checks', 'Review dependencies', 'Track rollout approvals'],
+        acceptanceCriteria: ['The workflow tracks rollout approvals and readiness dependencies in one place.'],
+      },
+    ];
+
+    const analysis = findFeatureAggregationCandidates(structure.features, 'product-launch', 'en');
+
+    expect(analysis.candidates).toHaveLength(1);
+    expect(analysis.candidates[0].featureIds).toEqual(['F-03', 'F-04']);
+    expect(analysis.nearDuplicates).toHaveLength(0);
+  });
+
   it('meldet Login und Passwort-Reset nicht als Near-Duplicate nur wegen generischer Auth-Begriffe', () => {
     const structure = baseStructure();
     structure.features = [

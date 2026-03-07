@@ -195,6 +195,80 @@ describe('prdTemplateIntent compiler integration', () => {
     ).toBe(false);
   });
 
+  it('accepts technical template runs when feature bodies carry technical signals despite neutral titles', () => {
+    // ÄNDERUNG 07.03.2026: Technical-Gate darf klar technische Inhalte nicht nur wegen neutralerer Feature-Titel verwerfen.
+    const raw = [
+      '## System Vision',
+      'A technical PRD defines resilient service architecture, operational safeguards, and integration contracts.',
+      '',
+      '## System Boundaries',
+      'Scope includes API traffic control, deployment automation, monitoring, and recovery behavior.',
+      '',
+      '## Domain Model',
+      'Entities include RoutePolicy, RetryPolicy, DeploymentTarget, AlertRule, and AuditEvent.',
+      '',
+      '## Global Business Rules',
+      'Routing changes are versioned, deployment rollouts are traceable, and recovery policies remain deterministic.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      '### F-01: Traffic Policy Control',
+      '1. Purpose',
+      'Controls API gateway routing, rate limiting, and retry behavior for inbound traffic.',
+      '10. Acceptance Criteria',
+      '- Routing, throttling, and retry rules are enforced consistently.',
+      '',
+      '### F-02: Recovery Workflow',
+      '1. Purpose',
+      'Coordinates circuit breaker failover and service recovery during downstream degradation.',
+      '10. Acceptance Criteria',
+      '- Failover transitions are monitored and reversible.',
+      '',
+      '### F-03: Health Review',
+      '1. Purpose',
+      'Publishes metrics, monitoring signals, and alerting thresholds for runtime health.',
+      '10. Acceptance Criteria',
+      '- Metrics and alerting cover latency, error rate, and saturation.',
+      '',
+      '### F-04: Delivery Coordination',
+      '1. Purpose',
+      'Automates deployment sequencing, rollback safety checks, and migration verification.',
+      '10. Acceptance Criteria',
+      '- Deployment and rollback steps are auditable.',
+      '',
+      '## Non-Functional Requirements',
+      'Reliability, observability, security, and deployment safety are mandatory.',
+      '',
+      '## Error Handling & Recovery',
+      'Retry policies, alerting, and failover paths are documented explicitly.',
+      '',
+      '## Deployment & Infrastructure',
+      'The service runs in containerized environments with monitoring, health checks, and automated rollout controls.',
+      '',
+      '## Definition of Done',
+      'Architecture, monitoring, deployment, and recovery safeguards are implemented and verified.',
+      '',
+      '## Out of Scope',
+      'No consumer-facing UI redesign is included in this technical release.',
+      '',
+      '## Timeline & Milestones',
+      'Phase 1 architecture, Phase 2 implementation, Phase 3 deployment hardening.',
+      '',
+      '## Success Criteria & Acceptance Testing',
+      'The platform meets deployment, monitoring, reliability, and recovery targets in staging.',
+    ].join('\n');
+
+    const compiled = compilePrdDocument(raw, {
+      mode: 'generate',
+      language: 'en',
+      templateCategory: 'technical',
+    });
+
+    expect(
+      compiled.quality.issues.some(issue => issue.code === 'template_semantic_feature_signal_mismatch_technical')
+    ).toBe(false);
+  });
+
   it('accepts epic template runs with phased planning and ownership semantics', () => {
     const raw = [
       '## System Vision',
