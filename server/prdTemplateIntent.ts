@@ -1,5 +1,5 @@
 import type { PRDStructure } from './prdStructure';
-import { normalizeForMatch as _normalizeForMatch } from './prdTextUtils';
+import { normalizeForMatch as _normalizeForMatch, isCompilerFilledSection } from './prdTextUtils';
 
 export type PrdTemplateCategory =
   | 'feature'
@@ -764,10 +764,7 @@ export function collectTemplateSemanticIssues(params: {
   for (const requiredSection of profile.semanticSignals.requiredSections) {
     const value = String((params.structure as any)[requiredSection] || '').trim();
     if (!value) continue;
-    const normalizedSectionKey = String(requiredSection).toLowerCase().replace(/[^a-z]/g, '');
-    const wasCompilerFilled = [...knownFallbackSections].some(section =>
-      section.includes(normalizedSectionKey) || normalizedSectionKey.includes(section)
-    );
+    const wasCompilerFilled = isCompilerFilledSection(String(requiredSection), knownFallbackSections);
 
     if (!wasCompilerFilled && isGenericFallback(value)) {
       issues.push({
@@ -802,7 +799,7 @@ export function collectTemplateSemanticIssues(params: {
     // ÄNDERUNG 07.03.2026: Template-Semantik soll nicht nur an Feature-Titeln hängen.
     // Wenn der eigentliche Feature-Inhalt klar template-spezifisch ist, darf das auch
     // bei neutraleren Namen für die Signal-Ratio zählen.
-    const matchedFeatureCount = params.structure.features.filter(feature => {
+    const matchedFeatureCount = (params.structure.features || []).filter(feature => {
       const name = String(feature.name || '').trim();
       const matchesByName = (profile.semanticSignals.featureNameSignals || []).some(signal => signal.test(name));
       if (matchesByName) return true;

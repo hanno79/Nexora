@@ -314,7 +314,7 @@ describe('guidedAiWorkflow integration', () => {
 
       const highQualityContent = buildMinimalPrdResponse(3, 'en');
 
-      const repairGenerator = vi.fn(async () => ({
+      const repairReviewer = vi.fn(async () => ({
         content: highQualityContent,
         model: 'mock/guided-repair',
         usage: usage(300),
@@ -329,11 +329,11 @@ describe('guidedAiWorkflow integration', () => {
         mode: 'generate',
         language: 'en',
         originalRequest: 'Create a complete task management PRD.',
-        repairGenerator,
+        repairReviewer,
         maxRepairPasses: 2,
       });
 
-      expect(repairGenerator).toHaveBeenCalled();
+      expect(repairReviewer).toHaveBeenCalled();
       expect(result.quality.valid).toBe(true);
       expect(result.qualityScore).toBeGreaterThan(0);
       expect(result.repairAttempts.length).toBeGreaterThan(0);
@@ -347,7 +347,7 @@ describe('guidedAiWorkflow integration', () => {
         'Improved vision with better error handling.',
       ].join('\n');
 
-      const repairGenerator = vi.fn(async (prompt: string) => ({
+      const repairReviewer = vi.fn(async (prompt: string) => ({
         content: buildMinimalPrdResponse(3, 'en'),
         model: 'mock/repair',
         usage: usage(200),
@@ -363,7 +363,7 @@ describe('guidedAiWorkflow integration', () => {
         existingContent: existing,
         language: 'en',
         originalRequest: 'Improve the existing PRD with better error handling.',
-        repairGenerator,
+        repairReviewer,
         maxRepairPasses: 2,
       });
 

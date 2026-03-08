@@ -47,6 +47,7 @@ export interface CallOptions {
   maxTokens?: number;
   stream?: boolean;
   response?: Response;
+  abortSignal?: AbortSignal;
 }
 
 export interface AIResponse {
@@ -89,6 +90,9 @@ export abstract class BaseAIProvider {
   }
 
   protected handleError(error: any): Error {
+    if (error?.name === 'AbortError' || error?.code === 'ERR_CLIENT_DISCONNECT') {
+      return error;
+    }
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     this.logMessage(`Provider error: ${errorMessage}`, error);
     return new Error(`${this.config.name} Provider Error: ${errorMessage}`);
@@ -98,19 +102,50 @@ export abstract class BaseAIProvider {
    * Fetch mit konfigurierbarem Timeout fuer Direct-Provider-Calls.
    * Verhindert, dass langsame Provider (z.B. NVIDIA) minutenlang haengen.
    */
-  protected async fetchWithTimeout(url: string, init: RequestInit, timeoutMs?: number): Promise<globalThis.Response> {
+  protected async fetchWithTimeout(
+    url: string,
+    init: RequestInit,
+    timeoutMs?: number,
+    abortSignal?: AbortSignal,
+  ): Promise<globalThis.Response> {
     const ms = timeoutMs ?? Number(process.env.DIRECT_PROVIDER_TIMEOUT_MS || 120000);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), ms);
+    let timedOut = false;
+    let callerAborted = false;
+    const abortFromCaller = () => {
+      callerAborted = true;
+      controller.abort(abortSignal?.reason);
+    };
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        abortFromCaller();
+      } else {
+        abortSignal.addEventListener('abort', abortFromCaller, { once: true });
+      }
+    }
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort(new Error(`Timed out after ${ms}ms`));
+    }, ms);
     try {
       return await fetch(url, { ...init, signal: controller.signal });
     } catch (error: any) {
       if (error?.name === 'AbortError') {
+        if (callerAborted || abortSignal?.aborted) {
+          const abortError: any = new Error('Provider request aborted by caller');
+          abortError.name = 'AbortError';
+          abortError.code = 'ERR_CLIENT_DISCONNECT';
+          throw abortError;
+        }
+        if (timedOut) {
+          throw new Error(`Provider request timed out after ${ms}ms`);
+        }
         throw new Error(`Provider request timed out after ${ms}ms`);
       }
       throw error;
     } finally {
       clearTimeout(timeout);
+      abortSignal?.removeEventListener('abort', abortFromCaller);
     }
   }
 

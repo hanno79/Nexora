@@ -1,5 +1,12 @@
-// Guided AI Service - User-involved PRD Generation Workflow
-import { getOpenRouterClient, createClientWithUserPreferences } from './openrouter';
+/*
+Author: rahn
+Datum: 08.03.2026
+Version: 1.0
+Beschreibung: Guided-AI-Service fuer nutzergefuehrte PRD-Erstellung und Finalisierung
+*/
+
+// ÄNDERUNG 08.03.2026: Compiler-Gates-, Prompt-, Fragen-, Session- und Preference-Helfer in kleine Guided-Module ausgelagert.
+import { createClientWithUserPreferences } from './openrouter';
 import {
   FEATURE_ANALYSIS_PROMPT,
   USER_QUESTION_PROMPT,
@@ -14,50 +21,35 @@ import {
   type GuidedFinalizeResponse,
 } from './guidedAiPrompts';
 import { getLanguageInstruction } from './dualAiPrompts';
-import { db } from './db';
-import { users } from '@shared/schema';
-import { eq } from 'drizzle-orm';
 import { DbGuidedSessionStore, type GuidedSessionStorePort } from './guidedSessionStore';
 import { logger } from './logger';
-import { finalizeWithCompilerGates, PrdCompilerQualityError } from './prdCompilerFinalizer';
-import { pickNextFallbackModel, pickBestDegradedResult, shouldRejectDegradedResult } from './prdQualityFallback';
 import { resolvePrdWorkflowMode } from './prdWorkflowMode';
-import { buildTemplateInstruction } from './prdTemplateIntent';
 import { detectContentLanguage } from './prdLanguageDetector';
-import { runFeatureExpansionPipeline } from './prdFeatureExpansion';
-import { runPostCompilerPreservation } from './prdFeaturePreservation';
-import { parsePRDToStructure } from './prdParser';
-import type { PRDStructure } from './prdStructure';
 import {
   FEATURE_ANALYSIS,
   GUIDED_QUESTIONS,
   GUIDED_REFINEMENT,
   GUIDED_FOLLOWUP,
-  PRD_FINAL_GENERATION,
-  REPAIR_PASS,
-  CONTENT_REVIEW_REFINE,
 } from './tokenBudgets';
-
-interface ConversationContext {
-  projectIdea: string;
-  featureOverview: string;
-  answers: { questionId: string; question: string; answer: string }[];
-  roundNumber: number;
-  workflowMode: 'generate' | 'improve';
-  existingContent?: string;
-  templateCategory?: string;
-  // ÄNDERUNG 02.03.2025: Gespeicherte Fragen für Security-Validierung
-  lastQuestions?: GuidedQuestion[];
-}
-
-interface GuidedGenerationResult {
-  content: string;
-  totalTokens: number;
-  modelsUsed: string[];
-  enrichedStructure?: PRDStructure;
-}
-
-const SESSION_NOT_AVAILABLE_MESSAGE = 'Session not found or expired. Please start a new guided workflow.';
+import {
+  buildGuidedAnalysisInput,
+  buildGuidedQuestionContext,
+  buildGuidedRefinementInput,
+  buildGuidedFinalizeUserPrompt,
+  buildGuidedDirectFinalizeAnalysisInput,
+  buildGuidedDirectFinalizeUserPrompt,
+} from './guidedPromptBuilders';
+import { parseQuestionsResponse, formatAnswerText } from './guidedQuestionUtils';
+import { generateWithCompilerGates } from './guidedCompilerGates';
+import {
+  consumeGuidedSessionContextOrThrow,
+  generateGuidedSessionId,
+  getGuidedSessionContextOrThrow,
+  getGuidedSessionState,
+  getGuidedUserPreferences,
+  requireAuthenticatedUserId,
+  type ConversationContext,
+} from './guidedAiServiceSupport';
 
 export class GuidedAiService {
   private conversationContexts: GuidedSessionStorePort<ConversationContext>;
@@ -67,15 +59,7 @@ export class GuidedAiService {
   }
 
   async getSessionState(sessionId: string, userId: string): Promise<ConversationContext | null> {
-    const authenticatedUserId = this.requireAuthenticatedUserId(userId);
-    const session = await this.conversationContexts.get(sessionId, authenticatedUserId);
-    if (session.status === 'ok') {
-      return session.context ?? null;
-    }
-    if (session.status === 'forbidden') {
-      throw new Error('Forbidden: You do not have access to this session');
-    }
-    return null;
+    return getGuidedSessionState(this.conversationContexts, sessionId, userId);
   }
 
   async cleanupExpiredSessions(): Promise<number> {
@@ -91,7 +75,7 @@ export class GuidedAiService {
       templateCategory?: string;
     }
   ): Promise<GuidedStartResponse & { sessionId: string }> {
-    const authenticatedUserId = this.requireAuthenticatedUserId(userId);
+    const authenticatedUserId = requireAuthenticatedUserId(userId);
     const { client, contentLanguage } = await createClientWithUserPreferences(authenticatedUserId);
     const normalizedExistingContent = typeof options?.existingContent === 'string'
       ? options.existingContent.trim()
@@ -106,7 +90,6 @@ export class GuidedAiService {
       existingContent: normalizedExistingContent,
     });
     const workflowMode: 'generate' | 'improve' = modeResolution.mode;
-    const templateInstruction = buildTemplateInstruction(options?.templateCategory, resolvedLanguage);
     
     logger.debug('Guided workflow started', {
       projectIdeaLength: projectIdea.length,
@@ -118,17 +101,13 @@ export class GuidedAiService {
 
     // Step 1: Analyze project idea or improvement request and create initial feature overview
     logger.debug('Guided workflow analyzing input');
-    const analysisInput = workflowMode === 'improve'
-      ? `You are refining an existing PRD.
-
-CHANGE REQUEST:
-${projectIdea}
-
-EXISTING PRD BASELINE:
-${normalizedExistingContent}
-
-Analyze what should be preserved and what should be improved. Focus on concrete user-facing refinements and missing sections.`
-      : `Analyze this project idea:\n\n${projectIdea}\n\n${templateInstruction}`;
+    const analysisInput = buildGuidedAnalysisInput({
+      workflowMode,
+      projectIdea,
+      existingContent: normalizedExistingContent,
+      templateCategory: options?.templateCategory,
+      language: resolvedLanguage,
+    });
     
     const analysisResult = await client.callWithFallback(
       'generator',
@@ -144,9 +123,14 @@ Analyze what should be preserved and what should be improved. Focus on concrete 
 
     // Step 2: Generate initial questions for the user
     logger.debug('Guided workflow generating clarifying questions');
-    const questionContext = workflowMode === 'improve'
-      ? `Based on this analysis of an EXISTING PRD and requested refinements, generate 3-5 clarifying questions with multiple choice answers.\n\nAnalysis:\n${featureOverview}\n\nChange request: ${projectIdea}\n\nExisting PRD:\n${normalizedExistingContent}\n\n${templateInstruction}`
-      : `Based on this project analysis, generate 3-5 clarifying questions with multiple choice answers:\n\n${featureOverview}\n\nOriginal idea: ${projectIdea}\n\n${templateInstruction}`;
+    const questionContext = buildGuidedQuestionContext({
+      workflowMode,
+      featureOverview,
+      projectIdea,
+      existingContent: normalizedExistingContent,
+      templateCategory: options?.templateCategory,
+      language: resolvedLanguage,
+    });
     
     const questionsResult = await client.callWithFallback(
       'reviewer',
@@ -160,10 +144,10 @@ Analyze what should be preserved and what should be improved. Focus on concrete 
     });
 
     // Parse the JSON response
-    const parsedQuestions = this.parseQuestionsResponse(questionsResult.content);
+    const parsedQuestions = parseQuestionsResponse(questionsResult.content);
 
     // Create session ID and store context
-    const sessionId = this.generateSessionId();
+    const sessionId = generateGuidedSessionId();
     await this.conversationContexts.create(sessionId, authenticatedUserId, {
       projectIdea,
       featureOverview,
@@ -190,8 +174,8 @@ Analyze what should be preserved and what should be improved. Focus on concrete 
     questions: GuidedQuestion[],
     userId: string
   ): Promise<GuidedAnswerResponse> {
-    const authenticatedUserId = this.requireAuthenticatedUserId(userId);
-    const context = await this.getSessionContextOrThrow(sessionId, authenticatedUserId);
+    const authenticatedUserId = requireAuthenticatedUserId(userId);
+    const context = await getGuidedSessionContextOrThrow(this.conversationContexts, sessionId, authenticatedUserId);
 
     const { client, contentLanguage } = await createClientWithUserPreferences(authenticatedUserId);
     const resolvedLanguage = detectContentLanguage(
@@ -225,7 +209,7 @@ Analyze what should be preserved and what should be improved. Focus on concrete 
     const formattedAnswers = answers.map(a => {
       const question = questionMap.get(a.questionId);
       const questionText = question?.question || a.questionId;
-      const answerText = this.formatAnswerText(a, question);
+      const answerText = formatAnswerText(a, question);
       return `Q: ${questionText}\nA: ${answerText}`;
     }).join('\n\n');
 
@@ -235,40 +219,21 @@ Analyze what should be preserved and what should be improved. Focus on concrete 
       context.answers.push({
         questionId: a.questionId,
         question: question?.question || a.questionId,
-        answer: this.formatAnswerText(a, question),
+        answer: formatAnswerText(a, question),
       });
     });
 
     // Refine the plan based on answers
     logger.debug('Guided workflow refining product vision');
-    const refinementInput = context.workflowMode === 'improve'
-      ? `Existing PRD baseline:
-${context.existingContent || '(no baseline provided)'}
-
-Change request:
-${context.projectIdea}
-
-Current refined overview:
-${context.featureOverview}
-
-User's answers:
-${formattedAnswers}
-
-Refine the plan as an incremental improvement to the existing PRD. Preserve existing valid content and target the requested changes.
-
-${buildTemplateInstruction(context.templateCategory, resolvedLanguage)}`
-      : `Original project idea:
-${context.projectIdea}
-
-Current feature overview:
-${context.featureOverview}
-
-User's answers:
-${formattedAnswers}
-
-Refine the product vision and features based on these answers.
-
-${buildTemplateInstruction(context.templateCategory, resolvedLanguage)}`;
+    const refinementInput = buildGuidedRefinementInput({
+      workflowMode: context.workflowMode,
+      existingContent: context.existingContent,
+      projectIdea: context.projectIdea,
+      featureOverview: context.featureOverview,
+      formattedAnswers,
+      templateCategory: context.templateCategory,
+      language: resolvedLanguage,
+    });
     
     const refinementResult = await client.callWithFallback(
       'generator',
@@ -283,7 +248,7 @@ ${buildTemplateInstruction(context.templateCategory, resolvedLanguage)}`;
     });
 
     // Decide if we need more questions (use user's configured max rounds)
-    const userPrefs = await this.getUserPreferences(authenticatedUserId);
+    const userPrefs = await getGuidedUserPreferences(authenticatedUserId);
     const maxRounds = userPrefs?.guidedQuestionRounds || 3;
     context.roundNumber++;
 
@@ -301,7 +266,7 @@ ${buildTemplateInstruction(context.templateCategory, resolvedLanguage)}`;
         GUIDED_FOLLOWUP
       );
 
-      const parsedFollowUp = this.parseQuestionsResponse(followUpResult.content);
+      const parsedFollowUp = parseQuestionsResponse(followUpResult.content);
       logger.debug('Guided workflow follow-up questions generated', {
         completionTokens: followUpResult.usage.completion_tokens,
       });
@@ -344,8 +309,9 @@ ${buildTemplateInstruction(context.templateCategory, resolvedLanguage)}`;
       templateCategory?: string;
     }
   ): Promise<GuidedFinalizeResponse> {
-    const authenticatedUserId = this.requireAuthenticatedUserId(userId);
-    const context = await this.consumeSessionContextOrThrow(sessionId, authenticatedUserId);
+    const finalizeStartedAt = Date.now();
+    const authenticatedUserId = requireAuthenticatedUserId(userId);
+    const context = await consumeGuidedSessionContextOrThrow(this.conversationContexts, sessionId, authenticatedUserId);
 
     const { client, contentLanguage } = await createClientWithUserPreferences(authenticatedUserId);
     const resolvedLanguage = detectContentLanguage(
@@ -364,44 +330,20 @@ ${buildTemplateInstruction(context.templateCategory, resolvedLanguage)}`;
     try {
       const isImproveWorkflow = context.workflowMode === 'improve' && !!context.existingContent?.trim();
       const effectiveTemplateCategory = options?.templateCategory || context.templateCategory;
-      const templateInstruction = buildTemplateInstruction(effectiveTemplateCategory, resolvedLanguage);
       const systemPrompt = isImproveWorkflow
         ? FINAL_PRD_REFINEMENT_PROMPT + langInstruction
         : FINAL_PRD_GENERATION_PROMPT + langInstruction;
-      const userPrompt = isImproveWorkflow
-        ? `Refine the existing PRD by incorporating the requested improvements and guided decisions.
+      const userPrompt = buildGuidedFinalizeUserPrompt({
+        isImproveWorkflow,
+        existingContent: context.existingContent,
+        projectIdea: context.projectIdea,
+        featureOverview: context.featureOverview,
+        allAnswers,
+        templateCategory: effectiveTemplateCategory,
+        language: resolvedLanguage,
+      });
 
-EXISTING PRD (PRESERVE AND IMPROVE):
-${context.existingContent}
-
-CHANGE REQUEST:
-${context.projectIdea}
-
-REFINED FEATURE OVERVIEW:
-${context.featureOverview}
-
-USER DECISIONS & PREFERENCES:
-${allAnswers || 'No specific user preferences collected.'}
-
-${templateInstruction}
-
-Return the complete improved PRD.`
-        : `Create a complete PRD based on:
-
-ORIGINAL PROJECT IDEA:
-${context.projectIdea}
-
-REFINED FEATURE OVERVIEW:
-${context.featureOverview}
-
-USER DECISIONS & PREFERENCES:
-${allAnswers || 'No specific user preferences collected.'}
-
-${templateInstruction}
-
-Generate a complete, professional PRD that incorporates all gathered requirements.`;
-
-      const compiled = await this.generateWithCompilerGates({
+      const compiled = await generateWithCompilerGates({
         client,
         systemPrompt,
         userPrompt,
@@ -421,6 +363,13 @@ Generate a complete, professional PRD that incorporates all gathered requirement
         modelsUsed: compiled.modelsUsed,
         workflowMode: isImproveWorkflow ? 'improve' : 'generate',
         existingContent: isImproveWorkflow ? context.existingContent : undefined,
+        diagnostics: compiled.diagnostics as any,
+        compilerArtifact: compiled.compilerArtifact,
+        generationStage: compiled.generationStage,
+        timings: {
+          ...(compiled.timings || {}),
+          totalDurationMs: Date.now() - finalizeStartedAt,
+        },
       };
     } catch (error) {
       // Restore session context on failure so users can retry finalize.
@@ -438,6 +387,7 @@ Generate a complete, professional PRD that incorporates all gathered requirement
       templateCategory?: string;
     }
   ): Promise<GuidedFinalizeResponse> {
+    const startedAt = Date.now();
     const { client, contentLanguage } = await createClientWithUserPreferences(userId);
     const normalizedExistingContent = typeof options?.existingContent === 'string'
       ? options.existingContent.trim()
@@ -452,58 +402,39 @@ Generate a complete, professional PRD that incorporates all gathered requirement
       existingContent: normalizedExistingContent,
     });
     const isImproveWorkflow = modeResolution.mode === 'improve';
-    const templateInstruction = buildTemplateInstruction(options?.templateCategory, resolvedLanguage);
-
     logger.debug('Guided workflow skipped directly to finalize');
 
     // First do a quick feature analysis
-    const analysisInput = isImproveWorkflow
-      ? `Analyze the existing PRD and the requested refinements.
-
-CHANGE REQUEST:
-${projectIdea}
-
-EXISTING PRD:
-${normalizedExistingContent}`
-      : `Analyze this project idea:\n\n${projectIdea}\n\n${templateInstruction}`;
+    const analysisInput = buildGuidedDirectFinalizeAnalysisInput({
+      isImproveWorkflow,
+      projectIdea,
+      existingContent: normalizedExistingContent,
+      templateCategory: options?.templateCategory,
+      language: resolvedLanguage,
+    });
+    const analysisStartedAt = Date.now();
     const analysisResult = await client.callWithFallback(
       'generator',
       FEATURE_ANALYSIS_PROMPT + langInstruction,
       analysisInput,
       FEATURE_ANALYSIS
     );
+    const analysisDurationMs = Date.now() - analysisStartedAt;
 
     // Then generate the full PRD
     const finalSystemPrompt = isImproveWorkflow
       ? FINAL_PRD_REFINEMENT_PROMPT + langInstruction
       : FINAL_PRD_GENERATION_PROMPT + langInstruction;
-    const finalUserPrompt = isImproveWorkflow
-      ? `Refine the existing PRD based on the requested changes.
-
-EXISTING PRD:
-${normalizedExistingContent}
-
-CHANGE REQUEST:
-${projectIdea}
-
-FEATURE ANALYSIS:
-${analysisResult.content}
-
-${templateInstruction}
-
-Return the complete improved PRD.`
-      : `Create a complete PRD based on:
-
-PROJECT IDEA:
-${projectIdea}
-
-FEATURE ANALYSIS:
-${analysisResult.content}
-
-${templateInstruction}
-
-Generate a complete, professional PRD.`;
-    const compiled = await this.generateWithCompilerGates({
+    const finalUserPrompt = buildGuidedDirectFinalizeUserPrompt({
+      isImproveWorkflow,
+      projectIdea,
+      analysisContent: analysisResult.content,
+      existingContent: normalizedExistingContent,
+      templateCategory: options?.templateCategory,
+      language: resolvedLanguage,
+    });
+    const generationStartedAt = Date.now();
+    const compiled = await generateWithCompilerGates({
       client,
       systemPrompt: finalSystemPrompt,
       userPrompt: finalUserPrompt,
@@ -512,6 +443,7 @@ Generate a complete, professional PRD.`;
       contentLanguage: resolvedLanguage,
       templateCategory: options?.templateCategory,
     });
+    const finalizeGenerationDurationMs = Date.now() - generationStartedAt;
 
     logger.debug('Guided direct finalize complete', {
       totalTokens: analysisResult.usage.total_tokens + compiled.totalTokens,
@@ -523,353 +455,25 @@ Generate a complete, professional PRD.`;
       modelsUsed: [analysisResult.model, ...compiled.modelsUsed],
       workflowMode: isImproveWorkflow ? 'improve' : 'generate',
       existingContent: isImproveWorkflow ? normalizedExistingContent : undefined,
+      diagnostics: compiled.diagnostics as any,
+      compilerArtifact: compiled.compilerArtifact,
+      analysisStage: {
+        content: analysisResult.content,
+        model: analysisResult.model,
+        usage: analysisResult.usage,
+        finishReason: analysisResult.finishReason,
+        tier: analysisResult.tier,
+      },
+      generationStage: compiled.generationStage,
+      timings: {
+        analysisDurationMs,
+        finalizeGenerationDurationMs,
+        ...(compiled.timings || {}),
+        totalDurationMs: Date.now() - startedAt,
+      },
     };
   }
 
-  private async generateWithCompilerGates(params: {
-    client: ReturnType<typeof getOpenRouterClient>;
-    systemPrompt: string;
-    userPrompt: string;
-    mode: 'generate' | 'improve';
-    existingContent?: string;
-    contentLanguage?: string | null;
-    templateCategory?: string;
-  }): Promise<GuidedGenerationResult> {
-    const { client, systemPrompt, userPrompt, mode, existingContent, contentLanguage, templateCategory } = params;
-    const language = detectContentLanguage(contentLanguage, `${userPrompt}\n${existingContent || ''}`);
-    const langInstruction = getLanguageInstruction(language);
-    const modelsUsed = new Set<string>();
-    let totalTokens = 0;
-
-    const generationResult = await client.callWithFallback(
-      'generator',
-      systemPrompt,
-      userPrompt,
-      PRD_FINAL_GENERATION
-    );
-    modelsUsed.add(generationResult.model);
-    totalTokens += generationResult.usage.total_tokens;
-
-    // Feature Expansion (generate mode only — same pipeline as Simple/Iterative)
-    let enrichedStructure: PRDStructure | undefined;
-    if (mode === 'generate') {
-      const expansion = await runFeatureExpansionPipeline({
-        inputText: userPrompt,
-        draftContent: generationResult.content,
-        client,
-        language,
-        log: (msg) => logger.debug(msg),
-        warn: (msg) => logger.warn(msg),
-      });
-      enrichedStructure = expansion.enrichedStructure;
-      totalTokens += expansion.expansionTokens;
-      if (expansion.featureListModel) modelsUsed.add(expansion.featureListModel);
-      if (expansion.assembledContent && expansion.assembledContent.length > generationResult.content.length) {
-        logger.debug(`📝 Guided: Replacing generator content with enriched structure (${expansion.expandedFeatureCount} features)`);
-        generationResult.content = expansion.assembledContent;
-      }
-    } else if (mode === 'improve' && existingContent) {
-      // Improve mode: parse existing content as baseline for post-compiler preservation.
-      // Feature Expansion is skipped (too expensive), but we need a baseline so
-      // runPostCompilerPreservation() can detect and restore features lost during compilation.
-      enrichedStructure = parsePRDToStructure(existingContent);
-      logger.debug(`🛡️ Guided improve baseline: ${enrichedStructure.features.length} features as preservation target`);
-    }
-
-    const primaryGenerator = client.getPreferredModel('generator') || '';
-    const guidedFinalizerOpts = {
-      mode,
-      existingContent,
-      language,
-      templateCategory,
-      originalRequest: userPrompt,
-      maxRepairPasses: 3,
-      repairGenerator: async (repairPrompt: string) => {
-        logger.warn('Guided compiler quality gate failed; starting repair pass');
-        const repairResult = await client.callWithFallback(
-          'generator',
-          systemPrompt,
-          repairPrompt,
-          REPAIR_PASS
-        );
-        return {
-          content: repairResult.content,
-          model: repairResult.model,
-          usage: repairResult.usage,
-          finishReason: repairResult.finishReason,
-        };
-      },
-      // ÄNDERUNG 06.03.2026: Guided nutzt jetzt denselben Refine-Pfad wie Simple/Iterative.
-      contentRefineGenerator: async (refinePrompt: string) => {
-        const refineResult = await client.callWithFallback(
-          'generator',
-          'You are a PRD content refinement specialist. Follow the instructions precisely.' + langInstruction,
-          refinePrompt,
-          CONTENT_REVIEW_REFINE
-        );
-        return {
-          content: refineResult.content,
-          model: refineResult.model,
-          usage: refineResult.usage,
-        };
-      },
-    } as const;
-
-    let finalized;
-    try {
-      finalized = await finalizeWithCompilerGates({
-        initialResult: {
-          content: generationResult.content,
-          model: generationResult.model,
-          usage: generationResult.usage,
-          finishReason: generationResult.finishReason,
-        },
-        ...guidedFinalizerOpts,
-      });
-    } catch (error) {
-      if (!(error instanceof PrdCompilerQualityError)) throw error;
-
-      const triedModels = error.repairAttempts.map(a => a.model);
-      const fallbackModel = pickNextFallbackModel(client, primaryGenerator, triedModels);
-      if (!fallbackModel) throw error;
-
-      logger.warn(`Guided quality fallback: ${primaryGenerator} → ${fallbackModel}`);
-      client.setPreferredModel('generator', fallbackModel);
-
-      try {
-        const fallbackDraft = await client.callWithFallback(
-          'generator',
-          systemPrompt,
-          userPrompt,
-          PRD_FINAL_GENERATION
-        );
-        modelsUsed.add(fallbackDraft.model);
-        totalTokens += fallbackDraft.usage.total_tokens;
-
-        finalized = await finalizeWithCompilerGates({
-          initialResult: {
-            content: fallbackDraft.content,
-            model: fallbackDraft.model,
-            usage: fallbackDraft.usage,
-            finishReason: fallbackDraft.finishReason,
-          },
-          ...guidedFinalizerOpts,
-        });
-        logger.info(`Guided quality fallback succeeded with ${fallbackModel}`);
-      } catch (fallbackError) {
-        const degraded = pickBestDegradedResult(error, fallbackError);
-        if (degraded) {
-          if (shouldRejectDegradedResult(degraded, [
-            'content_review_blocked_excessive_fallback',
-            'excessive_fallback_sections',
-          ])) {
-            logger.warn('Both models failed quality gates and still produced excessive compiler fallback sections; rejecting degraded result');
-            throw fallbackError instanceof PrdCompilerQualityError ? fallbackError : error;
-          }
-          logger.warn('Both models failed quality gates — returning best degraded result');
-          finalized = degraded;
-        } else {
-          throw error;
-        }
-      } finally {
-        client.setPreferredModel('generator', primaryGenerator);
-      }
-    }
-
-    for (const attempt of finalized.repairAttempts) {
-      modelsUsed.add(attempt.model);
-      totalTokens += attempt.usage.total_tokens;
-    }
-
-    // Post-compiler feature preservation (same as Simple flow)
-    let finalContent = finalized.content;
-    if (enrichedStructure && finalized.structure) {
-      const preserved = runPostCompilerPreservation(
-        enrichedStructure,
-        { content: finalized.content, structure: finalized.structure },
-        (msg) => logger.debug(msg),
-        (msg) => logger.warn(msg),
-      );
-      if (preserved.changed) {
-        finalContent = preserved.content;
-        enrichedStructure = preserved.structure;
-      }
-    }
-
-    return {
-      content: finalContent,
-      totalTokens,
-      modelsUsed: Array.from(modelsUsed),
-      enrichedStructure,
-    };
-  }
-
-  // resolveContentLanguage replaced by shared detectContentLanguage() from prdLanguageDetector.ts
-
-  private parseQuestionsResponse(content: string): { preliminaryPlan?: string; questions: GuidedQuestion[] } {
-    try {
-      // Try to extract JSON from the response
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        let questions = parsed.questions || [];
-        
-        // Validate and fix questions: ensure at least 2 meaningful options + custom
-        questions = this.ensureMinimumOptions(questions);
-        
-        return {
-          preliminaryPlan: parsed.preliminaryPlan || parsed.summary,
-          questions,
-        };
-      }
-    } catch (e) {
-      logger.warn('Failed to parse guided questions JSON; falling back to text extraction', {
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
-
-    // Fallback: Try to extract questions from text format
-    const questions: GuidedQuestion[] = [];
-    const questionPattern = /(?:\d+\.|#{1,3})\s*(.+\?)/g;
-    let match;
-    let questionNum = 1;
-    
-    while ((match = questionPattern.exec(content)) !== null) {
-      questions.push({
-        id: `q${questionNum}`,
-        question: match[1].trim(),
-        context: 'Please select the option that best describes your preference.',
-        options: [
-          { id: 'a', label: 'Option A', description: 'First choice' },
-          { id: 'b', label: 'Option B', description: 'Second choice' },
-          { id: 'c', label: 'Option C', description: 'Third choice' },
-          { id: 'custom', label: 'Other', description: 'Let me explain my preference...' },
-        ],
-      });
-      questionNum++;
-      if (questionNum > 5) break;
-    }
-
-    return { questions };
-  }
-
-  private ensureMinimumOptions(questions: GuidedQuestion[]): GuidedQuestion[] {
-    return questions.map(question => {
-      // Guard against missing/empty options array
-      if (!question.options || !Array.isArray(question.options)) {
-        question.options = [];
-      }
-      
-      // Filter out the custom/other option to count meaningful options
-      const meaningfulOptions = question.options.filter(
-        opt => opt.id !== 'custom' && opt.id !== 'other'
-      );
-      
-      // If we have less than 2 meaningful options, add default options
-      if (meaningfulOptions.length < 2) {
-        logger.warn('Guided question has insufficient options; injecting defaults', {
-          meaningfulOptionCount: meaningfulOptions.length,
-        });
-        
-        const defaultOptions = [
-          { id: 'a', label: 'Yes', description: 'Include this in the product' },
-          { id: 'b', label: 'No', description: 'Skip this feature for now' },
-          { id: 'c', label: 'Maybe', description: 'Consider for a later phase' },
-        ];
-        
-        // Keep existing meaningful options and add from defaults as needed
-        const newOptions = [...meaningfulOptions];
-        let optionIndex = 0;
-        while (newOptions.length < 3 && optionIndex < defaultOptions.length) {
-          const defaultOpt = defaultOptions[optionIndex];
-          if (!newOptions.some(opt => opt.id === defaultOpt.id)) {
-            newOptions.push(defaultOpt);
-          }
-          optionIndex++;
-        }
-        
-        // Always add custom option at the end
-        newOptions.push({ id: 'custom', label: 'Other', description: 'Let me explain my preference...' });
-        
-        return { ...question, options: newOptions };
-      }
-      
-      // Ensure custom option exists
-      if (!question.options.some(opt => opt.id === 'custom' || opt.id === 'other')) {
-        return {
-          ...question,
-          options: [...question.options, { id: 'custom', label: 'Other', description: 'Let me explain my preference...' }]
-        };
-      }
-      
-      return question;
-    });
-  }
-
-  private generateSessionId(): string {
-    return `guided_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
-  }
-
-  private requireAuthenticatedUserId(userId?: string): string {
-    if (!userId || !userId.trim()) {
-      throw new Error('Authenticated user is required for guided workflow.');
-    }
-    return userId;
-  }
-
-  private async getSessionContextOrThrow(sessionId: string, userId: string): Promise<ConversationContext> {
-    const session = await this.conversationContexts.get(sessionId, userId);
-    if (session.status !== 'ok' || !session.context) {
-      throw new Error(SESSION_NOT_AVAILABLE_MESSAGE);
-    }
-    return session.context;
-  }
-
-  private async consumeSessionContextOrThrow(sessionId: string, userId: string): Promise<ConversationContext> {
-    const session = await this.conversationContexts.consume(sessionId, userId);
-    if (session.status !== 'ok' || !session.context) {
-      throw new Error(SESSION_NOT_AVAILABLE_MESSAGE);
-    }
-    return session.context;
-  }
-
-  // createClientWithUserPreferences replaced by shared createClientWithUserPreferences() from openrouter.ts
-
-  private async getUserPreferences(userId?: string): Promise<{ guidedQuestionRounds?: number } | null> {
-    if (!userId) return null;
-
-    const userPrefs = await db.select({
-      aiPreferences: users.aiPreferences
-    })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-
-    if (userPrefs[0]?.aiPreferences) {
-      const prefs = userPrefs[0].aiPreferences as any;
-      return {
-        guidedQuestionRounds: prefs.guidedQuestionRounds || 3
-      };
-    }
-
-    return null;
-  }
-
-  // ÄNDERUNG 02.03.2025: formatAnswerText als private Methode für DRY-Prinzip
-  // ÄNDERUNG 02.03.2025: Explizite String-Prüfung für customText mit optionaler trim-Validierung
-  private formatAnswerText(answer: GuidedAnswerInput, question?: GuidedQuestion): string {
-    if (typeof answer.customText === 'string' && answer.selectedOptionIds?.includes('custom') && answer.customText.trim().length > 0) {
-      return answer.customText;
-    }
-    if (question && answer.selectedOptionIds?.length) {
-      return answer.selectedOptionIds
-        .map(id => question.options.find(opt => opt.id === id))
-        .filter((opt): opt is NonNullable<typeof opt> => opt !== undefined)
-        .map(opt => `${opt.label}: ${opt.description}`)
-        .join('; ');
-    }
-    return answer.selectedOptionIds?.join(', ') || '';
-  }
 }
 
 // Singleton instance

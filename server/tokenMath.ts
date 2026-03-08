@@ -1,3 +1,12 @@
+/*
+Author: rahn
+Datum: 08.03.2026
+Version: 1.0
+Beschreibung: Kleine Hilfsfunktionen fuer sichere Token-Zahl-Berechnungen.
+*/
+
+// ÄNDERUNG 08.03.2026: Header und Aenderungsdokumentation fuer Phase-0-Quick-Wins ergaenzt.
+
 export function normalizeTokenCount(value: number | null | undefined): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return 0;

@@ -26,6 +26,27 @@ export function normalizeForMatch(value: string): string {
     .trim();
 }
 
+export function isCompilerFilledSection(
+  sectionKey: string,
+  knownFallbackSections: Set<string>
+): boolean {
+  const normalizedSectionKey = String(sectionKey || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (!normalizedSectionKey) return false;
+
+  for (const section of knownFallbackSections || new Set<string>()) {
+    const normalizedFallbackSection = String(section || '').toLowerCase().replace(/[^a-z]/g, '');
+    if (!normalizedFallbackSection) continue;
+    if (
+      normalizedFallbackSection.includes(normalizedSectionKey)
+      || normalizedSectionKey.includes(normalizedFallbackSection)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Tokenization
 // ---------------------------------------------------------------------------

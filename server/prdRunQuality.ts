@@ -1,5 +1,6 @@
 import type { CompilerDiagnostics } from './dualAiPrompts';
 import type { PrdQualityIssue, PrdQualityReport } from './prdCompiler';
+import type { FinalizerFailureStage } from './prdCompilerFinalizer';
 import { PrdCompilerQualityError } from './prdCompilerFinalizer';
 
 export type PrdQualityStatus = 'passed' | 'degraded' | 'failed_quality' | 'failed_runtime' | 'cancelled';
@@ -11,6 +12,10 @@ export interface CompilerRunDiagnostics extends CompilerDiagnostics {
   repairAttempts: number;
   topRootCauseCodes: string[];
   qualityIssueCodes: string[];
+  failureStage?: FinalizerFailureStage;
+  semanticVerifierVerdict?: 'pass' | 'fail';
+  semanticBlockingCodes?: string[];
+  semanticRepairApplied?: boolean;
 }
 
 function severityCount(issues: PrdQualityIssue[], severity: 'error' | 'warning'): number {
@@ -40,6 +45,10 @@ export function buildCompilerRunDiagnostics(params: {
   quality?: PrdQualityReport | null;
   repairAttempts?: number;
   base?: Partial<CompilerDiagnostics>;
+  failureStage?: FinalizerFailureStage;
+  semanticVerifierVerdict?: 'pass' | 'fail';
+  semanticBlockingCodes?: string[];
+  semanticRepairApplied?: boolean;
 }): CompilerRunDiagnostics {
   const quality = params.quality || null;
   const issues = quality?.issues || [];
@@ -76,15 +85,32 @@ export function buildCompilerRunDiagnostics(params: {
     metaLeakHits: params.base?.metaLeakHits ?? countByCodePrefix(issues, 'meta_prompt_leak'),
     errorCount,
     warningCount,
-    repairAttempts: Math.max(0, params.repairAttempts || 0),
+    repairAttempts: Math.max(0, params.repairAttempts ?? params.base?.repairAttempts ?? 0),
     topRootCauseCodes: topRootCauseCodes(issues),
     qualityIssueCodes: Array.from(new Set(issues.map(issue => issue.code).filter(Boolean))),
+    failureStage: params.failureStage,
+    semanticVerifierVerdict: params.semanticVerifierVerdict ?? params.base?.semanticVerifierVerdict,
+    semanticBlockingCodes: params.semanticBlockingCodes || params.base?.semanticBlockingCodes || [],
+    semanticRepairApplied: params.semanticRepairApplied ?? params.base?.semanticRepairApplied ?? false,
+    repairModelIds: params.base?.repairModelIds ?? [],
+    reviewerModelIds: params.base?.reviewerModelIds ?? [],
+    verifierModelIds: params.base?.verifierModelIds ?? [],
+    contentRefined: params.base?.contentRefined ?? false,
+    contentReviewIssueCodes: params.base?.contentReviewIssueCodes ?? [],
+    semanticVerifierSameFamilyFallback: params.base?.semanticVerifierSameFamilyFallback ?? false,
+    semanticVerifierBlockedFamilies: params.base?.semanticVerifierBlockedFamilies ?? [],
+    activePhase: params.base?.activePhase,
+    lastProgressEvent: params.base?.lastProgressEvent,
+    lastModelAttempt: params.base?.lastModelAttempt,
   };
 
   return diagnostics;
 }
 
-export function classifyRunFailure(error: unknown): {
+export function classifyRunFailure(
+  error: unknown,
+  base?: Partial<CompilerDiagnostics>,
+): {
   qualityStatus: Exclude<PrdQualityStatus, 'passed'>;
   message: string;
   diagnostics: CompilerRunDiagnostics;
@@ -96,7 +122,7 @@ export function classifyRunFailure(error: unknown): {
     return {
       qualityStatus: 'cancelled',
       message,
-      diagnostics: buildCompilerRunDiagnostics({ quality: null, repairAttempts: 0 }),
+      diagnostics: buildCompilerRunDiagnostics({ quality: null, repairAttempts: 0, base }),
     };
   }
 
@@ -107,6 +133,18 @@ export function classifyRunFailure(error: unknown): {
       diagnostics: buildCompilerRunDiagnostics({
         quality: error.quality,
         repairAttempts: error.repairAttempts.length,
+        base: {
+          ...(base || {}),
+          repairModelIds: error.repairAttempts.map(attempt => attempt.model).filter(Boolean),
+          reviewerModelIds: error.reviewerAttempts.map(attempt => attempt.model).filter(Boolean),
+          verifierModelIds: error.semanticVerification?.model ? [error.semanticVerification.model] : [],
+          semanticVerifierSameFamilyFallback: error.semanticVerification?.sameFamilyFallback ?? false,
+          semanticVerifierBlockedFamilies: error.semanticVerification?.blockedFamilies || [],
+        },
+        failureStage: error.failureStage,
+        semanticVerifierVerdict: error.semanticVerification?.verdict,
+        semanticBlockingCodes: error.semanticVerification?.blockingIssues.map(issue => issue.code) || [],
+        semanticRepairApplied: error.semanticRepairApplied,
       }),
     };
   }
@@ -116,14 +154,14 @@ export function classifyRunFailure(error: unknown): {
     return {
       qualityStatus: 'failed_quality',
       message,
-      diagnostics: buildCompilerRunDiagnostics({ quality: null, repairAttempts: 0 }),
+      diagnostics: buildCompilerRunDiagnostics({ quality: null, repairAttempts: 0, base }),
     };
   }
 
   return {
     qualityStatus: 'failed_runtime',
     message,
-    diagnostics: buildCompilerRunDiagnostics({ quality: null, repairAttempts: 0 }),
+    diagnostics: buildCompilerRunDiagnostics({ quality: null, repairAttempts: 0, base }),
   };
 }
 
@@ -141,6 +179,20 @@ export function mergeDiagnosticsIntoIterationLog(
     repairAttempts: diagnostics.repairAttempts,
     topRootCauseCodes: diagnostics.topRootCauseCodes,
     qualityIssueCodes: diagnostics.qualityIssueCodes,
+    failureStage: diagnostics.failureStage || null,
+    semanticVerifierVerdict: diagnostics.semanticVerifierVerdict || null,
+    semanticBlockingCodes: diagnostics.semanticBlockingCodes || [],
+    semanticRepairApplied: !!diagnostics.semanticRepairApplied,
+    repairModelIds: diagnostics.repairModelIds || [],
+    reviewerModelIds: diagnostics.reviewerModelIds || [],
+    verifierModelIds: diagnostics.verifierModelIds || [],
+    contentRefined: !!diagnostics.contentRefined,
+    contentReviewIssueCodes: diagnostics.contentReviewIssueCodes || [],
+    semanticVerifierSameFamilyFallback: !!diagnostics.semanticVerifierSameFamilyFallback,
+    semanticVerifierBlockedFamilies: diagnostics.semanticVerifierBlockedFamilies || [],
+    activePhase: diagnostics.activePhase || null,
+    lastProgressEvent: diagnostics.lastProgressEvent || null,
+    lastModelAttempt: diagnostics.lastModelAttempt || null,
     boilerplateHits: diagnostics.boilerplateHits || 0,
     metaLeakHits: diagnostics.metaLeakHits || 0,
     languageFixRequired: !!diagnostics.languageFixRequired,

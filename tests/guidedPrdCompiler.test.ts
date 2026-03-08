@@ -102,6 +102,9 @@ describe('prdCompiler', () => {
     });
 
     expect(compiled.quality.valid).toBe(true);
+    expect(
+      compiled.quality.issues.some(issue => issue.code === 'excessive_fallback_sections')
+    ).toBe(true);
     expect(compiled.content).toContain('## Out of Scope');
     expect(compiled.content).toContain('## Timeline & Milestones');
     expect(compiled.content).toContain('## Success Criteria & Acceptance Testing');

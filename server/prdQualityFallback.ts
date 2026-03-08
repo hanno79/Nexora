@@ -52,6 +52,10 @@ export function pickBestDegradedResult(
   primaryError: PrdCompilerQualityError,
   fallbackError: unknown,
 ): DegradedResult | null {
+  if (primaryError.failureStage === 'semantic_verifier') {
+    return null;
+  }
+
   // ÄNDERUNG 07.03.2026: Degradierter Fallback muss den kompilierten Beststand
   // zurückgeben. Der rohe letzte Repair-Text kann später erneut starke
   // Compiler-Fallbacks auslösen und passt nicht zuverlässig zur gespeicherten Quality.
@@ -63,6 +67,9 @@ export function pickBestDegradedResult(
   let fallbackAttempts: PrdCompilerQualityError['repairAttempts'] = [];
 
   if (fallbackError instanceof PrdCompilerQualityError) {
+    if (fallbackError.failureStage === 'semantic_verifier') {
+      return null;
+    }
     fallbackScore = qualityScore(fallbackError.quality);
     fallbackQuality = fallbackError.quality;
     fallbackAttempts = fallbackError.repairAttempts;
@@ -90,6 +97,13 @@ export function pickBestDegradedResult(
     quality: bestError.quality,
     qualityScore: bestScore,
     repairAttempts: [...primaryAttempts, ...fallbackAttempts],
+    reviewerAttempts: [
+      ...(primaryError.reviewerAttempts || []),
+      ...(fallbackError instanceof PrdCompilerQualityError ? fallbackError.reviewerAttempts || [] : []),
+    ],
+    semanticVerification: bestError.semanticVerification,
+    semanticVerificationHistory: bestError.semanticVerification ? [bestError.semanticVerification] : [],
+    semanticRepairApplied: bestError.semanticRepairApplied,
     degraded: true,
   };
 }

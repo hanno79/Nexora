@@ -24,6 +24,7 @@ import {
   setProviderCooldown,
   clearProviderCooldown,
 } from '../server/openrouter';
+import { areModelsSameFamily } from '../server/modelFamily';
 import { initializeModelRegistry } from '../server/modelRegistry';
 
 describe('openrouter safe defaults', () => {
@@ -46,6 +47,19 @@ describe('openrouter safe defaults', () => {
     expect(getDefaultFallbackModelForTier('development')).toBe('google/gemma-3-27b-it:free');
     expect(getDefaultFallbackModelForTier('production')).toBe('google/gemini-2.5-flash');
     expect(getDefaultFallbackModelForTier('premium')).toBe('anthropic/claude-sonnet-4');
+  });
+
+  it('uses independent verifier defaults per tier', () => {
+    const dev = getOpenRouterClient('development').getModels();
+    const prod = getOpenRouterClient('production').getModels();
+    const premium = getOpenRouterClient('premium').getModels();
+
+    expect(areModelsSameFamily(dev.verifier, dev.generator)).toBe(false);
+    expect(areModelsSameFamily(dev.verifier, dev.reviewer)).toBe(false);
+    expect(areModelsSameFamily(prod.verifier, prod.generator)).toBe(false);
+    expect(areModelsSameFamily(prod.verifier, prod.reviewer)).toBe(false);
+    expect(areModelsSameFamily(premium.verifier, premium.generator)).toBe(false);
+    expect(areModelsSameFamily(premium.verifier, premium.reviewer)).toBe(false);
   });
 
   it('creates clients with development tier by default', () => {
@@ -121,7 +135,7 @@ describe('openrouter safe defaults', () => {
   it('does not inject paid fallback models for development defaults', async () => {
     const client = new OpenRouterClient('test-key', 'development');
     const attemptedModels: string[] = [];
-    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer') => {
+    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
       const currentModel = String((client as any).preferredModels?.[modelType] || '');
       attemptedModels.push(currentModel);
       throw new Error('forced failure');
@@ -154,7 +168,7 @@ describe('openrouter safe defaults', () => {
       client.setPreferredModel('generator', 'nvidia/nemotron-3-nano-30b-a3b:free');
       client.setFallbackChain(['google/gemma-3-27b-it:free']);
 
-      vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer') => {
+      vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
         const currentModel = String((client as any).preferredModels?.[modelType] || '');
         attemptedModels.push(currentModel);
         throw new Error('forced failure');
@@ -189,7 +203,7 @@ describe('openrouter safe defaults', () => {
       client.setPreferredModel('generator', 'nvidia/nemotron-3-nano-30b-a3b:free');
       client.setFallbackChain(['google/gemma-3-27b-it:free']);
 
-      vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer') => {
+      vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
         const currentModel = String((client as any).preferredModels?.[modelType] || '');
         attemptedModels.push(currentModel);
         throw new Error('forced failure');
@@ -244,7 +258,7 @@ describe('openrouter safe defaults', () => {
     client.setPreferredModel('generator', 'nvidia/nemotron-3-nano-30b-a3b:free');
 
     const attemptedModels: string[] = [];
-    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer') => {
+    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
       const currentModel = String((client as any).preferredModels?.[modelType] || '');
       attemptedModels.push(currentModel);
       if (currentModel === 'model-c:free') {
@@ -292,7 +306,7 @@ describe('openrouter safe defaults', () => {
     client.setPreferredModel('generator', 'nvidia/nemotron-3-nano-30b-a3b:free');
 
     const attemptedModels: string[] = [];
-    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer') => {
+    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
       const currentModel = String((client as any).preferredModels?.[modelType] || '');
       attemptedModels.push(currentModel);
       if (currentModel === 'model-y:free') {
@@ -323,7 +337,7 @@ describe('openrouter safe defaults', () => {
     client.setFallbackChain(['model-b:free']);
 
     const attemptedModels: string[] = [];
-    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer') => {
+    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
       const currentModel = String((client as any).preferredModels?.[modelType] || '');
       attemptedModels.push(currentModel);
       if (currentModel === 'model-b:free') {
@@ -384,6 +398,61 @@ describe('openrouter safe defaults', () => {
     expect(result.content).not.toContain('</think>');
   });
 
+  it('keeps timeout active until the response body is consumed and falls back on stalled body reads', async () => {
+    const originalTimeout = process.env.OPENROUTER_TIMEOUT_MS;
+    process.env.OPENROUTER_TIMEOUT_MS = '25';
+
+    try {
+      const stalledResponse = vi.fn(async (_url: string, init?: RequestInit) => {
+        const signal = init?.signal as AbortSignal | undefined;
+        return {
+          ok: true,
+          json: () =>
+            new Promise((_resolve, reject) => {
+              signal?.addEventListener(
+                'abort',
+                () => reject(Object.assign(new Error('aborted during body read'), { name: 'AbortError' })),
+                { once: true },
+              );
+            }),
+        } as any;
+      });
+
+      const successResponse = new Response(
+        JSON.stringify({
+          id: 'fallback-success',
+          model: 'model-fallback:free',
+          choices: [{
+            message: { role: 'assistant', content: 'Recovered fallback content.' },
+            finish_reason: 'stop',
+          }],
+          usage: { prompt_tokens: 10, completion_tokens: 15, total_tokens: 25 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      ) as Response;
+
+      const fetchMock = vi.spyOn(globalThis, 'fetch')
+        .mockImplementationOnce(stalledResponse as any)
+        .mockResolvedValueOnce(successResponse);
+
+      const client = new OpenRouterClient('test-key', 'development');
+      client.setPreferredModel('generator', 'model-primary:free');
+      client.setFallbackChain(['model-fallback:free']);
+
+      const result = await client.callWithFallback('generator', 'system', 'user', 100);
+
+      expect(result.model).toBe('model-fallback:free');
+      expect(result.usedFallback).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      if (originalTimeout === undefined) {
+        delete process.env.OPENROUTER_TIMEOUT_MS;
+      } else {
+        process.env.OPENROUTER_TIMEOUT_MS = originalTimeout;
+      }
+    }
+  });
+
   // --- Provider-Level Circuit Breaker ---
 
   it('sets provider cooldown when direct provider times out', async () => {
@@ -441,7 +510,7 @@ describe('openrouter safe defaults', () => {
       client.setFallbackChain(['google/gemma-3-27b-it:free']);
 
       const attemptedModels: string[] = [];
-      vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer') => {
+      vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
         const currentModel = String((client as any).preferredModels?.[modelType] || '');
         attemptedModels.push(currentModel);
         if (currentModel === 'google/gemma-3-27b-it:free') {

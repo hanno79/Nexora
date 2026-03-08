@@ -2,6 +2,9 @@
 // Focus on FEATURES and USER EXPERIENCE, not technical implementation
 
 import { getLanguageInstruction } from './dualAiPrompts';
+import type { CompilerDiagnostics } from './dualAiPrompts';
+import type { RunStageTimings } from './dualAiPrompts';
+import type { CompilerArtifactSummary, ModelStageArtifact } from './compilerArtifact';
 
 export const FEATURE_ANALYSIS_PROMPT = `You are an experienced Product Manager specializing in user-centered product design.
 Your task is to analyze a project idea and create an initial FEATURE-FOCUSED overview.
@@ -346,4 +349,9 @@ export interface GuidedFinalizeResponse {
   modelsUsed: string[];
   workflowMode?: 'generate' | 'improve';
   existingContent?: string;
+  diagnostics?: CompilerDiagnostics;
+  compilerArtifact?: CompilerArtifactSummary;
+  analysisStage?: ModelStageArtifact;
+  generationStage?: ModelStageArtifact;
+  timings?: RunStageTimings;
 }

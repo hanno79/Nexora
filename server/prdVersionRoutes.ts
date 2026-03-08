@@ -1,0 +1,96 @@
+/*
+Author: rahn
+Datum: 08.03.2026
+Version: 1.0
+Beschreibung: Registriert PRD-Versionsrouten als kleines Modul.
+*/
+
+// ÄNDERUNG 08.03.2026: Versionsrouten aus `server/routes.ts` extrahiert,
+// um die Hauptdatei konservativ weiter zu verkleinern.
+
+import type { Request, RequestHandler } from 'express';
+import { asyncHandler } from './asyncHandler';
+import { requirePrdAccess } from './prdAccess';
+import { buildPrdVersionSnapshot, getNextPrdVersionNumber } from './prdVersioningUtils';
+import type { IStorage } from './storage';
+
+type AuthenticatedRequest = Request & {
+  user: {
+    claims: {
+      sub: string;
+    };
+  };
+};
+
+type RequestHandlerRegistrar = (path: string, ...handlers: RequestHandler[]) => unknown;
+type RouteRegistrar = Pick<{ [K in 'get' | 'post' | 'delete']: RequestHandlerRegistrar }, 'get' | 'post' | 'delete'>;
+type PrdVersionStorage = Pick<
+  IStorage,
+  'getPrd' | 'getPrdShares' | 'getPrdVersions' | 'createPrdVersion' | 'getPrdVersion' | 'deletePrdVersion'
+>;
+
+export interface PrdVersionRouteDependencies {
+  storage: PrdVersionStorage;
+  requirePrdAccess: typeof requirePrdAccess;
+  getNextPrdVersionNumber: typeof getNextPrdVersionNumber;
+  buildPrdVersionSnapshot: typeof buildPrdVersionSnapshot;
+}
+
+export function registerPrdVersionRoutes(
+  app: RouteRegistrar,
+  isAuthenticated: RequestHandler,
+  deps: PrdVersionRouteDependencies,
+): void {
+  app.get('/api/prds/:id/versions', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const { id } = req.params;
+    const prd = await deps.requirePrdAccess(deps.storage, req, res, id, 'view');
+    if (!prd) {
+      return;
+    }
+
+    const versions = await deps.storage.getPrdVersions(id);
+    res.json(versions);
+  }));
+
+  app.post('/api/prds/:id/versions', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const { id } = req.params;
+    const userId = req.user.claims.sub;
+    const prd = await deps.requirePrdAccess(deps.storage, req, res, id, 'edit');
+    if (!prd) {
+      return;
+    }
+
+    const versions = await deps.storage.getPrdVersions(id);
+    const versionNumber = deps.getNextPrdVersionNumber(versions.length);
+    const version = await deps.storage.createPrdVersion(
+      deps.buildPrdVersionSnapshot(prd as any, versionNumber, userId),
+    );
+
+    res.json(version);
+  }));
+
+  app.delete('/api/prds/:id/versions/:versionId', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const { id, versionId } = req.params;
+    const prd = await deps.requirePrdAccess(deps.storage, req, res, id, 'edit');
+    if (!prd) {
+      return;
+    }
+
+    const version = await deps.storage.getPrdVersion(versionId);
+    if (!version) {
+      return res.status(404).json({ message: 'Version not found' });
+    }
+
+    if (version.prdId !== id) {
+      return res.status(400).json({ message: 'Version does not belong to this PRD' });
+    }
+
+    const versions = await deps.storage.getPrdVersions(id);
+    if (versions.length > 0 && versions[0].id === versionId) {
+      return res.status(400).json({ message: 'Cannot delete the current (latest) version' });
+    }
+
+    await deps.storage.deletePrdVersion(versionId);
+    res.json({ success: true });
+  }));
+}

@@ -43,6 +43,7 @@ export function DualAiDialog({
   
   // Workflow-Modus: einfach, iterativ oder geführt (neu)
   const [workflowMode, setWorkflowMode] = useState<'simple' | 'iterative' | 'guided'>('simple');
+  const simpleTimeoutMinutes = 30;
   const [iterationCount, setIterationCount] = useState(3);
   const [iterativeTimeoutMinutes, setIterativeTimeoutMinutes] = useState(30);
   const iterationCountMin = 2;
@@ -347,7 +348,6 @@ export function DualAiDialog({
       });
     } finally {
       clearTimeout(timeout);
-      abortControllerRef.current = null;
     }
   };
 
@@ -384,6 +384,9 @@ export function DualAiDialog({
 
   const handleSimpleGeneration = async () => {
     startElapsedTimer();
+    const releaseAbortController = () => {
+      abortControllerRef.current = null;
+    };
 
     try {
       const response = await fetchWithTimeout('/api/ai/generate-dual', {
@@ -396,16 +399,23 @@ export function DualAiDialog({
           prdId
         }),
         credentials: 'include',
-      }, iterativeTimeoutMinutes * 60 * 1000);
+      }, simpleTimeoutMinutes * 60 * 1000);
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        releaseAbortController();
 
         // Quality-Gate-Fehler mit brauchbarem Content: Nutze den Content mit Warnung
         if (response.status === 422 && errorData.finalContent?.trim()) {
           console.warn('AI generation passed with quality warnings:', errorData.message);
-          setGeneratorModel(errorData.generatorResponse?.model || errorData.generatorModel || '');
-          setReviewerModel(errorData.reviewerResponse?.model || errorData.reviewerModel || '');
+          setGeneratorModel(errorData?.generatorResponse?.model ?? errorData?.generatorModel ?? '');
+          setReviewerModel(
+            errorData?.reviewerResponse?.model
+            ?? errorData?.reviewerModel
+            ?? errorData?.generatorResponse?.model
+            ?? errorData?.generatorModel
+            ?? ''
+          );
           setModeInfo({
             effectiveMode: errorData.effectiveMode,
             baselineFeatureCount: errorData.baselineFeatureCount,
@@ -424,13 +434,20 @@ export function DualAiDialog({
       }
 
       const data = await response.json();
+      releaseAbortController();
       const finalContent = data.finalContent || data.mergedPRD || '';
       if (!finalContent || !finalContent.trim()) {
         throw new Error('AI returned no content. Please retry.');
       }
 
-      setGeneratorModel(data.generatorResponse.model);
-      setReviewerModel(data.reviewerResponse.model);
+      setGeneratorModel(data?.generatorResponse?.model ?? data?.generatorModel ?? '');
+      setReviewerModel(
+        data?.reviewerResponse?.model
+        ?? data?.reviewerModel
+        ?? data?.generatorResponse?.model
+        ?? data?.generatorModel
+        ?? ''
+      );
       setModeInfo({
         effectiveMode: data.effectiveMode,
         baselineFeatureCount: data.baselineFeatureCount,
@@ -444,6 +461,9 @@ export function DualAiDialog({
         onOpenChange(false);
         resetState();
       }, 1500);
+    } catch (error) {
+      releaseAbortController();
+      throw error;
     } finally {
       stopElapsedTimer();
     }
@@ -537,6 +557,18 @@ export function DualAiDialog({
             case 'final_review_done':
               setProgressDetail(t.dualAi.finalReviewComplete);
               setTotalTokensSoFar(prev => prev + (event.tokensUsed || 0));
+              break;
+            case 'compiler_finalization_start':
+              setProgressDetail(t.dualAi.compilerFinalizationStarting);
+              break;
+            case 'content_review_start':
+              setProgressDetail(t.dualAi.contentReviewInProgress);
+              break;
+            case 'semantic_verification_start':
+              setProgressDetail(t.dualAi.semanticVerificationInProgress);
+              break;
+            case 'final_persist_start':
+              setProgressDetail(t.dualAi.finalPersistInProgress);
               break;
             case 'complete':
               setTotalTokensSoFar(event.totalTokens || 0);
@@ -637,12 +669,26 @@ export function DualAiDialog({
         return progressDetail || `${t.dualAi.iterating}: ${currentIteration}/${totalIterations}`;
       // ÄNDERUNG 02.03.2025: Text für Guided Finalisierung
       case 'guided-finalizing':
-        return t.dualAi.guidedFinalizing || 'PRD wird basierend auf Guided-Antworten generiert...';
+        return t.dualAi.guidedFinalizing;
       case 'done':
         return t.dualAi.done;
       default:
         return t.dualAi.ready;
     }
+  };
+
+  const getModeInfoText = () => {
+    if (!modeInfo?.effectiveMode || currentStep !== 'done') {
+      return null;
+    }
+
+    const baseText = modeInfo.effectiveMode === 'improve'
+      ? t.dualAi.improvedWithBaseline.replace('{count}', String(modeInfo.baselineFeatureCount ?? 0))
+      : t.dualAi.generatedNew;
+
+    return modeInfo.baselinePartial
+      ? `${baseText} — ${t.dualAi.existingContentUsedAsContext}`
+      : baseText;
   };
 
   return (
@@ -756,7 +802,7 @@ export function DualAiDialog({
               {/* ÄNDERUNG 02.03.2025: Badge für Guided-Modus */}
               {workflowMode === 'guided' && (
                 <Badge variant="secondary" className="ml-2 text-xs">
-                  Guided
+                  {t.dualAi.guided}
                 </Badge>
               )}
               {currentStep !== 'idle' && currentStep !== 'done' && (
@@ -783,12 +829,9 @@ export function DualAiDialog({
               </div>
             )}
             {/* Fix 0.2: Mode transparency info line */}
-            {modeInfo?.effectiveMode && currentStep === 'done' && (
+            {getModeInfoText() && (
               <p className="text-xs text-muted-foreground mt-1 px-1">
-                {modeInfo.effectiveMode === 'improve'
-                  ? `Erweitert (${modeInfo.baselineFeatureCount} Features als Baseline)`
-                  : 'Neu generiert'}
-                {modeInfo.baselinePartial && ' \u2014 bestehender Inhalt als Kontext verwendet'}
+                {getModeInfoText()}
               </p>
             )}
             {/* Live-Statistiken für den Simple Run, Iterationsmodus und Guided Finalisierung */}

@@ -1,15 +1,37 @@
 import type { TokenUsage } from '@shared/schema';
 import type { PRDStructure } from './prdStructure';
 import {
-  CANONICAL_PRD_HEADINGS,
   compilePrdDocument,
   type CompilePrdDocumentFn,
   type PrdQualityReport,
 } from './prdCompiler';
-import { buildTemplateInstruction } from './prdTemplateIntent';
-import { reviewAndRefineContent, type ContentReviewResult } from './prdContentReviewer';
+import {
+  applyTargetedContentRefinement,
+  reviewAndRefineContent,
+  type ContentIssue,
+  type ContentReviewResult,
+  type ReviewerContentGenerator,
+  type ReviewerRefineResult,
+} from './prdContentReviewer';
+import type {
+  SemanticBlockingIssue,
+  SemanticVerificationResult,
+  SemanticVerifierInput,
+} from './prdSemanticVerifier';
+import {
+  buildRepairPrompt,
+  type RepairHistoryEntry,
+} from './prdCompilerRepairPrompt';
+import { buildAvoidedModelFamilies } from './modelFamily';
 
 type SupportedLanguage = 'de' | 'en';
+export type FinalizerFailureStage = 'compiler_repair' | 'content_review' | 'semantic_verifier';
+
+export type {
+  SemanticBlockingIssue,
+  SemanticVerificationResult,
+  SemanticVerifierInput,
+} from './prdSemanticVerifier';
 
 export interface CompilerModelResult {
   content: string;
@@ -26,13 +48,16 @@ export interface FinalizeWithCompilerGatesOptions {
   templateCategory?: string;
   originalRequest: string;
   maxRepairPasses?: number;
-  repairGenerator: (repairPrompt: string, pass: number) => Promise<CompilerModelResult>;
+  repairReviewer: (repairPrompt: string, pass: number) => Promise<CompilerModelResult>;
   compileDocument?: CompilePrdDocumentFn;
   /** Enable post-compiler content review to detect and fix filler/repetition. Default: true. */
   enableContentReview?: boolean;
-  /** Generator for the content-refine AI call. If not provided, content review runs
+  /** Reviewer for the targeted content-refine AI call. If not provided, content review runs
    *  in analysis-only mode (issues reported but no AI refinement). */
-  contentRefineGenerator?: (prompt: string) => Promise<{ content: string; model: string; usage: any }>;
+  contentRefineReviewer?: ReviewerContentGenerator;
+  /** Independent semantic verifier that runs after compiler/content review. */
+  semanticVerifier?: (input: SemanticVerifierInput) => Promise<SemanticVerificationResult>;
+  onStageProgress?: (event: { type: 'content_review_start' | 'semantic_verification_start' }) => void;
 }
 
 export interface FinalizeWithCompilerGatesResult {
@@ -41,30 +66,48 @@ export interface FinalizeWithCompilerGatesResult {
   quality: PrdQualityReport;
   qualityScore: number;
   repairAttempts: CompilerModelResult[];
+  reviewerAttempts: ReviewerRefineResult[];
   /** Content review results (populated when enableContentReview is true). */
   contentReview?: ContentReviewResult;
   /** Whether the content was refined by AI after content review. */
   contentRefined?: boolean;
+  semanticVerification?: SemanticVerificationResult;
+  semanticVerificationHistory?: SemanticVerificationResult[];
+  semanticRepairApplied?: boolean;
 }
 
 export class PrdCompilerQualityError extends Error {
   readonly quality: PrdQualityReport;
   readonly repairAttempts: CompilerModelResult[];
+  readonly reviewerAttempts: ReviewerRefineResult[];
   readonly compiledContent?: string;
   readonly compiledStructure?: PRDStructure;
+  readonly semanticVerification?: SemanticVerificationResult;
+  readonly failureStage: FinalizerFailureStage;
+  readonly semanticRepairApplied: boolean;
 
   constructor(
     message: string,
     quality: PrdQualityReport,
     repairAttempts: CompilerModelResult[],
-    compiledResult?: { content: string; structure: PRDStructure }
+    compiledResult?: { content: string; structure: PRDStructure },
+    meta?: {
+      reviewerAttempts?: ReviewerRefineResult[];
+      semanticVerification?: SemanticVerificationResult;
+      failureStage?: FinalizerFailureStage;
+      semanticRepairApplied?: boolean;
+    }
   ) {
     super(message);
     this.name = 'PrdCompilerQualityError';
     this.quality = quality;
     this.repairAttempts = repairAttempts;
+    this.reviewerAttempts = meta?.reviewerAttempts || [];
     this.compiledContent = compiledResult?.content;
     this.compiledStructure = compiledResult?.structure;
+    this.semanticVerification = meta?.semanticVerification;
+    this.failureStage = meta?.failureStage || 'compiler_repair';
+    this.semanticRepairApplied = meta?.semanticRepairApplied ?? false;
   }
 }
 
@@ -90,117 +133,59 @@ function hasContentReviewError(review: ContentReviewResult | undefined, code: st
 
 function shouldRepair(
   _result: CompilerModelResult,
-  quality: PrdQualityReport
+  quality: PrdQualityReport,
+  mode: 'generate' | 'improve'
 ): boolean {
   if (!quality.valid) return true;
   if (quality.truncatedLikely) return true;
+
+  // ÄNDERUNG 08.03.2026: Generate-Ergebnisse mit massiv compilerseitig
+  // erzeugten Fallback-Sektionen duerfen nicht still als final akzeptiert
+  // werden. Sie muessen in den Repair-/Fehlerpfad laufen.
+  if (mode === 'generate' && hasQualityIssue(quality, 'excessive_fallback_sections')) {
+    return true;
+  }
 
   // If the compiler produced a valid, non-truncated structure, accept it even
   // when the raw model output looked syntactically incomplete (finish_reason='length').
   return false;
 }
 
-export interface RepairHistoryEntry {
-  pass: number;
-  score: number;
-  issueCount: number;
-  topIssues: string[];
+function toSemanticContentIssues(issues: SemanticBlockingIssue[]): ContentIssue[] {
+  return issues.map(issue => {
+    const sectionKey = String(issue.sectionKey || '').trim() || 'systemVision';
+    const isFeatureIssue = sectionKey.startsWith('feature:');
+    const targetFields = issue.targetFields?.length
+      ? issue.targetFields.join(', ')
+      : '';
+    const baseMessage = String(issue.message || '').trim()
+      || (isFeatureIssue
+        ? `Feature block "${sectionKey}" contains a blocking semantic mismatch.`
+        : `Section "${sectionKey}" contains a blocking semantic inconsistency.`);
+    const message = isFeatureIssue && targetFields && !/Rewrite:\s/i.test(baseMessage)
+      ? `${baseMessage} Rewrite: ${targetFields}`
+      : baseMessage;
+
+    return {
+      code: issue.code || 'cross_section_inconsistency',
+      sectionKey,
+      message,
+      severity: 'error',
+      suggestedAction: issue.suggestedAction || (isFeatureIssue ? 'enrich' : 'rewrite'),
+      ...(issue.targetFields?.length ? { targetFields: issue.targetFields } : {}),
+    };
+  });
 }
 
-function formatRepairHistory(history: RepairHistoryEntry[]): string {
-  if (history.length === 0) return '';
-  const lines = history.map(h =>
-    `- Pass ${h.pass}: score ${h.score}, ${h.issueCount} issue(s): ${h.topIssues.join(', ') || 'none'}`
-  );
-  // Identify persistent issues (present in every pass)
-  const allIssueSets = history.map(h => new Set(h.topIssues));
-  const persistent = history[0].topIssues.filter(code =>
-    allIssueSets.every(s => s.has(code))
-  );
-  const focusHint = persistent.length > 0
-    ? `\nFocus on fixing the persistent issue(s): ${persistent.join(', ')}`
-    : '';
-  return `\nREPAIR HISTORY (do NOT repeat failed approaches):
-${lines.join('\n')}${focusHint}\n`;
-}
-
-function buildRepairPrompt(params: {
-  mode: 'generate' | 'improve';
-  issueSummary: string;
-  existingContent?: string;
-  currentContent: string;
-  originalRequest: string;
-  templateCategory?: string;
-  language?: SupportedLanguage;
-  repairHistory?: RepairHistoryEntry[];
-}): string {
-  const {
-    mode,
-    issueSummary,
-    existingContent,
-    currentContent,
-    originalRequest,
-    templateCategory,
-    language,
-    repairHistory,
-  } = params;
-  const canonicalHeadings = CANONICAL_PRD_HEADINGS.map(h => `- ## ${h}`).join('\n');
-  const templateInstruction = buildTemplateInstruction(templateCategory, language || 'en');
-  const historyBlock = formatRepairHistory(repairHistory || []);
-
-  if (mode === 'improve') {
-    return `The previous PRD output failed quality gates and must be repaired.
-
-QUALITY ISSUES:
-${issueSummary}
-${historyBlock}
-BASELINE PRD (must remain intact unless directly improved):
-${existingContent || '(no baseline provided)'}
-
-CURRENT INCOMPLETE OUTPUT:
-${currentContent}
-
-ORIGINAL REQUEST:
-${originalRequest}
-
-Return a COMPLETE corrected PRD in Markdown.
-
-STRICT OUTPUT RULES:
-- Use only this top-level heading set exactly once each (H2):
-${canonicalHeadings}
-- Follow this template context:
-${templateInstruction}
-- Do not add any extra top-level sections.
-- Keep existing feature IDs stable and preserve baseline content unless directly improved.
-- Resolve repeated boilerplate phrasing so each feature spec stays concrete and unique.
-- Remove prompt/meta artifacts (e.g., Iteration X, Questions Identified, Answer:, Reasoning:, ORIGINAL PRD, REVIEW FEEDBACK).
-- Target language: ${language || 'en'}. Write ALL body content in this language. Keep only the canonical H2 headings in English.
-- No truncation, placeholders, or unfinished bullets/sentences.`;
-  }
-
-  return `The previous PRD output failed quality gates and must be repaired.
-
-QUALITY ISSUES:
-${issueSummary}
-${historyBlock}
-CURRENT INCOMPLETE OUTPUT:
-${currentContent}
-
-ORIGINAL REQUEST:
-${originalRequest}
-
-Return a COMPLETE corrected PRD in Markdown.
-
-STRICT OUTPUT RULES:
-- Use only this top-level heading set exactly once each (H2):
-${canonicalHeadings}
-- Follow this template context:
-${templateInstruction}
-- Do not add any extra top-level sections.
-- Resolve repeated boilerplate phrasing so each feature spec stays concrete and unique.
-- Remove prompt/meta artifacts (e.g., Iteration X, Questions Identified, Answer:, Reasoning:, ORIGINAL PRD, REVIEW FEEDBACK).
-- Target language: ${language || 'en'}. Write ALL body content in this language. Keep only the canonical H2 headings in English.
-- No truncation, placeholders, or unfinished bullets/sentences.`;
+function withSyntheticQualityIssue(
+  quality: PrdQualityReport,
+  issue: { code: string; message: string; severity: 'error' | 'warning' }
+): PrdQualityReport {
+  return {
+    ...quality,
+    valid: false,
+    issues: [...quality.issues, issue],
+  };
 }
 
 export async function finalizeWithCompilerGates(
@@ -213,7 +198,7 @@ export async function finalizeWithCompilerGates(
     language,
     templateCategory,
     originalRequest,
-    repairGenerator,
+    repairReviewer,
     maxRepairPasses = 2,
     compileDocument = compilePrdDocument,
   } = options;
@@ -232,8 +217,10 @@ export async function finalizeWithCompilerGates(
     });
 
   let compiled = compileCurrent(current.content);
-  let needsRepair = shouldRepair(current, compiled.quality);
+  let needsRepair = shouldRepair(current, compiled.quality, mode);
   const repairAttempts: CompilerModelResult[] = [];
+  const reviewerAttempts: ReviewerRefineResult[] = [];
+  const semanticVerificationHistory: SemanticVerificationResult[] = [];
 
   // Track best result across repair passes to prevent quality degradation
   let bestCurrent = current;
@@ -250,13 +237,14 @@ export async function finalizeWithCompilerGates(
       issueSummary,
       existingContent,
       currentContent: bestCurrent.content,
+      currentStructure: bestCompiled.structure,
       originalRequest,
       templateCategory,
       language,
       repairHistory,
     });
 
-    const repairResult = await repairGenerator(repairPrompt, pass);
+    const repairResult = await repairReviewer(repairPrompt, pass);
     repairAttempts.push(repairResult);
     const repairCompiled = compileCurrent(repairResult.content);
     const repairScore = qualityScore(repairCompiled.quality);
@@ -280,7 +268,7 @@ export async function finalizeWithCompilerGates(
 
     current = bestCurrent;
     compiled = bestCompiled;
-    needsRepair = shouldRepair(current, compiled.quality);
+    needsRepair = shouldRepair(current, compiled.quality, mode);
   }
 
   if (needsRepair) {
@@ -290,7 +278,8 @@ export async function finalizeWithCompilerGates(
       `PRD compiler quality gate failed after ${repairAttempts.length} repair attempt(s): ${details}`,
       compiled.quality,
       repairAttempts,
-      { content: compiled.content, structure: compiled.structure }
+      { content: compiled.content, structure: compiled.structure },
+      { failureStage: 'compiler_repair' }
     );
   }
 
@@ -298,19 +287,23 @@ export async function finalizeWithCompilerGates(
   const enableContentReview = options.enableContentReview !== false;
   let contentReview: ContentReviewResult | undefined;
   let contentRefined = false;
+  let semanticVerification: SemanticVerificationResult | undefined;
+  let semanticRepairApplied = false;
 
   if (enableContentReview) {
+    options.onStageProgress?.({ type: 'content_review_start' });
     const refineResult = await reviewAndRefineContent({
       content: compiled.content,
       structure: compiled.structure,
       language: language || 'en',
       templateCategory,
       fallbackSections: compiled.quality.fallbackSections,
-      refineGenerator: options.contentRefineGenerator,
+      reviewer: options.contentRefineReviewer,
     });
 
     contentReview = refineResult.reviewResult;
     contentRefined = refineResult.refined;
+    reviewerAttempts.push(...(refineResult.reviewerAttempts || []));
 
     if (refineResult.refined) {
       // Re-compile the refined content to ensure structural integrity
@@ -324,7 +317,7 @@ export async function finalizeWithCompilerGates(
   }
 
   const shouldBlockExcessiveFallbackReview = Boolean(
-    options.contentRefineGenerator
+    options.contentRefineReviewer
     && hasQualityIssue(compiled.quality, 'excessive_fallback_sections')
     && hasContentReviewError(contentReview, 'compiler_fallback_filler')
   );
@@ -333,24 +326,88 @@ export async function finalizeWithCompilerGates(
     // ÄNDERUNG 07.03.2026: Den kompilierten Fehlstand im Error mitführen, damit
     // degradierte Fallback-Pfade nicht den rohen Repair-Text statt des echten
     // Compiler-Ergebnisses zurückgeben.
-    const blockedQuality: PrdQualityReport = {
-      ...compiled.quality,
-      valid: false,
-      issues: [
-        ...compiled.quality.issues,
-        {
-          code: 'content_review_blocked_excessive_fallback',
-          message: 'Content review still detected compiler-generated fallback filler after refinement attempts.',
-          severity: 'error',
-        },
-      ],
-    };
+    const blockedQuality = withSyntheticQualityIssue(compiled.quality, {
+      code: 'content_review_blocked_excessive_fallback',
+      message: 'Content review still detected compiler-generated fallback filler after refinement attempts.',
+      severity: 'error',
+    });
     throw new PrdCompilerQualityError(
       'PRD compiler quality gate failed after content review: compiler-generated fallback filler remains.',
       blockedQuality,
       repairAttempts,
-      { content: compiled.content, structure: compiled.structure }
+      { content: compiled.content, structure: compiled.structure },
+      {
+        reviewerAttempts,
+        failureStage: 'content_review',
+      }
     );
+  }
+
+  if (options.semanticVerifier) {
+    const runSemanticVerifier = async () => {
+      options.onStageProgress?.({ type: 'semantic_verification_start' });
+      const avoidModelFamilies = buildAvoidedModelFamilies([
+        initialResult.model,
+        ...repairAttempts.map(attempt => attempt.model),
+        ...reviewerAttempts.map(attempt => attempt.model),
+      ]);
+      const result = await options.semanticVerifier!({
+        content: compiled.content,
+        structure: compiled.structure,
+        mode,
+        existingContent,
+        language: language || 'en',
+        templateCategory,
+        originalRequest,
+        avoidModelFamilies,
+      });
+      semanticVerification = result;
+      semanticVerificationHistory.push(result);
+      return result;
+    };
+
+    let verification = await runSemanticVerifier();
+    if (verification.verdict === 'fail' && verification.blockingIssues.length > 0 && options.contentRefineReviewer) {
+      const semanticRepair = await applyTargetedContentRefinement({
+        content: compiled.content,
+        structure: compiled.structure,
+        issues: toSemanticContentIssues(verification.blockingIssues),
+        language: language || 'en',
+        templateCategory,
+        reviewer: options.contentRefineReviewer,
+      });
+      reviewerAttempts.push(...semanticRepair.reviewerAttempts);
+
+      if (semanticRepair.refined) {
+        const recompiled = compileCurrent(semanticRepair.content);
+        if (recompiled.quality.valid || qualityScore(recompiled.quality) >= bestScore) {
+          compiled = recompiled;
+          bestScore = Math.max(bestScore, qualityScore(recompiled.quality));
+          semanticRepairApplied = true;
+          verification = await runSemanticVerifier();
+        }
+      }
+    }
+
+    if (verification.verdict === 'fail' && verification.blockingIssues.length > 0) {
+      const blockedQuality = withSyntheticQualityIssue(compiled.quality, {
+        code: 'semantic_verifier_blocked',
+        message: verification.blockingIssues.map(issue => issue.message).join(' | ') || 'Semantic verifier reported blocking issues.',
+        severity: 'error',
+      });
+      throw new PrdCompilerQualityError(
+        'PRD compiler quality gate failed after semantic verification.',
+        blockedQuality,
+        repairAttempts,
+        { content: compiled.content, structure: compiled.structure },
+      {
+        reviewerAttempts,
+        semanticVerification: verification,
+        failureStage: 'semantic_verifier',
+        semanticRepairApplied,
+      }
+    );
+  }
   }
 
   return {
@@ -359,7 +416,11 @@ export async function finalizeWithCompilerGates(
     quality: compiled.quality,
     qualityScore: bestScore,
     repairAttempts,
+    reviewerAttempts,
     contentReview,
     contentRefined,
+    semanticVerification,
+    semanticVerificationHistory,
+    semanticRepairApplied,
   };
 }

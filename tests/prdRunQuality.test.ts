@@ -38,6 +38,43 @@ describe('prdRunQuality', () => {
     expect(diagnostics.topRootCauseCodes).toContain('feature_scope_drift_detected');
   });
 
+  it('carries reviewer and verifier diagnostics through base compiler metadata', () => {
+    const diagnostics = buildCompilerRunDiagnostics({
+      quality: makeQuality(),
+      base: {
+        repairAttempts: 3,
+        reviewerModelIds: ['anthropic/claude-sonnet-4'],
+        verifierModelIds: ['mistralai/mistral-small-3.1-24b-instruct'],
+        semanticVerifierVerdict: 'fail',
+        semanticBlockingCodes: ['cross_section_inconsistency'],
+        semanticRepairApplied: true,
+        semanticVerifierSameFamilyFallback: true,
+        semanticVerifierBlockedFamilies: ['claude', 'gemini'],
+        activePhase: 'semantic_verification',
+        lastProgressEvent: 'semantic_verification_start',
+        lastModelAttempt: {
+          role: 'verifier',
+          model: 'mistralai/mistral-small-3.1-24b-instruct',
+          phase: 'semantic_verification',
+          status: 'failed',
+          durationMs: 9123,
+        },
+      },
+    });
+
+    expect(diagnostics.repairAttempts).toBe(3);
+    expect(diagnostics.reviewerModelIds).toEqual(['anthropic/claude-sonnet-4']);
+    expect(diagnostics.verifierModelIds).toEqual(['mistralai/mistral-small-3.1-24b-instruct']);
+    expect(diagnostics.semanticVerifierVerdict).toBe('fail');
+    expect(diagnostics.semanticBlockingCodes).toEqual(['cross_section_inconsistency']);
+    expect(diagnostics.semanticRepairApplied).toBe(true);
+    expect(diagnostics.semanticVerifierSameFamilyFallback).toBe(true);
+    expect(diagnostics.semanticVerifierBlockedFamilies).toEqual(['claude', 'gemini']);
+    expect(diagnostics.activePhase).toBe('semantic_verification');
+    expect(diagnostics.lastProgressEvent).toBe('semantic_verification_start');
+    expect(diagnostics.lastModelAttempt?.model).toBe('mistralai/mistral-small-3.1-24b-instruct');
+  });
+
   it('extracts root-cause codes in stable order', () => {
     const quality = makeQuality();
     expect(topRootCauseCodes(quality.issues, 2)).toEqual([
@@ -64,12 +101,43 @@ describe('prdRunQuality', () => {
     expect(failure.qualityStatus).toBe('failed_quality');
     expect(failure.diagnostics.errorCount).toBe(3);
     expect(failure.diagnostics.repairAttempts).toBe(1);
+    expect(failure.diagnostics.failureStage).toBe('compiler_repair');
+  });
+
+  it('carries active phase diagnostics into cancelled failures', () => {
+    const error: any = new Error('Iterative generation cancelled during semantic verification');
+    error.name = 'AbortError';
+    error.code = 'ERR_CLIENT_DISCONNECT';
+
+    const failure = classifyRunFailure(error, {
+      activePhase: 'semantic_verification',
+      lastProgressEvent: 'semantic_verification_start',
+      lastModelAttempt: {
+        role: 'verifier',
+        model: 'mock/verifier:free',
+        phase: 'semantic_verification',
+        status: 'aborted',
+      },
+    });
+
+    expect(failure.qualityStatus).toBe('cancelled');
+    expect(failure.diagnostics.activePhase).toBe('semantic_verification');
+    expect(failure.diagnostics.lastModelAttempt?.status).toBe('aborted');
   });
 
   it('embeds structured diagnostics marker into iteration log', () => {
-    const diagnostics = buildCompilerRunDiagnostics({ quality: makeQuality(), repairAttempts: 1 });
+    const diagnostics = buildCompilerRunDiagnostics({
+      quality: makeQuality(),
+      repairAttempts: 1,
+      base: {
+        reviewerModelIds: ['anthropic/claude-sonnet-4'],
+        verifierModelIds: ['mistralai/mistral-small-3.1-24b-instruct'],
+      },
+    });
     const next = mergeDiagnosticsIntoIterationLog('# Iteration Protocol', 'failed_quality', diagnostics);
     expect(next).toContain('compiler-run:');
     expect(next).toContain('"qualityStatus":"failed_quality"');
+    expect(next).toContain('"reviewerModelIds":["anthropic/claude-sonnet-4"]');
+    expect(next).toContain('"activePhase":null');
   });
 });

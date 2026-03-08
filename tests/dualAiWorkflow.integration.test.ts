@@ -125,7 +125,7 @@ describe('dualAiWorkflow integration', () => {
   // ─── finalizeWithCompilerGates: repair trigger ───────────────────────────
 
   describe('finalizeWithCompilerGates triggers repair when quality fails', () => {
-    it('calls repairGenerator when initial content fails quality gates', async () => {
+    it('calls repairReviewer when initial content fails quality gates', async () => {
       const badContent = [
         '## System Vision',
         'Partial draft without features.',
@@ -133,7 +133,7 @@ describe('dualAiWorkflow integration', () => {
 
       const goodContent = buildMinimalPrdResponse(2, 'en');
 
-      const repairGenerator = vi.fn(async () => ({
+      const repairReviewer = vi.fn(async () => ({
         content: goodContent,
         model: 'mock/repair',
         usage: usage(200),
@@ -148,11 +148,11 @@ describe('dualAiWorkflow integration', () => {
         mode: 'generate',
         language: 'en',
         originalRequest: 'Generate a complete PRD.',
-        repairGenerator,
+        repairReviewer,
         maxRepairPasses: 2,
       });
 
-      expect(repairGenerator).toHaveBeenCalled();
+      expect(repairReviewer).toHaveBeenCalled();
       expect(result.quality.valid).toBe(true);
       expect(result.repairAttempts.length).toBeGreaterThan(0);
     });
@@ -201,7 +201,7 @@ describe('dualAiWorkflow integration', () => {
         };
       });
 
-      const repairGenerator = vi.fn(async () => ({
+      const repairReviewer = vi.fn(async () => ({
         content: 'repair-attempt',
         model: 'mock/repair',
         usage: usage(10),
@@ -214,13 +214,13 @@ describe('dualAiWorkflow integration', () => {
           language: 'en',
           originalRequest: 'Test degradation guard.',
           maxRepairPasses: 5,
-          repairGenerator,
+          repairReviewer,
           compileDocument,
         }),
       ).rejects.toThrow(/quality gate failed/i);
 
       // Should abort after 2 degradations, not exhaust all 5 passes
-      expect(repairGenerator).toHaveBeenCalledTimes(2);
+      expect(repairReviewer).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -252,7 +252,7 @@ describe('dualAiWorkflow integration', () => {
         };
       });
 
-      const repairGenerator = vi.fn(async (prompt: string, pass: number) => {
+      const repairReviewer = vi.fn(async (prompt: string, pass: number) => {
         capturedRepairPrompts.push(prompt);
         // Return slightly better content each time so degradation limit is not hit
         return {
@@ -269,7 +269,7 @@ describe('dualAiWorkflow integration', () => {
           language: 'en',
           originalRequest: 'Test repair history.',
           maxRepairPasses: 3,
-          repairGenerator,
+          repairReviewer,
           compileDocument,
         }),
       ).rejects.toThrow(/quality gate failed/i);
@@ -330,7 +330,7 @@ describe('dualAiWorkflow integration', () => {
 
   // ─── buildRepairPrompt: repair history block ─────────────────────────────
   // buildRepairPrompt is not exported, so we test indirectly: verify that the
-  // repair prompt passed to repairGenerator contains REPAIR HISTORY when
+  // repair prompt passed to repairReviewer contains REPAIR HISTORY when
   // previous passes exist.
 
   describe('buildRepairPrompt includes repair history block', () => {
@@ -352,7 +352,7 @@ describe('dualAiWorkflow integration', () => {
         },
       }));
 
-      const repairGenerator = vi.fn(async (prompt: string) => {
+      const repairReviewer = vi.fn(async (prompt: string) => {
         if (!firstRepairPrompt) firstRepairPrompt = prompt;
         return {
           content: 'repair-content',
@@ -368,7 +368,7 @@ describe('dualAiWorkflow integration', () => {
           language: 'en',
           originalRequest: 'Test no history on first pass.',
           maxRepairPasses: 1,
-          repairGenerator,
+          repairReviewer,
           compileDocument,
         }),
       ).rejects.toThrow(/quality gate failed/i);

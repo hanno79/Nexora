@@ -15,19 +15,21 @@
 // Formal gefüllte, aber inhaltlich falsch zugeordnete Features werden jetzt gezielt umgeschrieben
 
 import type { PRDStructure } from './prdStructure';
+import type { TokenUsage } from '@shared/schema';
 import {
   buildTemplateInstruction,
   getTemplateProfile,
   isGenericFallback,
   type RequiredSectionKey,
 } from './prdTemplateIntent';
-import { tokenizeToSet, jaccardSimilarity } from './prdTextUtils';
+import { tokenizeToSet, jaccardSimilarity, normalizeForMatch } from './prdTextUtils';
 import { parsePRDToStructure } from './prdParser';
 import { assembleStructureToMarkdown } from './prdAssembler';
 import {
   analyzeFeatureSemanticIssues,
   extractFeatureTargetFields,
   FEATURE_ENRICHABLE_FIELDS,
+  type FeatureEnrichableField,
   isFeatureForceRewriteIssue,
 } from './prdFeatureSemantics';
 import { CANONICAL_PRD_HEADINGS } from './prdCompiler';
@@ -45,6 +47,7 @@ export interface ContentIssue {
   message: string;
   severity: 'error' | 'warning';
   suggestedAction: 'rewrite' | 'expand' | 'enrich' | 'keep';
+  targetFields?: FeatureEnrichableField[];
 }
 
 export interface SectionQualityScore {
@@ -68,7 +71,24 @@ export interface ContentRefineResult {
   reviewResult: ContentReviewResult;
   refined: boolean;
   enrichedFeatureCount?: number;
+  reviewerAttempts?: ReviewerRefineResult[];
 }
+
+export interface ReviewerRefineResult {
+  content: string;
+  model: string;
+  usage: TokenUsage;
+}
+
+export interface TargetedContentRefineResult {
+  content: string;
+  structure: PRDStructure;
+  refined: boolean;
+  enrichedFeatureCount?: number;
+  reviewerAttempts: ReviewerRefineResult[];
+}
+
+export type ReviewerContentGenerator = (prompt: string) => Promise<ReviewerRefineResult>;
 
 // ---------------------------------------------------------------------------
 // Section keys used for pairwise comparison (non-feature, non-intro sections)
@@ -79,6 +99,21 @@ const COMPARABLE_SECTION_KEYS: RequiredSectionKey[] = [
   'systemBoundaries',
   'domainModel',
   'globalBusinessRules',
+  'nonFunctional',
+  'errorHandling',
+  'deployment',
+  'definitionOfDone',
+  'outOfScope',
+  'timelineMilestones',
+  'successCriteria',
+];
+
+const TARGETABLE_SECTION_KEYS: Array<keyof PRDStructure> = [
+  'systemVision',
+  'systemBoundaries',
+  'domainModel',
+  'globalBusinessRules',
+  'featureCatalogueIntro',
   'nonFunctional',
   'errorHandling',
   'deployment',
@@ -351,6 +386,7 @@ export function analyzeContentQuality(
         message: `Feature "${feature.id}: ${feature.name}" has ${hitCount} AI-generated boilerplate fields.`,
         severity: 'warning',
         suggestedAction: 'rewrite',
+        targetFields: collectFeatureAiTargetFields(feature),
       });
     }
   }
@@ -363,7 +399,7 @@ export function analyzeContentQuality(
   const INCOMPLETE_FIELD_THRESHOLD = 5;
 
   for (const feature of structure.features || []) {
-    const missingFields: string[] = [];
+    const missingFields: FeatureEnrichableField[] = [];
     for (const field of FEATURE_ENRICHABLE_FIELDS) {
       const value = (feature as any)[field];
       const filled = Array.isArray(value) ? value.length > 0 : Boolean(value && String(value).trim());
@@ -376,6 +412,7 @@ export function analyzeContentQuality(
         message: `Feature "${feature.id}: ${feature.name}" has ${FEATURE_ENRICHABLE_FIELDS.length - missingFields.length}/${FEATURE_ENRICHABLE_FIELDS.length} fields filled. Missing: ${missingFields.join(', ')}`,
         severity: 'warning',
         suggestedAction: 'enrich',
+        targetFields: missingFields,
       });
     }
   }
@@ -385,7 +422,7 @@ export function analyzeContentQuality(
     const featureNameLower = (feature.name || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
     const featureNameWords = new Set(featureNameLower.split(/\s+/).filter(w => w.length >= 3));
     let substantialCount = 0;
-    const shallowFields: string[] = [];
+    const shallowFields: FeatureEnrichableField[] = [];
 
     for (const field of FEATURE_ENRICHABLE_FIELDS) {
       const value = (feature as any)[field];
@@ -422,6 +459,9 @@ export function analyzeContentQuality(
         message: `Feature "${feature.id}: ${feature.name}" has ${substantialCount}/10 substantial fields. Shallow: ${shallowFields.join(', ')}`,
         severity: 'warning',
         suggestedAction: 'enrich',
+        targetFields: shallowFields.filter((field): field is FeatureEnrichableField =>
+          FEATURE_ENRICHABLE_FIELDS.includes(field as FeatureEnrichableField)
+        ),
       });
     }
   }
@@ -504,8 +544,24 @@ const ENRICHABLE_FIELDS = [
   ...FEATURE_ENRICHABLE_FIELDS,
 ] as const;
 
+function collectFeatureAiTargetFields(feature: PRDStructure['features'][number]): FeatureEnrichableField[] {
+  const targetedFields: FeatureEnrichableField[] = [];
+
+  for (const field of FEATURE_ENRICHABLE_FIELDS) {
+    const text = Array.isArray((feature as any)[field])
+      ? ((feature as any)[field] as string[]).join(' ')
+      : String((feature as any)[field] || '');
+    if (!text.trim()) continue;
+    if (ALL_AI_PATTERNS.some(pattern => pattern.test(text))) {
+      targetedFields.push(field);
+    }
+  }
+
+  return targetedFields.length > 0 ? targetedFields : [...FEATURE_ENRICHABLE_FIELDS];
+}
+
 export function buildFeatureEnrichPrompt(params: {
-  features: Array<{ id: string; name: string; rawContent?: string; missingFields: string[] }>;
+  features: Array<{ id: string; name: string; rawContent?: string; missingFields: FeatureEnrichableField[] }>;
   projectContext: {
     systemVision: string;
     domainModel: string;
@@ -627,6 +683,98 @@ export function parseFeatureEnrichResponse(
   return enriched;
 }
 
+function normalizeSectionValue(value: unknown): string {
+  return normalizeForMatch(String(value || ''));
+}
+
+function normalizeFeatureFieldValue(
+  feature: PRDStructure['features'][number],
+  field: FeatureEnrichableField
+): string {
+  const value = (feature as any)[field];
+  if (Array.isArray(value)) {
+    return value.map(entry => normalizeForMatch(String(entry || ''))).join('|');
+  }
+  return normalizeForMatch(String(value || ''));
+}
+
+function featureHasStructuredContent(feature: PRDStructure['features'][number]): boolean {
+  return FEATURE_ENRICHABLE_FIELDS.some(field => normalizeFeatureFieldValue(feature, field).length > 0);
+}
+
+function normalizeOtherSectionsForGuard(otherSections: Record<string, string>): string {
+  return Object.entries(otherSections || {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}:${normalizeForMatch(value)}`)
+    .join('|');
+}
+
+function isFeatureTargeted(issue: ContentIssue): boolean {
+  return issue.sectionKey.startsWith('feature:') && issue.suggestedAction !== 'keep';
+}
+
+function resolveFeatureTargetFields(issue: ContentIssue) {
+  if (issue.targetFields && issue.targetFields.length > 0) {
+    return Array.from(new Set(issue.targetFields));
+  }
+  const fromMessage = extractFeatureTargetFields(issue.message);
+  if (fromMessage.length > 0) return fromMessage;
+  return [...FEATURE_ENRICHABLE_FIELDS];
+}
+
+function validateTargetedRefinement(params: {
+  original: PRDStructure;
+  refined: PRDStructure;
+  allowedSections: string[];
+}): boolean {
+  const allowedSections = new Set(params.allowedSections);
+
+  if (normalizeOtherSectionsForGuard(params.original.otherSections || {}) !== normalizeOtherSectionsForGuard(params.refined.otherSections || {})) {
+    return false;
+  }
+
+  for (const key of TARGETABLE_SECTION_KEYS) {
+    if (allowedSections.has(String(key))) continue;
+    if (normalizeSectionValue((params.original as any)[key]) !== normalizeSectionValue((params.refined as any)[key])) {
+      return false;
+    }
+  }
+
+  const originalFeatures = params.original.features || [];
+  const refinedFeatures = params.refined.features || [];
+  if (originalFeatures.length !== refinedFeatures.length) return false;
+
+  for (let index = 0; index < originalFeatures.length; index++) {
+    const originalFeature = originalFeatures[index];
+    const refinedFeature = refinedFeatures[index];
+    if (!refinedFeature || originalFeature.id !== refinedFeature.id) return false;
+    if (normalizeForMatch(String(originalFeature.name || '')) !== normalizeForMatch(String(refinedFeature.name || ''))) {
+      return false;
+    }
+
+    for (const field of FEATURE_ENRICHABLE_FIELDS) {
+      if (normalizeFeatureFieldValue(originalFeature, field) !== normalizeFeatureFieldValue(refinedFeature, field)) {
+        return false;
+      }
+    }
+
+    const originalHasStructuredContent = featureHasStructuredContent(originalFeature);
+    const refinedHasStructuredContent = featureHasStructuredContent(refinedFeature);
+    if (originalHasStructuredContent !== refinedHasStructuredContent) {
+      return false;
+    }
+
+    if (
+      !originalHasStructuredContent
+      && normalizeForMatch(String(originalFeature.rawContent || '')) !== normalizeForMatch(String(refinedFeature.rawContent || ''))
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // AI-based content refinement prompt builder
 // ---------------------------------------------------------------------------
@@ -657,6 +805,9 @@ function buildContentRefinePrompt(params: {
     .join('\n');
 
   const sectionList = sectionsToRewrite.join(', ');
+  const targetList = [
+    sectionList ? `Sections: ${sectionList}` : '',
+  ].filter(Boolean).join(' | ');
 
   const langNote = language === 'de'
     ? 'Schreibe ALLE Inhalte auf Deutsch. Behalte nur die englischen H2-Headings bei.'
@@ -672,24 +823,26 @@ ${featureSummary || '(none)'}
 ISSUES FOUND:
 ${issueList}
 
-SECTIONS TO REWRITE: ${sectionList}
+TARGETS TO REWRITE: ${targetList || '(none)'}
 
 CURRENT DOCUMENT:
 ${params.assembledMarkdown}
 
 INSTRUCTIONS:
-1. Rewrite ONLY the sections listed above (${sectionList}).
-2. Keep ALL other sections EXACTLY as they are - do not modify them.
-3. Make each rewritten section project-specific:
+1. Rewrite ONLY the targeted top-level section fields listed above (${targetList || 'none'}).
+2. Keep ALL other sections and ALL feature blocks EXACTLY as they are - do not modify them.
+3. Do NOT add, remove, rename, or reorder features. Preserve all existing feature IDs and their order.
+4. Do NOT add any extra top-level sections or hidden headings.
+5. Make each rewritten section project-specific:
    - Reference actual features by name/ID where appropriate
    - Use concrete, domain-specific language instead of generic filler
    - Each section must have distinct, unique content (no repetition between sections)
-4. Section-specific guidance:
+6. Section-specific guidance:
    - "definitionOfDone": Write as a concrete checklist (what must be true for release)
    - "outOfScope": List specific exclusions relevant to THIS project
    - "timelineMilestones": Define phases with feature assignments
    - "successCriteria": Define measurable, testable success metrics
-5. ${langNote}
+7. ${langNote}
 
 STRICT OUTPUT RULES:
 - Output the COMPLETE PRD in Markdown (all sections, not just the rewritten ones)
@@ -704,121 +857,118 @@ ${canonicalHeadings}
 // Public: Full content review + optional AI refinement
 // ---------------------------------------------------------------------------
 
-export async function reviewAndRefineContent(options: {
+export async function applyTargetedContentRefinement(options: {
   content: string;
   structure: PRDStructure;
+  issues: ContentIssue[];
   language: SupportedLanguage;
   templateCategory?: string;
-  fallbackSections?: string[];
-  refineGenerator?: (prompt: string) => Promise<{ content: string; model: string; usage: any }>;
-}): Promise<ContentRefineResult> {
-  const { language, templateCategory, fallbackSections, refineGenerator } = options;
+  reviewer?: ReviewerContentGenerator;
+}): Promise<TargetedContentRefineResult> {
+  const { language, templateCategory, issues, reviewer } = options;
   let { content, structure } = options;
+  const reviewerAttempts: ReviewerRefineResult[] = [];
   let enrichedFeatureCount = 0;
 
-  // Step 1: Deterministic content analysis
-  const reviewResult = analyzeContentQuality(structure, {
-    templateCategory,
-    fallbackSections,
-  });
-
-  if (!refineGenerator) {
-    return { content, structure, reviewResult, refined: false };
+  if (!reviewer) {
+    return { content, structure, refined: false, reviewerAttempts };
   }
 
-  // Step 2: Feature enrichment — fill incomplete OR shallow features via targeted AI call
-  const enrichIssues = reviewResult.issues.filter(i =>
-    i.code === 'feature_fields_incomplete'
-      || i.code === 'feature_content_shallow'
-      || i.code === 'feature_semantic_mismatch'
-      || i.code === 'feature_placeholder_content'
-  );
-  if (enrichIssues.length > 0) {
-    const enrichTargets = new Map<string, { id: string; name: string; rawContent?: string; missingFields: string[] }>();
+  const featureIssues = issues.filter(isFeatureTargeted);
+  if (featureIssues.length > 0) {
+    const enrichTargets = new Map<string, { id: string; name: string; rawContent?: string; missingFields: FeatureEnrichableField[] }>();
     const forceReplaceFeatureIds = new Set<string>();
 
-    for (const issue of enrichIssues) {
-      const fId = issue.sectionKey.replace('feature:', '');
-      const feature = (structure.features || []).find(f => f.id === fId);
-      const targetFields = extractFeatureTargetFields(issue.message);
-      const existing = enrichTargets.get(fId) || {
-        id: fId,
-        name: feature?.name || fId,
+    for (const issue of featureIssues) {
+      const featureId = issue.sectionKey.replace('feature:', '');
+      const feature = (structure.features || []).find(entry => entry.id === featureId);
+      const existing = enrichTargets.get(featureId) || {
+        id: featureId,
+        name: feature?.name || featureId,
         rawContent: feature?.rawContent,
         missingFields: [],
       };
-      existing.missingFields = Array.from(new Set([...existing.missingFields, ...targetFields]));
-      enrichTargets.set(fId, existing);
-      if (isFeatureForceRewriteIssue(issue.code)) {
-        forceReplaceFeatureIds.add(fId);
+      existing.missingFields = Array.from(new Set([
+        ...existing.missingFields,
+        ...resolveFeatureTargetFields(issue),
+      ]));
+      enrichTargets.set(featureId, existing);
+      if (isFeatureForceRewriteIssue(issue.code) || issue.suggestedAction === 'rewrite') {
+        forceReplaceFeatureIds.add(featureId);
       }
     }
 
-    const featuresToEnrich = Array.from(enrichTargets.values()).filter(f => f.missingFields.length > 0);
-
+    const featuresToEnrich = Array.from(enrichTargets.values()).filter(feature => feature.missingFields.length > 0);
     if (featuresToEnrich.length > 0) {
       const enrichPrompt = buildFeatureEnrichPrompt({
         features: featuresToEnrich,
         projectContext: {
           systemVision: String(structure.systemVision || '').trim(),
           domainModel: String(structure.domainModel || '').trim(),
-          otherFeatures: (structure.features || []).map(f => ({ id: f.id, name: f.name })),
+          otherFeatures: (structure.features || []).map(feature => ({ id: feature.id, name: feature.name })),
         },
         language,
       });
 
       let enrichmentAttempts = 0;
-      const MAX_ENRICHMENT_ATTEMPTS = 2;
+      const maxEnrichmentAttempts = 2;
       let enrichmentSucceeded = false;
 
-      while (enrichmentAttempts < MAX_ENRICHMENT_ATTEMPTS && !enrichmentSucceeded) {
+      while (enrichmentAttempts < maxEnrichmentAttempts && !enrichmentSucceeded) {
         enrichmentAttempts++;
         try {
-          const enrichResult = await refineGenerator(enrichPrompt);
+          const enrichResult = await reviewer(enrichPrompt);
+          reviewerAttempts.push(enrichResult);
           const enrichResponse = String(enrichResult.content || '').trim();
-          if (enrichResponse.length > 50) {
-            const enriched = parseFeatureEnrichResponse(
-              enrichResponse,
-              featuresToEnrich.map(f => f.id)
-            );
+          if (enrichResponse.length <= 50) continue;
 
-            // Merge enriched fields into structure
-            // For shallow features: also replace thin existing content if enrichment is longer
-            const shallowFeatureIds = new Set(
-              enrichIssues.filter(i => i.code === 'feature_content_shallow').map(i => i.sectionKey.replace('feature:', ''))
+          const enriched = parseFeatureEnrichResponse(
+            enrichResponse,
+            featuresToEnrich.map(feature => feature.id)
+          );
+          const shallowFeatureIds = new Set(
+            featureIssues
+              .filter(issue => issue.code === 'feature_content_shallow')
+              .map(issue => issue.sectionKey.replace('feature:', ''))
+          );
+
+          if (enriched.size === 0) continue;
+
+          let appliedFieldsThisPass = 0;
+          const updatedFeatures = (structure.features || []).map(feature => {
+            const fields = enriched.get(feature.id);
+            if (!fields) return feature;
+            const updated = { ...feature };
+            const isShallow = shallowFeatureIds.has(feature.id);
+            const forceReplace = forceReplaceFeatureIds.has(feature.id);
+            const allowedFields = new Set(
+              (enrichTargets.get(feature.id)?.missingFields || []).map(field => String(field))
             );
-            if (enriched.size > 0) {
-              const updatedFeatures = (structure.features || []).map(feature => {
-                const fields = enriched.get(feature.id);
-                if (!fields) return feature;
-                const updated = { ...feature };
-                const isShallow = shallowFeatureIds.has(feature.id);
-                const forceReplace = forceReplaceFeatureIds.has(feature.id);
-                for (const [key, value] of Object.entries(fields)) {
-                  const existing = (updated as any)[key];
-                  const isEmpty = Array.isArray(existing)
-                    ? existing.length === 0
-                    : !existing || !String(existing).trim();
-                  // For shallow features: also replace if enrichment is substantially longer
-                  const shouldReplace = forceReplace || isEmpty || (isShallow && (() => {
-                    const existingLen = Array.isArray(existing) ? existing.join(' ').length : String(existing || '').length;
-                    const newLen = Array.isArray(value) ? (value as string[]).join(' ').length : String(value || '').length;
-                    return newLen > existingLen * 1.5; // Replace if enrichment is 50%+ longer
-                  })());
-                  if (shouldReplace) {
-                    (updated as any)[key] = value;
-                    enrichedFeatureCount++;
-                  }
-                }
-                return updated;
-              });
-              structure = { ...structure, features: updatedFeatures };
-              content = assembleStructureToMarkdown(structure);
-              enrichmentSucceeded = true;
+            for (const [key, value] of Object.entries(fields)) {
+              if (!allowedFields.has(key)) continue;
+              const existing = (updated as any)[key];
+              const isEmpty = Array.isArray(existing)
+                ? existing.length === 0
+                : !existing || !String(existing).trim();
+              const shouldReplace = forceReplace || isEmpty || (isShallow && (() => {
+                const existingLen = Array.isArray(existing) ? existing.join(' ').length : String(existing || '').length;
+                const newLen = Array.isArray(value) ? (value as string[]).join(' ').length : String(value || '').length;
+                return newLen > existingLen * 1.5;
+              })());
+              if (shouldReplace) {
+                (updated as any)[key] = value;
+                enrichedFeatureCount++;
+                appliedFieldsThisPass++;
+              }
             }
-          }
+            return updated;
+          });
+          if (appliedFieldsThisPass === 0) continue;
+          structure = { ...structure, features: updatedFeatures };
+          content = assembleStructureToMarkdown(structure);
+          enrichmentSucceeded = true;
         } catch (err) {
-          logger.warn(`Feature enrichment attempt ${enrichmentAttempts}/${MAX_ENRICHMENT_ATTEMPTS} failed`, {
+          logger.warn(`Feature enrichment attempt ${enrichmentAttempts}/${maxEnrichmentAttempts} failed`, {
             error: err instanceof Error ? err.message : 'Unknown error',
             stage: 'feature_enrichment',
             attempt: enrichmentAttempts,
@@ -826,78 +976,146 @@ export async function reviewAndRefineContent(options: {
         }
       }
 
-      if (!enrichmentSucceeded && featuresToEnrich.length > 0) {
-        reviewResult.issues.push({
-          code: 'feature_enrichment_failed',
-          sectionKey: 'features',
-          message: `AI feature enrichment failed after ${enrichmentAttempts} attempts. ${featuresToEnrich.length} feature(s) may have incomplete fields.`,
-          severity: 'warning',
-          suggestedAction: 'enrich',
+      if (!enrichmentSucceeded) {
+        logger.warn('Targeted feature enrichment produced no usable update', {
+          stage: 'feature_enrichment',
+          targetCount: featuresToEnrich.length,
         });
       }
     }
   }
 
-  // Step 3: Section refinement — rewrite fallback-filled or boilerplate sections
-  const rewriteIssues = reviewResult.issues.filter(i => i.suggestedAction === 'rewrite');
-  if (rewriteIssues.length === 0) {
-    return { content, structure, reviewResult, refined: enrichedFeatureCount > 0, enrichedFeatureCount };
+  const sectionsToRewrite = Array.from(new Set(
+    issues
+      .filter(issue => issue.suggestedAction === 'rewrite' && !issue.sectionKey.startsWith('feature:'))
+      .map(issue => issue.sectionKey)
+      .filter(Boolean)
+  ));
+  if (sectionsToRewrite.length === 0) {
+    return {
+      content,
+      structure,
+      refined: enrichedFeatureCount > 0,
+      enrichedFeatureCount,
+      reviewerAttempts,
+    };
   }
 
   const refinePrompt = buildContentRefinePrompt({
     assembledMarkdown: content,
     structure,
-    issues: reviewResult.issues,
-    sectionsToRewrite: reviewResult.sectionsToRewrite,
+    issues,
+    sectionsToRewrite,
     language,
     templateCategory,
   });
 
   try {
-    const result = await refineGenerator(refinePrompt);
+    const result = await reviewer(refinePrompt);
+    reviewerAttempts.push(result);
     const refinedContent = String(result.content || '').trim();
 
     if (!refinedContent || refinedContent.length < content.length * 0.5) {
-      return { content, structure, reviewResult, refined: enrichedFeatureCount > 0, enrichedFeatureCount };
+      return {
+        content,
+        structure,
+        refined: enrichedFeatureCount > 0,
+        enrichedFeatureCount,
+        reviewerAttempts,
+      };
     }
 
     let refinedStructure: PRDStructure;
     try {
       refinedStructure = parsePRDToStructure(refinedContent);
     } catch {
-      return { content, structure, reviewResult, refined: enrichedFeatureCount > 0, enrichedFeatureCount };
+      return {
+        content,
+        structure,
+        refined: enrichedFeatureCount > 0,
+        enrichedFeatureCount,
+        reviewerAttempts,
+      };
     }
 
-    // Validate that features were preserved (strict: max 5% loss)
-    const originalFeatureCount = (structure.features || []).length;
-    const refinedFeatureCount = (refinedStructure.features || []).length;
-    if (originalFeatureCount > 0 && refinedFeatureCount < originalFeatureCount * 0.95) {
-      return { content, structure, reviewResult, refined: enrichedFeatureCount > 0, enrichedFeatureCount };
-    }
-
-    // Validate feature field completeness wasn't degraded
-    if (originalFeatureCount > 0 && refinedFeatureCount >= originalFeatureCount * 0.95) {
-      const countFilledFields = (features: any[]) => features.reduce((sum, f) => {
-        return sum + ENRICHABLE_FIELDS.filter(field => {
-          const v = (f as any)[field];
-          return Array.isArray(v) ? v.length > 0 : Boolean(v && String(v).trim());
-        }).length;
-      }, 0);
-      const originalFilled = countFilledFields(structure.features || []);
-      const refinedFilled = countFilledFields(refinedStructure.features || []);
-      if (originalFilled > 0 && refinedFilled < originalFilled * 0.9) {
-        return { content, structure, reviewResult, refined: enrichedFeatureCount > 0, enrichedFeatureCount };
-      }
+    if (!validateTargetedRefinement({
+      original: structure,
+      refined: refinedStructure,
+      allowedSections: sectionsToRewrite,
+    })) {
+      return {
+        content,
+        structure,
+        refined: enrichedFeatureCount > 0,
+        enrichedFeatureCount,
+        reviewerAttempts,
+      };
     }
 
     return {
       content: refinedContent,
       structure: refinedStructure,
-      reviewResult,
       refined: true,
       enrichedFeatureCount,
+      reviewerAttempts,
     };
   } catch {
-    return { content, structure, reviewResult, refined: enrichedFeatureCount > 0, enrichedFeatureCount };
+    return {
+      content,
+      structure,
+      refined: enrichedFeatureCount > 0,
+      enrichedFeatureCount,
+      reviewerAttempts,
+    };
   }
+}
+
+export async function reviewAndRefineContent(options: {
+  content: string;
+  structure: PRDStructure;
+  language: SupportedLanguage;
+  templateCategory?: string;
+  fallbackSections?: string[];
+  reviewer?: ReviewerContentGenerator;
+}): Promise<ContentRefineResult> {
+  const { language, templateCategory, fallbackSections, reviewer } = options;
+  let { content, structure } = options;
+
+  // Step 1: Deterministic content analysis
+  const reviewResult = analyzeContentQuality(structure, {
+    templateCategory,
+    fallbackSections,
+  });
+
+  if (!reviewer) {
+    return { content, structure, reviewResult, refined: false, reviewerAttempts: [] };
+  }
+
+  const refineResult = await applyTargetedContentRefinement({
+    content,
+    structure,
+    issues: reviewResult.issues,
+    language,
+    templateCategory,
+    reviewer,
+  });
+
+  if (!refineResult.refined && reviewResult.issues.some(issue => isFeatureTargeted(issue))) {
+    reviewResult.issues.push({
+      code: 'feature_enrichment_failed',
+      sectionKey: 'features',
+      message: 'Reviewer-based feature repair produced no safe targeted update.',
+      severity: 'warning',
+      suggestedAction: 'enrich',
+    });
+  }
+
+  return {
+    content: refineResult.content,
+    structure: refineResult.structure,
+    reviewResult,
+    refined: refineResult.refined,
+    enrichedFeatureCount: refineResult.enrichedFeatureCount,
+    reviewerAttempts: refineResult.reviewerAttempts,
+  };
 }

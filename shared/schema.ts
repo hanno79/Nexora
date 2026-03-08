@@ -32,7 +32,7 @@ export const users = pgTable("users", {
   profileImageUrl: varchar("profile_image_url"),
   company: varchar("company"),
   role: varchar("role"),
-  aiPreferences: jsonb("ai_preferences"), // AI model preferences: { generatorModel, reviewerModel, tier }
+  aiPreferences: jsonb("ai_preferences"), // AI model preferences: { generatorModel, reviewerModel, verifierModel, tier }
   uiLanguage: varchar("ui_language").default('auto'), // UI language: 'auto' (browser), 'en', 'de', etc.
   defaultContentLanguage: varchar("default_content_language").default('auto'), // Default language for generated content
   createdAt: timestamp("created_at").defaultNow(),
@@ -45,11 +45,13 @@ export type User = typeof users.$inferSelect;
 const tierDefaultsSchema = z.object({
   generator: z.string().optional(),
   reviewer: z.string().optional(),
+  verifier: z.string().optional(),
 });
 
 const tierModelSetSchema = z.object({
   generatorModel: z.string().optional(),
   reviewerModel: z.string().optional(),
+  verifierModel: z.string().optional(),
   fallbackModel: z.string().optional(),
   fallbackChain: z.array(z.string()).optional(),
 });
@@ -57,6 +59,7 @@ const tierModelSetSchema = z.object({
 export const aiPreferencesSchema = z.object({
   generatorModel: z.string().optional(),
   reviewerModel: z.string().optional(),
+  verifierModel: z.string().optional(),
   fallbackModel: z.string().optional(),
   fallbackChain: z.array(z.string()).optional(),
   tier: z.enum(['development', 'production', 'premium']).optional(),
@@ -247,7 +250,7 @@ export const aiUsage = pgTable("ai_usage", {
 export type AiUsage = typeof aiUsage.$inferSelect;
 
 export const insertAiUsageSchema = createInsertSchema(aiUsage, {
-  modelType: z.enum(['generator', 'reviewer']),
+  modelType: z.enum(['generator', 'reviewer', 'verifier']),
   tier: z.enum(['development', 'production', 'premium']),
   inputTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),

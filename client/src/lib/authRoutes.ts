@@ -1,5 +1,15 @@
+/*
+Author: rahn
+Datum: 08.03.2026
+Version: 1.0
+Beschreibung: Frontend-Hilfslogik fuer Login-, Signup- und Auth-Provider-Routen.
+*/
+
+// ÄNDERUNG 08.03.2026: Header, Aenderungsdokumentation und explizite Standard-Auth-Provider-Markierung fuer Phase-0-Paket-2 ergaenzt.
+
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const authProviderRaw = import.meta.env.VITE_AUTH_PROVIDER;
+const DEFAULT_FRONTEND_AUTH_PROVIDER = "clerk" as const;
 
 function getForcedFrontendAuthProvider(): "clerk" | "replit" | null {
   if (typeof authProviderRaw !== "string") return null;
@@ -16,8 +26,8 @@ export function hasClerkFrontendConfig() {
 export function getFrontendAuthProvider(): "clerk" | "replit" {
   const forced = getForcedFrontendAuthProvider();
   if (forced) return forced;
-  // Default to Clerk unless Replit is explicitly requested.
-  return "clerk";
+  // FALLBACK 08.03.2026: Wenn kein Frontend-Auth-Provider gesetzt ist, wird explizit Clerk verwendet.
+  return DEFAULT_FRONTEND_AUTH_PROVIDER;
 }
 
 export function getLoginPath() {

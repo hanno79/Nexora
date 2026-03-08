@@ -1,57 +1,9 @@
 import { db } from "./db";
 import { aiUsage, type InsertAiUsage } from "@shared/schema";
 import { eq, desc, gte, and, count, sum, sql } from "drizzle-orm";
-import { fetchOpenRouterModels } from "./openrouter";
 import { logger } from "./logger";
 import { normalizeTokenCount } from "./tokenMath";
-
-// Hardcoded fallback pricing (per token) for common models when OpenRouter API is unavailable.
-// Prices in USD per token (prompt / completion). Updated as of 2025-05.
-// ÄNDERUNG 03.03.2026: Groq und Cerebras Preise hinzugefügt
-const FALLBACK_PRICING: Record<string, { prompt: number; completion: number }> = {
-  // OpenRouter Modelle
-  "anthropic/claude-sonnet-4": { prompt: 3e-6, completion: 15e-6 },
-  "anthropic/claude-haiku-4": { prompt: 0.8e-6, completion: 4e-6 },
-  "anthropic/claude-3.5-sonnet": { prompt: 3e-6, completion: 15e-6 },
-  "google/gemini-2.5-flash": { prompt: 0.15e-6, completion: 0.6e-6 },
-  "google/gemini-2.0-flash-exp:free": { prompt: 0, completion: 0 },
-  "openai/gpt-4o": { prompt: 2.5e-6, completion: 10e-6 },
-  "openai/gpt-4o-mini": { prompt: 0.15e-6, completion: 0.6e-6 },
-  "deepseek/deepseek-r1-0528:free": { prompt: 0, completion: 0 },
-  "meta-llama/llama-3.3-70b-instruct:free": { prompt: 0, completion: 0 },
-  
-  // Groq Modelle (Preise pro 1M Tokens -> pro Token)
-  "llama-3.1-8b-instant": { prompt: 0.05e-6, completion: 0.08e-6 },
-  "gemma2-9b-it": { prompt: 0.20e-6, completion: 0.20e-6 },
-  "llama-3.3-70b-versatile": { prompt: 0.59e-6, completion: 0.79e-6 },
-  "mixtral-8x7b-32768": { prompt: 0.24e-6, completion: 0.24e-6 },
-  "llama3-70b-8192": { prompt: 0.59e-6, completion: 0.79e-6 },
-  "llama3-8b-8192": { prompt: 0.05e-6, completion: 0.08e-6 },
-  
-  // Cerebras Modelle (Preise pro 1M Tokens -> pro Token)
-  "llama3.1-8b": { prompt: 0.10e-6, completion: 0.10e-6 },
-  "llama-3.3-70b": { prompt: 0.85e-6, completion: 1.20e-6 },
-};
-
-/**
- * Ermittelt die Token-Preise eines Modells aus der gecachten OpenRouter-Modellliste.
- * Falls die API nicht verfügbar ist, wird eine hardcodierte Preisliste als Fallback genutzt.
- */
-async function getModelPricing(modelId: string): Promise<{ prompt: number; completion: number }> {
-  try {
-    const models = await fetchOpenRouterModels();
-    const match = models.find(m => m.id === modelId);
-    if (match) {
-      return {
-        prompt: parseFloat(match.pricing.prompt) || 0,
-        completion: parseFloat(match.pricing.completion) || 0,
-      };
-    }
-  } catch {
-    // API unavailable — fall through to hardcoded pricing
-  }
-  return FALLBACK_PRICING[modelId] || { prompt: 0, completion: 0 };
-}
+import { getModelPricing } from "./modelPricing";
 
 /**
  * Protokolliert die KI-Nutzung in der Datenbank für Kostenverfolgung und Auswertung.

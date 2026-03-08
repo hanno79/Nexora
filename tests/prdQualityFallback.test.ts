@@ -150,6 +150,18 @@ describe('pickBestDegradedResult', () => {
     expect(result!.repairAttempts).toHaveLength(2);
   });
 
+  it('returns null when semantic verifier blocked the run', () => {
+    const primaryError = new PrdCompilerQualityError(
+      'semantic blocked',
+      makeQualityReport(),
+      [{ content: 'repair-1', model: 'a', usage: { prompt_tokens: 0, completion_tokens: 10, total_tokens: 10 } }],
+      undefined,
+      { failureStage: 'semantic_verifier' }
+    );
+
+    expect(pickBestDegradedResult(primaryError, new Error('runtime error'))).toBeNull();
+  });
+
   it('marks excessive fallback degradation as non-acceptable when requested', () => {
     const rejected = shouldRejectDegradedResult({
       quality: makeQualityReport({

@@ -34,6 +34,7 @@ gui-audit-results.md
 .tmp_*.png
 .tmp_*.txt
 .tmp_*.b64
+diff_output.txt
 
 # Empty artifacts from debug/test runs
 fallbackModel

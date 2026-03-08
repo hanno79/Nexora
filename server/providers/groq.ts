@@ -150,7 +150,7 @@ export class GroqProvider extends BaseAIProvider {
   }
 
   async callModel(options: CallOptions): Promise<AIResponse> {
-    const { model, messages, temperature = 0.7, maxTokens, stream, response: expressResponse } = options;
+    const { model, messages, temperature = 0.7, maxTokens, stream, response: expressResponse, abortSignal } = options;
 
     this.logMessage(`Calling Groq model: ${model}`, { temperature, maxTokens, stream });
 
@@ -174,7 +174,7 @@ export class GroqProvider extends BaseAIProvider {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(requestBody),
-      });
+      }, undefined, abortSignal);
 
       if (!fetchResponse.ok) {
         const errorText = await fetchResponse.text();

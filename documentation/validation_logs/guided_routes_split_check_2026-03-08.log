@@ -1,0 +1,15 @@
+
+> rest-express@1.0.0 check
+> tsc
+
+server/guidedFinalizeRoutes.ts(16,8): error TS2307: Cannot find module './aiRouteCompilerSupport' or its corresponding type declarations.
+server/guidedFinalizeRoutes.ts(29,8): error TS2307: Cannot find module './guidedRoutePersistence' or its corresponding type declarations.
+server/guidedFinalizeStreamRoute.ts(16,8): error TS2307: Cannot find module './aiRouteCompilerSupport' or its corresponding type declarations.
+server/guidedFinalizeStreamRoute.ts(28,8): error TS2307: Cannot find module './guidedRoutePersistence' or its corresponding type declarations.
+server/guidedRouteRegistrySupport.ts(12,47): error TS2307: Cannot find module './aiRouteCompilerSupport' or its corresponding type declarations.
+server/routes.ts(52,8): error TS2307: Cannot find module './aiRouteCompilerSupport' or its corresponding type declarations.
+server/routes.ts(79,15): error TS2305: Module '"./openrouterFallback"' has no exported member 'ModelCallAttemptUpdate'.
+server/routes.ts(1459,9): error TS2554: Expected 3-9 arguments, but got 11.
+server/routes.ts(1459,10): error TS7006: Parameter 'attempt' implicitly has an 'any' type.
+server/routes.ts(1477,11): error TS2554: Expected 1 arguments, but got 2.
+server/routes.ts(1734,49): error TS2554: Expected 1 arguments, but got 2.

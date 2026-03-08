@@ -142,6 +142,7 @@ export function createMockOpenRouterClient(options: MockOpenRouterOptions = {}) 
     getModels: vi.fn(() => ({
       generator: 'mock/generator:free',
       reviewer: 'mock/reviewer:free',
+      verifier: 'mock/verifier:free',
       cost: '$0/Million Tokens',
     })),
     // expose internal state for assertions

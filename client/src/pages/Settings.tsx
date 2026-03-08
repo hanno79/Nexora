@@ -27,6 +27,7 @@ import {
   AiModelSettingsSection,
   ProviderFilterSection,
   AiUsageSection,
+  CompilerRunMetricsSection,
 } from "@/components/settings";
 
 export default function Settings() {
@@ -122,6 +123,9 @@ export default function Settings() {
 
           {/* KI-Nutzung & Kosten */}
           <AiUsageSection />
+
+          {/* Compiler-Run-Metriken */}
+          <CompilerRunMetricsSection />
 
           {/* Linear-Integration */}
           <Card>

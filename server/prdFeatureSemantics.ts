@@ -25,6 +25,7 @@ export interface FeatureSemanticIssue {
   message: string;
   severity: 'error' | 'warning';
   suggestedAction: 'rewrite' | 'expand' | 'enrich' | 'keep';
+  targetFields?: FeatureEnrichableField[];
 }
 
 type IntentFamily = {
@@ -211,6 +212,7 @@ export function analyzeFeatureSemanticIssues(features: FeatureSpec[]): FeatureSe
         message: `Feature "${feature.id}: ${feature.name}" contains unresolved placeholder content. Rewrite: ${placeholderFields.join(', ')}`,
         severity: 'warning',
         suggestedAction: 'enrich',
+        targetFields: placeholderFields,
       });
     }
 
@@ -240,6 +242,7 @@ export function analyzeFeatureSemanticIssues(features: FeatureSpec[]): FeatureSe
       message: `Feature "${feature.id}: ${feature.name}" aligns more strongly with ${dominantForeign.family.label} than with the expected intent ${expectedFamilies.map(family => family.label).join(' / ')}. Rewrite: ${FEATURE_ENRICHABLE_FIELDS.join(', ')}`,
       severity: 'warning',
       suggestedAction: 'enrich',
+      targetFields: [...FEATURE_ENRICHABLE_FIELDS],
     });
   }
 

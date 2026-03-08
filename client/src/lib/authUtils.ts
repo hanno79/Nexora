@@ -1,4 +1,12 @@
-// Utility for checking unauthorized errors - from javascript_log_in_with_replit blueprint
+/*
+Author: rahn
+Datum: 08.03.2026
+Version: 1.0
+Beschreibung: Hilfsfunktion zur Erkennung nicht autorisierter API-Fehler.
+*/
+
+// ÄNDERUNG 08.03.2026: Header und Aenderungsdokumentation fuer Phase-0-Paket-2 ergaenzt.
+
 export function isUnauthorizedError(error: unknown): boolean {
   if (!error || typeof error !== "object") {
     return false;

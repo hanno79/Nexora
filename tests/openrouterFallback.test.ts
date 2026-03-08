@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { OpenRouterClient, clearGlobalCooldown } from '../server/openrouter';
+import { getModelFamily } from '../server/modelFamily';
 
 const usage = { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 };
 
@@ -16,7 +17,7 @@ describe('OpenRouterClient fallback behavior', () => {
     client.setPreferredModel('fallback', 'deepseek/deepseek-r1-0528:free');
 
     const attempts: string[] = [];
-    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer') => {
+    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
       const attemptedModel = client.getPreferredModel(modelType)!;
       attempts.push(attemptedModel);
       if (attemptedModel === 'minimax/minimax-m2.5') {
@@ -41,7 +42,7 @@ describe('OpenRouterClient fallback behavior', () => {
     client.setPreferredModel('fallback', 'anthropic/claude-sonnet-4');
 
     const attempts: string[] = [];
-    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer') => {
+    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
       const attemptedModel = client.getPreferredModel(modelType)!;
       attempts.push(attemptedModel);
       if (attemptedModel === 'minimax/minimax-m2.5') {
@@ -58,5 +59,102 @@ describe('OpenRouterClient fallback behavior', () => {
       'anthropic/claude-sonnet-4',
       'anthropic/claude-sonnet-4',
     ]);
+  });
+
+  it('defers blocked verifier families until an independent family is tried first', async () => {
+    const client = new OpenRouterClient('test-key', 'production');
+    client.setPreferredModel('verifier', 'anthropic/claude-sonnet-4');
+    client.setFallbackChain(['anthropic/claude-haiku-4']);
+
+    const attempts: string[] = [];
+    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
+      const attemptedModel = client.getPreferredModel(modelType)!;
+      attempts.push(attemptedModel);
+      return { content: 'ok', usage, model: attemptedModel };
+    });
+
+    const result = await client.callWithFallback(
+      'verifier',
+      'system',
+      'user',
+      1200,
+      undefined,
+      undefined,
+      {
+        avoidModelFamilies: ['claude', 'gemini'],
+        allowSameFamilyFallback: true,
+      },
+    );
+
+    expect(result.model).toBe('mistralai/mistral-small-3.1-24b-instruct');
+    expect(attempts).toEqual(['mistralai/mistral-small-3.1-24b-instruct']);
+  });
+
+  it('allows same-family verifier fallback only after independent candidates fail', async () => {
+    const client = new OpenRouterClient('test-key', 'production');
+    client.setPreferredModel('verifier', 'anthropic/claude-sonnet-4');
+    client.setFallbackChain(['anthropic/claude-haiku-4']);
+
+    const attempts: string[] = [];
+    const sameFamilyFallbacks: string[] = [];
+    // ÄNDERUNG 08.03.2026: Alle unabhaengigen Kandidaten kontrolliert fehlschlagen lassen,
+    // damit der Test auch bei aktiven Direct-Provider-Keys verifiziert, dass Same-Family-
+    // Fallbacks erst nach allen unabhaengigen Versuchen zugelassen werden.
+    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
+      const attemptedModel = client.getPreferredModel(modelType)!;
+      attempts.push(attemptedModel);
+      const attemptedFamily = getModelFamily(attemptedModel);
+      if (attemptedFamily !== 'claude') {
+        throw new Error('forced verifier failure');
+      }
+      return { content: 'ok', usage, model: attemptedModel };
+    });
+
+    const result = await client.callWithFallback(
+      'verifier',
+      'system',
+      'user',
+      1200,
+      undefined,
+      undefined,
+      {
+        avoidModelFamilies: ['claude', 'gemini'],
+        allowSameFamilyFallback: true,
+        onSameFamilyFallback: ({ model }) => sameFamilyFallbacks.push(model),
+      },
+    );
+
+    expect(attempts[0]).toBe('mistralai/mistral-small-3.1-24b-instruct');
+    expect(attempts.at(-1)).toBe('anthropic/claude-sonnet-4');
+    expect(attempts.slice(0, -1).every(model => {
+      const family = getModelFamily(model);
+      return family !== 'claude' && family !== 'gemini';
+    })).toBe(true);
+    expect(sameFamilyFallbacks).toEqual(['anthropic/claude-sonnet-4']);
+    expect(result.model).toBe('anthropic/claude-sonnet-4');
+  });
+
+  it('surfaces repeated rate-limit failures as a transient provider issue without duplicate error lines', async () => {
+    const client = new OpenRouterClient('test-key', 'development');
+    client.setPreferredModel('generator', 'model-a:free');
+    client.setFallbackChain(['model-b:free']);
+
+    vi.spyOn(client as any, 'callModel').mockImplementation(async () => {
+      throw new Error('Rate limit exceeded. OpenRouter has temporarily limited your requests.');
+    });
+
+    let thrown: Error | undefined;
+    try {
+      await client.callWithFallback('generator', 'system', 'user', 1200);
+    } catch (error: any) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeDefined();
+    expect(thrown?.message).toContain('currently rate limited');
+    expect(thrown?.message).not.toContain('verify your models are available on OpenRouter');
+    expect(thrown?.message).toContain('Failure summary:');
+    expect(thrown?.message.match(/model-a:free:/g)?.length ?? 0).toBe(1);
+    expect(thrown?.message.match(/model-b:free:/g)?.length ?? 0).toBe(1);
   });
 });

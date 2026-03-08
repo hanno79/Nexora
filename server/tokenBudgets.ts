@@ -44,6 +44,7 @@ export const PRD_FINAL_GENERATION = budget('PRD_FINAL_GENERATION', 10000);
 export const REVIEW_STANDARD = budget('REVIEW_STANDARD', 3000);
 export const REVIEW_FINAL = budget('REVIEW_FINAL', 6000);
 export const FEATURE_ANALYSIS = budget('FEATURE_ANALYSIS', 3000);
+export const SEMANTIC_VERIFICATION = budget('SEMANTIC_VERIFICATION', 3500);
 
 // === Guided Workflow ===
 export const GUIDED_QUESTIONS = budget('GUIDED_QUESTIONS', 2500);

@@ -1,0 +1,30 @@
+/*
+Author: rahn
+Datum: 08.03.2026
+Version: 1.0
+Beschreibung: Extrahierte Prompt-Bausteine fuer Guided-Workflow, Refinement und Finalisierung
+*/
+
+// ├äNDERUNG 08.03.2026: Mehrzeilige Guided-Prompt-Erzeugung aus `guidedAiService.ts` ausgelagert.
+import { buildTemplateInstruction, type SupportedLanguage } from './prdTemplateIntent';
+
+type GuidedWorkflowMode = 'generate' | 'improve';
+
+interface GuidedPromptBaseParams {
+  templateCategory?: string;
+  language: SupportedLanguage;
+}
+
+export function buildGuidedAnalysisInput(params: GuidedPromptBaseParams & {
+  workflowMode: GuidedWorkflowMode;
+  projectIdea: string;
+  existingContent?: string;
+}): string {
+  const templateInstruction = buildTemplateInstruction(params.templateCategory, params.language);
+  return params.workflowMode === 'improve'
+    ? `You are refining an existing PRD.\n\nCHANGE REQUEST:\n${params.projectIdea}\n\nEXISTING PRD BASELINE:\n${params.existingContent || ''}\n\nAnalyze what should be preserved and what should be improved. Focus on concrete user-facing refinements and missing sections.`
+    : `Analyze this project idea:\n\n${params.projectIdea}\n\n${templateInstruction}`;
+}
+
+export function buildGuidedQuestionContext(params: GuidedPromptBaseParams & {
+  workflowMode: GuidedWorkflowMode;

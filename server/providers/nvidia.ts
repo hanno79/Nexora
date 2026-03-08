@@ -222,7 +222,7 @@ export class NvidiaProvider extends BaseAIProvider {
   }
 
   async callModel(options: CallOptions): Promise<AIResponse> {
-    const { model, messages, temperature = 0.7, maxTokens, stream, response: expressResponse } = options;
+    const { model, messages, temperature = 0.7, maxTokens, stream, response: expressResponse, abortSignal } = options;
 
     // Grosse Modelle (>=200B) brauchen deutlich laenger - Timeout anpassen
     // Dynamisch aus Model-ID parsen statt hardcoded Strings (z.B. 397b, 675b, 405b, 480b)
@@ -255,7 +255,7 @@ export class NvidiaProvider extends BaseAIProvider {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(requestBody),
-      }, effectiveTimeout);
+      }, effectiveTimeout, abortSignal);
 
       if (!fetchResponse.ok) {
         const errorText = await fetchResponse.text();

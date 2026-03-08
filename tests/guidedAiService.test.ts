@@ -22,6 +22,7 @@ const { mockClient, mockFinalizeWithCompilerGates } = vi.hoisted(() => {
     getModels: vi.fn(() => ({
       generator: 'mock/generator:free',
       reviewer: 'mock/reviewer:free',
+      verifier: 'mock/verifier:free',
       cost: '$0/Million Tokens',
     })),
   };
@@ -31,6 +32,8 @@ const { mockClient, mockFinalizeWithCompilerGates } = vi.hoisted(() => {
     quality: { valid: true, issues: [], featureCount: 3, truncatedLikely: false },
     qualityScore: 100,
     repairAttempts: [],
+    reviewerAttempts: [],
+    semanticVerificationHistory: [],
     structure: undefined,
   }));
 
@@ -61,7 +64,7 @@ describe('GuidedAiService', () => {
     mockFinalizeWithCompilerGates.mockClear();
   });
 
-  it('übergibt im Guided-Improve-Flow einen contentRefineGenerator an den Finalizer', async () => {
+  it('übergibt im Guided-Improve-Flow Reviewer- und Verifier-Hooks an den Finalizer', async () => {
     const service = new GuidedAiService({ cleanupExpired: vi.fn() } as any);
 
     await service.skipToFinalize('Improve reliability and auditability.', 'user-guided', {
@@ -74,17 +77,48 @@ describe('GuidedAiService', () => {
     const finalizerOptions = mockFinalizeWithCompilerGates.mock.calls[0][0];
     expect(finalizerOptions.mode).toBe('improve');
     expect(finalizerOptions.templateCategory).toBe('feature');
-    expect(typeof finalizerOptions.contentRefineGenerator).toBe('function');
+    expect(typeof finalizerOptions.contentRefineReviewer).toBe('function');
+    expect(typeof finalizerOptions.semanticVerifier).toBe('function');
 
-    await finalizerOptions.contentRefineGenerator('Bitte den Inhalt präzisieren.');
+    await finalizerOptions.contentRefineReviewer('Bitte den Inhalt präzisieren.');
 
     const refineCall = mockClient.callWithFallback.mock.calls.find(
       ([, , prompt]) => prompt === 'Bitte den Inhalt präzisieren.',
     );
 
     expect(refineCall).toBeTruthy();
-    expect(refineCall?.[0]).toBe('generator');
+    expect(refineCall?.[0]).toBe('reviewer');
     expect(String(refineCall?.[1])).toContain('PRD content refinement specialist');
     expect(refineCall?.[3]).toBe(CONTENT_REVIEW_REFINE);
+
+    mockClient.callWithFallback.mockResolvedValueOnce({
+      content: '{"verdict":"pass","blockingIssues":[]}',
+      usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+      model: 'mock/verifier:free',
+      finishReason: 'stop',
+      tier: 'development',
+      usedFallback: false,
+    });
+
+    await finalizerOptions.semanticVerifier({
+      content: '## System Vision\nVerifier target',
+      structure: { features: [], otherSections: {} },
+      mode: 'improve',
+      existingContent: buildMinimalPrdResponse(3, 'en'),
+      language: 'en',
+      templateCategory: 'feature',
+      originalRequest: 'Improve reliability and auditability.',
+      avoidModelFamilies: ['gemini', 'claude'],
+    });
+
+    const verifierCall = mockClient.callWithFallback.mock.calls.find(
+      ([modelType]) => modelType === 'verifier',
+    );
+
+    expect(verifierCall).toBeTruthy();
+    expect(verifierCall?.[6]).toMatchObject({
+      avoidModelFamilies: ['gemini', 'claude'],
+      allowSameFamilyFallback: true,
+    });
   });
 });

@@ -3,6 +3,7 @@
 
 import type { TokenUsage } from "@shared/schema";
 import { CANONICAL_PRD_HEADINGS } from './prdCompiler';
+import type { CompilerArtifactSummary } from './compilerArtifact';
 
 /**
  * Get language instruction to prepend to system prompts
@@ -533,6 +534,11 @@ interface ReviewerResponse {
   tier: string;
 }
 
+interface RunStageTimings {
+  totalDurationMs?: number;
+  [stage: string]: number | undefined;
+}
+
 interface DualAiResponse {
   finalContent: string;
   generatorResponse: GeneratorResponse;
@@ -541,6 +547,9 @@ interface DualAiResponse {
   totalTokens: number;
   modelsUsed: string[];
   structuredContent?: import('./prdStructure').PRDStructure;
+  diagnostics?: CompilerDiagnostics;
+  compilerArtifact?: CompilerArtifactSummary;
+  timings?: RunStageTimings;
 }
 
 // Iterative workflow types
@@ -584,6 +593,30 @@ interface CompilerDiagnostics {
   languageFixRequired?: boolean;
   boilerplateHits?: number;
   metaLeakHits?: number;
+  repairAttempts?: number;
+  repairModelIds?: string[];
+  reviewerModelIds?: string[];
+  verifierModelIds?: string[];
+  contentRefined?: boolean;
+  contentReviewIssueCodes?: string[];
+  semanticVerifierVerdict?: 'pass' | 'fail';
+  semanticBlockingCodes?: string[];
+  semanticRepairApplied?: boolean;
+  semanticVerifierSameFamilyFallback?: boolean;
+  semanticVerifierBlockedFamilies?: string[];
+  activePhase?: string;
+  lastProgressEvent?: string;
+  lastModelAttempt?: {
+    role: string;
+    model: string;
+    phase?: string;
+    provider?: string;
+    status?: string;
+    startedAt?: string;
+    endedAt?: string;
+    durationMs?: number;
+    errorMessage?: string;
+  };
 }
 
 interface IterativeResponse {
@@ -601,6 +634,8 @@ interface IterativeResponse {
   modelsUsed: string[];
   diagnostics?: CompilerDiagnostics;
   structuredContent?: import('./prdStructure').PRDStructure;
+  compilerArtifact?: CompilerArtifactSummary;
+  timings?: RunStageTimings;
 }
 
 export type {
@@ -610,5 +645,6 @@ export type {
   DualAiResponse,
   IterationData,
   IterativeResponse,
-  CompilerDiagnostics
+  CompilerDiagnostics,
+  RunStageTimings,
 };

@@ -362,8 +362,9 @@ function collectComparableFeatureTokens(feature: FeatureSpec): string[] {
   }
 
   for (const field of FEATURE_ARRAY_FIELDS) {
-    const entries = Array.isArray((feature as any)[field]) ? (feature as any)[field] : [];
-    structuredValues.push(...entries.map(entry => String(entry || '').trim()));
+    const entries: unknown[] = Array.isArray((feature as any)[field]) ? (feature as any)[field] : [];
+    // ÄNDERUNG 08.03.2026: Explizite Typisierung fuer Entry-Mapping ergaenzt, damit der TypeScript-Check unter strikterer Validierung stabil bleibt.
+    structuredValues.push(...entries.map((entry: unknown) => String(entry || '').trim()));
   }
 
   const values = structuredValues.some(Boolean)

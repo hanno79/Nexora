@@ -33,7 +33,7 @@ describe('openrouter cooldown fallback', () => {
     client.setFallbackChain(['model-b:free', 'model-c:free']);
 
     const attemptedModels: string[] = [];
-    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer') => {
+    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
       const currentModel = String((client as any).preferredModels?.[modelType] || '');
       attemptedModels.push(currentModel);
       if (currentModel === 'model-c:free') {
@@ -56,7 +56,7 @@ describe('openrouter cooldown fallback', () => {
     client.setFallbackChain(['model-b:free']);
 
     const attemptedModels: string[] = [];
-    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer') => {
+    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
       const currentModel = String((client as any).preferredModels?.[modelType] || '');
       attemptedModels.push(currentModel);
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { finalizeWithCompilerGates } from '../server/prdCompilerFinalizer';
-import type { CompilePrdResult } from '../server/prdCompiler';
+import { finalizeWithCompilerGates, PrdCompilerQualityError } from '../server/prdCompilerFinalizer';
+import { compilePrdDocument, type CompilePrdResult } from '../server/prdCompiler';
 
 function usage(total: number) {
   return {
@@ -10,22 +10,91 @@ function usage(total: number) {
   };
 }
 
+function buildSemanticVerifierPrd(definitionOfDoneLine: string): string {
+  return [
+    '## System Vision',
+    'A deterministic platform for AI-assisted PRD creation finalizes outputs only after compiler validation, semantic verification, and explicit reviewer diagnostics are complete.',
+    '',
+    '## System Boundaries',
+    'The workflow runs as a web application with authenticated users, API-backed persistence, and a compiler-driven review flow without any separate native client.',
+    '',
+    '## Domain Model',
+    'Core entities are User, PRD, Feature, RepairAttempt, ReviewRun, and SemanticVerificationResult, each with stable identifiers, timestamps, and ownership links.',
+    '',
+    '## Global Business Rules',
+    'Feature IDs remain stable across review passes, semantic verification must complete before acceptance, and no degraded result may bypass compiler or reviewer quality gates.',
+    '',
+    '## Functional Feature Catalogue',
+    '',
+    '### F-01: Semantic Verification',
+    '1. Purpose',
+    'Validate the final PRD before acceptance and block inconsistent output until targeted repair succeeds with traceable diagnostics.',
+    '2. Actors',
+    'Reviewer model, verifier model, and the authenticated editor user coordinate the final quality decision.',
+    '3. Trigger',
+    'Compiler finalization starts semantic verification after a structured PRD candidate has passed deterministic validation.',
+    '4. Preconditions',
+    'A compiled PRD candidate exists, required settings are available, and diagnostics capture is active for the request.',
+    '5. Main Flow',
+    '1. The verifier inspects the compiled PRD against cross-section consistency rules.',
+    '2. The finalizer accepts the document only after the verifier reports a pass.',
+    '3. The accepted result stores reviewer and verifier evidence for later inspection.',
+    '6. Alternate Flows',
+    '1. A blocking semantic issue triggers one targeted repair attempt through the refinement reviewer.',
+    '2. Persistent semantic blockers force a hard rejection instead of a silent degraded accept path.',
+    '7. Postconditions',
+    'The document is accepted only when semantics pass and the verifier outcome is attached to the final result.',
+    '8. Data Impact',
+    'Verification verdicts, blocking issues, and repair evidence are stored in diagnostics and revision metadata.',
+    '9. UI Impact',
+    'The run result shows verifier outcome, repair status, and clear reasons whenever acceptance is denied.',
+    '10. Acceptance Criteria',
+    '- Semantic verification completes before final acceptance and surfaces actionable blocker messages.',
+    '- Final results expose deterministic diagnostics for both reviewer and verifier decisions.',
+    '',
+    '## Non-Functional Requirements',
+    'Final verification must remain deterministic, finish within one request roundtrip, and expose reproducible diagnostics for failed reviews.',
+    '',
+    '## Error Handling & Recovery',
+    'Blocking verifier findings stop final acceptance, trigger targeted repair when configured, and never fall back to silent approval.',
+    '',
+    '## Deployment & Infrastructure',
+    'The service runs in a containerized Node environment with reviewer and verifier roles executing inside the same request workflow.',
+    '',
+    '## Definition of Done',
+    definitionOfDoneLine,
+    '- Semantic verifier diagnostics are stored before final acceptance is recorded.',
+    '- Reviewer-visible evidence explains why a release candidate passed or failed.',
+    '',
+    '## Out of Scope',
+    'This scope excludes degraded acceptance after semantic verifier failure, mobile client work, and unreviewed manual imports.',
+    '',
+    '## Timeline & Milestones',
+    'Milestone 1 stabilizes compiler repair, milestone 2 adds semantic verification, and milestone 3 persists reviewer-visible diagnostics.',
+    '',
+    '## Success Criteria & Acceptance Testing',
+    'Semantic verification blocks inconsistent PRDs, targeted repair resolves fixable issues, and final acceptance always includes traceable diagnostics.',
+  ].join('\n');
+}
+
+function replaceSectionBody(content: string, heading: string, body: string): string {
+  const marker = `## ${heading}`;
+  const start = content.indexOf(marker);
+  if (start < 0) return content;
+
+  const nextHeading = content.indexOf('\n## ', start + marker.length);
+  const prefix = content.slice(0, start);
+  const suffix = nextHeading >= 0 ? content.slice(nextHeading) : '';
+  return `${prefix}${marker}\n\n${body.trim()}\n${suffix}`;
+}
+
 describe('prdCompilerFinalizer', () => {
   it('returns compiled output without repair when quality gates pass', async () => {
-    const initial = [
-      '## System Vision',
-      'A deterministic PRD finalization pipeline.',
-      '',
-      '## Functional Feature Catalogue',
-      '',
-      '### F-01: Finalization',
-      '1. Purpose',
-      'Finalize content with quality gates.',
-      '10. Acceptance Criteria',
-      '- Output is complete and structured.',
-    ].join('\n');
+    const initial = buildSemanticVerifierPrd(
+      '- Final acceptance requires deterministic verification evidence and complete review diagnostics.'
+    );
 
-    const repairGenerator = vi.fn(async () => ({
+    const repairReviewer = vi.fn(async () => ({
       content: initial,
       model: 'mock/repair',
       usage: usage(12),
@@ -40,16 +109,16 @@ describe('prdCompilerFinalizer', () => {
       mode: 'generate',
       language: 'en',
       originalRequest: 'Generate a deterministic PRD.',
-      repairGenerator,
+      repairReviewer,
     });
 
     expect(result.quality.valid).toBe(true);
     expect(result.repairAttempts).toHaveLength(0);
-    expect(repairGenerator).not.toHaveBeenCalled();
+    expect(repairReviewer).not.toHaveBeenCalled();
     expect(result.content).toContain('## Timeline & Milestones');
   });
 
-  it('recovers valid structure from truncated source via fallback sections without repair', async () => {
+  it('rejects truncated generate output when compiler fallback sections dominate after repair attempts', async () => {
     const truncated = [
       '## Functional Feature Catalogue',
       '',
@@ -58,33 +127,40 @@ describe('prdCompilerFinalizer', () => {
       '- A change by one user',
     ].join('\n');
 
-    const repairGenerator = vi.fn(async () => ({
+    const repairReviewer = vi.fn(async () => ({
       content: truncated,
       model: 'mock/repair',
       usage: usage(200),
     }));
 
-    const result = await finalizeWithCompilerGates({
-      initialResult: {
-        content: truncated,
-        model: 'mock/initial',
-        usage: usage(120),
-        finishReason: 'length',
-      },
-      mode: 'generate',
-      language: 'en',
-      originalRequest: 'Refine realtime updates section.',
-      maxRepairPasses: 2,
-      repairGenerator,
-    });
+    let capturedError: unknown;
 
-    // Compiler fills missing sections with fallbacks → valid without repair
-    expect(result.repairAttempts).toHaveLength(0);
-    expect(repairGenerator).not.toHaveBeenCalled();
-    expect(result.quality.valid).toBe(true);
-    // Source truncation is captured as a warning, not an error
-    const truncWarning = result.quality.issues.find(i => i.code === 'truncated_output');
-    expect(truncWarning?.severity).toBe('warning');
+    try {
+      await finalizeWithCompilerGates({
+        initialResult: {
+          content: truncated,
+          model: 'mock/initial',
+          usage: usage(120),
+          finishReason: 'length',
+        },
+        mode: 'generate',
+        language: 'en',
+        originalRequest: 'Refine realtime updates section.',
+        maxRepairPasses: 2,
+        repairReviewer,
+      });
+    } catch (error) {
+      capturedError = error;
+    }
+
+    expect(capturedError).toBeInstanceOf(PrdCompilerQualityError);
+    expect(repairReviewer).toHaveBeenCalledTimes(2);
+
+    const qualityError = capturedError as PrdCompilerQualityError;
+    expect(qualityError.failureStage).toBe('compiler_repair');
+    expect(
+      qualityError.quality.issues.some(issue => issue.code === 'excessive_fallback_sections')
+    ).toBe(true);
   });
 
   it('accepts compiler-valid output even when raw source heuristically looks truncated', async () => {
@@ -139,7 +215,7 @@ describe('prdCompilerFinalizer', () => {
       },
     }));
 
-    const repairGenerator = vi.fn(async () => ({
+    const repairReviewer = vi.fn(async () => ({
       content: 'unused',
       model: 'mock/repair',
       usage: usage(10),
@@ -154,13 +230,13 @@ describe('prdCompilerFinalizer', () => {
       mode: 'generate',
       language: 'en',
       originalRequest: 'Generate complete PRD.',
-      repairGenerator,
+      repairReviewer,
       compileDocument,
     });
 
     expect(result.quality.valid).toBe(true);
     expect(result.repairAttempts).toHaveLength(0);
-    expect(repairGenerator).not.toHaveBeenCalled();
+    expect(repairReviewer).not.toHaveBeenCalled();
   });
 
   it('fails after max repair attempts if output remains invalid', async () => {
@@ -179,7 +255,7 @@ describe('prdCompilerFinalizer', () => {
       language: 'en',
       originalRequest: 'Generate complete PRD.',
       maxRepairPasses: 1,
-      repairGenerator: async () => ({
+      repairReviewer: async () => ({
         content: invalid,
         model: 'mock/repair',
         usage: usage(10),
@@ -188,50 +264,11 @@ describe('prdCompilerFinalizer', () => {
   });
 
   it('does not force repair when finish_reason is length but output is already valid', async () => {
-    const complete = [
-      '## System Vision',
-      'A deterministic and complete PRD output.',
-      '',
-      '## System Boundaries',
-      'Web app with authenticated users.',
-      '',
-      '## Domain Model',
-      '- User, PRD, Version.',
-      '',
-      '## Global Business Rules',
-      '- Feature IDs remain stable across refinements.',
-      '',
-      '## Functional Feature Catalogue',
-      '',
-      '### F-01: Quality Gate',
-      '1. Purpose',
-      'Ensure complete output.',
-      '10. Acceptance Criteria',
-      '- Output includes all required sections.',
-      '',
-      '## Non-Functional Requirements',
-      '- Deterministic compilation and parseability.',
-      '',
-      '## Error Handling & Recovery',
-      '- Repair loop available for real truncation.',
-      '',
-      '## Deployment & Infrastructure',
-      '- Node service and PostgreSQL.',
-      '',
-      '## Definition of Done',
-      '- Valid document with complete structure.',
-      '',
-      '## Out of Scope',
-      '- No mobile client in this release.',
-      '',
-      '## Timeline & Milestones',
-      '- Phase 1 and Phase 2.',
-      '',
-      '## Success Criteria & Acceptance Testing',
-      '- 95% of runs produce valid complete output.',
-    ].join('\n');
+    const complete = buildSemanticVerifierPrd(
+      '- The document is complete only when all required sections remain canonical despite a length finish reason.'
+    );
 
-    const repairGenerator = vi.fn(async () => ({
+    const repairReviewer = vi.fn(async () => ({
       content: complete,
       model: 'mock/repair',
       usage: usage(10),
@@ -247,67 +284,21 @@ describe('prdCompilerFinalizer', () => {
       mode: 'generate',
       language: 'en',
       originalRequest: 'Generate complete PRD.',
-      repairGenerator,
+      repairReviewer,
     });
 
     expect(result.quality.valid).toBe(true);
     expect(result.repairAttempts).toHaveLength(0);
-    expect(repairGenerator).not.toHaveBeenCalled();
+    expect(repairReviewer).not.toHaveBeenCalled();
   });
 
   it('triggers repair when unknown top-level headings are present', async () => {
-    const withUnknown = [
-      '## System Vision',
-      'A deterministic and complete PRD output.',
-      '',
-      '## System Boundaries',
-      'Web app with authenticated users.',
-      '',
-      '## Domain Model',
-      '- User, PRD, Version.',
-      '',
-      '## Global Business Rules',
-      '- Feature IDs remain stable across refinements.',
-      '',
-      '## Functional Feature Catalogue',
-      '',
-      '### F-01: Quality Gate',
-      '1. Purpose',
-      'Ensure complete output.',
-      '10. Acceptance Criteria',
-      '- Output includes all required sections.',
-      '',
-      '## Non-Functional Requirements',
-      '- Deterministic compilation and parseability.',
-      '',
-      '## Error Handling & Recovery',
-      '- Repair loop available for real truncation.',
-      '',
-      '## Deployment & Infrastructure',
-      '- Node service and PostgreSQL.',
-      '',
-      '## Definition of Done',
-      '- Valid document with complete structure.',
-      '',
-      '## Out of Scope',
-      '- No mobile client in this release.',
-      '',
-      '## Timeline & Milestones',
-      '- Phase 1 and Phase 2.',
-      '',
-      '## Success Criteria & Acceptance Testing',
-      '- 95% of runs produce valid complete output.',
-      '',
-      '## Project Overview',
-      'Unexpected extra heading that must trigger repair.',
-    ].join('\n');
-
-    const repaired = withUnknown.replace(
-      '\n## Project Overview\nUnexpected extra heading that must trigger repair.',
-      ''
+    const repaired = buildSemanticVerifierPrd(
+      '- The canonical PRD is complete only when unknown top-level headings have been removed during repair.'
     );
+    const withUnknown = `${repaired}\n\n## Project Overview\nUnexpected extra heading that must trigger repair.`;
 
-    const repairGenerator = vi.fn(async () => ({
+    const repairReviewer = vi.fn(async () => ({
       content: repaired,
       model: 'mock/repair',
       usage: usage(40),
@@ -322,10 +313,10 @@ describe('prdCompilerFinalizer', () => {
       mode: 'generate',
       language: 'en',
       originalRequest: 'Generate complete canonical PRD.',
-      repairGenerator,
+      repairReviewer,
     });
 
-    expect(repairGenerator).toHaveBeenCalledTimes(1);
+    expect(repairReviewer).toHaveBeenCalledTimes(1);
     expect(result.quality.valid).toBe(true);
     expect(result.content).not.toContain('## Project Overview');
   });
@@ -383,7 +374,7 @@ describe('prdCompilerFinalizer', () => {
       return invalid;
     });
 
-    const repairGenerator = vi.fn(async (prompt: string) => {
+    const repairReviewer = vi.fn(async (prompt: string) => {
       expect(prompt).toContain('Resolve repeated boilerplate phrasing');
       expect(prompt).toContain('Remove prompt/meta artifacts');
       expect(prompt).toContain('Target language: en');
@@ -403,13 +394,13 @@ describe('prdCompilerFinalizer', () => {
       mode: 'generate',
       language: 'en',
       originalRequest: 'Generate complete PRD.',
-      repairGenerator,
+      repairReviewer,
       compileDocument,
       maxRepairPasses: 1,
     });
 
     expect(result.quality.valid).toBe(true);
-    expect(repairGenerator).toHaveBeenCalledTimes(1);
+    expect(repairReviewer).toHaveBeenCalledTimes(1);
   });
 
   it('preserves best result when repair degrades quality', async () => {
@@ -461,7 +452,7 @@ describe('prdCompilerFinalizer', () => {
       };
     });
 
-    const repairGenerator = vi.fn(async () => ({
+    const repairReviewer = vi.fn(async () => ({
       content: 'repair-attempt',
       model: 'mock/repair',
       usage: usage(10),
@@ -473,16 +464,16 @@ describe('prdCompilerFinalizer', () => {
       language: 'en',
       originalRequest: 'Test degradation guard.',
       maxRepairPasses: 4,
-      repairGenerator,
+      repairReviewer,
       compileDocument,
     })).rejects.toThrow(/quality gate failed/i);
 
     // Should abort after 2 consecutive degradations, not exhaust all 4 passes
-    expect(repairGenerator).toHaveBeenCalledTimes(2);
+    expect(repairReviewer).toHaveBeenCalledTimes(2);
   });
 
-  it('fallback sections contain template-appropriate content', async () => {
-    // Only system vision and feature catalogue are provided → all others are fallbacks
+  it('rejects sparse generate output even when compiler fallback sections are template-appropriate', async () => {
+    // Only system vision and feature catalogue are provided → all others are fallbacks.
     const minimal = [
       '## System Vision',
       'A task management tool for agile development teams.',
@@ -496,45 +487,213 @@ describe('prdCompilerFinalizer', () => {
       '- Tasks can be moved between columns.',
     ].join('\n');
 
-    const result = await finalizeWithCompilerGates({
-      initialResult: { content: minimal, model: 'mock', usage: usage(80) },
-      mode: 'generate',
-      language: 'en',
-      originalRequest: 'Generate an agile task management tool PRD.',
-      repairGenerator: async () => ({ content: minimal, model: 'mock', usage: usage(10) }),
-    });
+    const repairReviewer = vi.fn(async () => ({ content: minimal, model: 'mock/repair', usage: usage(10) }));
+    let capturedError: unknown;
 
-    expect(result.quality.valid).toBe(true);
-    // Fallback sections should exist and contain relevant keywords, not empty
-    expect(result.content).toContain('## Definition of Done');
-    expect(result.content).toContain('## Out of Scope');
-    expect(result.content).toContain('## Timeline & Milestones');
-    // Definition of Done should mention criteria/quality-related terms
-    const dodMatch = result.content.match(/## Definition of Done\n([\s\S]*?)(?=\n## |\n$)/);
-    expect(dodMatch).toBeTruthy();
-    expect(dodMatch![1]).toMatch(/criteria|quality|test|review|complete/i);
-    // Timeline should mention phases or milestones
-    const timelineMatch = result.content.match(/## Timeline & Milestones\n([\s\S]*?)(?=\n## |\n$)/);
-    expect(timelineMatch).toBeTruthy();
-    expect(timelineMatch![1]).toMatch(/phase|milestone|week|sprint|delivery/i);
+    try {
+      await finalizeWithCompilerGates({
+        initialResult: { content: minimal, model: 'mock', usage: usage(80) },
+        mode: 'generate',
+        language: 'en',
+        originalRequest: 'Generate an agile task management tool PRD.',
+        repairReviewer,
+      });
+    } catch (error) {
+      capturedError = error;
+    }
+
+    expect(capturedError).toBeInstanceOf(PrdCompilerQualityError);
+    expect(repairReviewer).toHaveBeenCalledTimes(2);
+
+    const qualityError = capturedError as PrdCompilerQualityError;
+    expect(qualityError.failureStage).toBe('compiler_repair');
+    expect(
+      qualityError.quality.issues.some(issue => issue.code === 'excessive_fallback_sections')
+    ).toBe(true);
   });
 
   it('returns qualityScore in result', async () => {
-    const complete = [
-      '## System Vision', 'Complete PRD output.',
-      '', '## Functional Feature Catalogue',
-      '', '### F-01: Core', '1. Purpose', 'Core feature.', '10. Acceptance Criteria', '- Works.',
-    ].join('\n');
+    const complete = buildSemanticVerifierPrd(
+      '- The score is returned only when the final PRD remains compiler-valid and semantically reviewable.'
+    );
 
     const result = await finalizeWithCompilerGates({
       initialResult: { content: complete, model: 'mock', usage: usage(50) },
       mode: 'generate',
       language: 'en',
       originalRequest: 'Test score.',
-      repairGenerator: async () => ({ content: complete, model: 'mock', usage: usage(10) }),
+      repairReviewer: async () => ({ content: complete, model: 'mock', usage: usage(10) }),
     });
 
     expect(result.qualityScore).toBeTypeOf('number');
     expect(result.qualityScore).toBeGreaterThan(0);
+  });
+
+  it('accepts a semantic verifier pass without targeted semantic repair', async () => {
+    const content = buildSemanticVerifierPrd('- Verifier pass recorded in diagnostics.');
+
+    const semanticVerifier = vi.fn(async () => ({
+      verdict: 'pass' as const,
+      blockingIssues: [],
+      model: 'mock/verifier',
+      usage: usage(12),
+    }));
+    const contentRefineReviewer = vi.fn(async () => ({
+      content,
+      model: 'mock/reviewer',
+      usage: usage(10),
+    }));
+
+    const result = await finalizeWithCompilerGates({
+      initialResult: { content, model: 'mock/initial', usage: usage(50) },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Generate a verified PRD.',
+      repairReviewer: async () => ({ content, model: 'mock/repair', usage: usage(10) }),
+      contentRefineReviewer,
+      semanticVerifier,
+      enableContentReview: false,
+    });
+
+    expect(result.semanticVerification?.verdict).toBe('pass');
+    expect(result.semanticRepairApplied).toBe(false);
+    expect(contentRefineReviewer).not.toHaveBeenCalled();
+    expect(semanticVerifier).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes generator and reviewer model families to the semantic verifier guard', async () => {
+    const badContent = [
+      '## System Vision',
+      'Partial draft without enough structure.',
+    ].join('\n');
+    const repaired = buildSemanticVerifierPrd('- Verifier pass recorded in diagnostics.');
+    const semanticVerifier = vi.fn(async (input) => ({
+      verdict: 'pass' as const,
+      blockingIssues: [],
+      model: 'mistralai/mistral-small-3.1-24b-instruct',
+      usage: usage(12),
+      blockedFamilies: input.avoidModelFamilies,
+    }));
+
+    await finalizeWithCompilerGates({
+      initialResult: { content: badContent, model: 'google/gemini-2.5-flash', usage: usage(50) },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Generate a verified PRD.',
+      repairReviewer: async () => ({
+        content: repaired,
+        model: 'anthropic/claude-sonnet-4',
+        usage: usage(10),
+      }),
+      semanticVerifier,
+      enableContentReview: false,
+    });
+
+    const verifierInput = semanticVerifier.mock.calls[0][0];
+    expect(verifierInput.avoidModelFamilies).toEqual(expect.arrayContaining(['gemini', 'claude']));
+  });
+
+  it('runs one targeted semantic repair before accepting a verifier pass', async () => {
+    const original = buildSemanticVerifierPrd('- Release is complete.');
+    const compiledOriginal = compilePrdDocument(original, {
+      mode: 'generate',
+      language: 'en',
+      strictCanonical: true,
+      strictLanguageConsistency: true,
+      enableFeatureAggregation: true,
+      contextHint: 'Generate a verified PRD.',
+    });
+    const repaired = replaceSectionBody(
+      compiledOriginal.content,
+      'Definition of Done',
+      '- Release is complete only after semantic verification passes and diagnostics are persisted.'
+    );
+    const semanticVerifier = vi.fn()
+      .mockResolvedValueOnce({
+        verdict: 'fail' as const,
+        blockingIssues: [{
+          code: 'cross_section_inconsistency',
+          sectionKey: 'definitionOfDone',
+          message: 'Definition of Done omits the mandatory semantic verification gate.',
+          suggestedAction: 'rewrite' as const,
+        }],
+        model: 'mock/verifier',
+        usage: usage(8),
+      })
+      .mockResolvedValueOnce({
+        verdict: 'pass' as const,
+        blockingIssues: [],
+        model: 'mock/verifier',
+        usage: usage(8),
+      });
+    const contentRefineReviewer = vi.fn(async () => ({
+      content: repaired,
+      model: 'mock/reviewer',
+      usage: usage(12),
+    }));
+
+    const result = await finalizeWithCompilerGates({
+      initialResult: { content: original, model: 'mock/initial', usage: usage(40) },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Generate a verified PRD.',
+      repairReviewer: async () => ({ content: original, model: 'mock/repair', usage: usage(10) }),
+      contentRefineReviewer,
+      semanticVerifier,
+      enableContentReview: false,
+    });
+
+    expect(result.semanticVerification?.verdict).toBe('pass');
+    expect(result.semanticRepairApplied).toBe(true);
+    expect(contentRefineReviewer).toHaveBeenCalledTimes(1);
+    expect(semanticVerifier).toHaveBeenCalledTimes(2);
+    expect(result.reviewerAttempts).toHaveLength(1);
+  });
+
+  it('fails hard when semantic verifier still reports blockers after targeted repair', async () => {
+    const original = buildSemanticVerifierPrd('- Release is complete.');
+
+    const semanticVerifier = vi.fn(async () => ({
+      verdict: 'fail' as const,
+      blockingIssues: [{
+        code: 'cross_section_inconsistency',
+        sectionKey: 'definitionOfDone',
+        message: 'Definition of Done omits the mandatory semantic verification gate.',
+        suggestedAction: 'rewrite' as const,
+      }],
+      model: 'mock/verifier',
+      usage: usage(8),
+    }));
+
+    await expect(finalizeWithCompilerGates({
+      initialResult: { content: original, model: 'mock/initial', usage: usage(40) },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Generate a verified PRD.',
+      repairReviewer: async () => ({ content: original, model: 'mock/repair', usage: usage(10) }),
+      contentRefineReviewer: async () => ({ content: original, model: 'mock/reviewer', usage: usage(12) }),
+      semanticVerifier,
+      enableContentReview: false,
+    })).rejects.toMatchObject({
+      failureStage: 'semantic_verifier',
+      semanticRepairApplied: true,
+    });
+
+    try {
+      await finalizeWithCompilerGates({
+        initialResult: { content: original, model: 'mock/initial', usage: usage(40) },
+        mode: 'generate',
+        language: 'en',
+        originalRequest: 'Generate a verified PRD.',
+        repairReviewer: async () => ({ content: original, model: 'mock/repair', usage: usage(10) }),
+        contentRefineReviewer: async () => ({ content: original, model: 'mock/reviewer', usage: usage(12) }),
+        semanticVerifier,
+        enableContentReview: false,
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(PrdCompilerQualityError);
+      const qualityError = error as PrdCompilerQualityError;
+      expect(qualityError.quality.issues.some(issue => issue.code === 'semantic_verifier_blocked')).toBe(true);
+    }
   });
 });

@@ -22,17 +22,7 @@ interface AuthenticatedRequest extends Request {
 }
 import { asyncHandler } from "./asyncHandler";
 import { insertPrdSchema, users, aiPreferencesSchema } from "@shared/schema";
-// ÄNDERUNG 03.03.2026: Neue Provider Imports
-import {
-  getAllProviders,
-  getModelsForProvider,
-  getAllAvailableModels,
-  isProviderConfigured,
-  type AIProvider,
-} from "./providers/index";
 // Legacy Anthropic import removed – legacy endpoint disabled (see below)
-import { exportToLinear, checkLinearConnection } from "./linearHelper";
-import { exportToDart, updateDartDoc, checkDartConnection, getDartboards } from "./dartHelper";
 import { generatePDF, generateWord } from "./exportUtils";
 import { generateClaudeMD } from "./claudemdGenerator";
 import { initializeTemplates } from "./initTemplates";
@@ -44,36 +34,56 @@ import { parsePRDToStructure } from "./prdParser";
 // ÄNDERUNG 02.03.2025: Timeout-Konstante für Guided Finalisierung exportiert
 // Gemäß Review-Feedback: Eine Quelle der Wahrheit für Server und Client
 export const GUIDED_FINALIZE_TIMEOUT_MS = 30 * 60 * 1000; // 30 Minuten
-import { compilePrdDocument } from "./prdCompiler";
 import { computeCompleteness } from "./prdCompleteness";
 import { setupWebSocket, broadcastPrdUpdate } from "./wsServer";
-import type { PRDStructure } from "./prdStructure";
 import { requirePrdAccess, requireEditablePrdId } from "./prdAccess";
-import { isDartDocUpdateConsistent, normalizeDartDocId } from "./dartDocAccess";
 import { buildPrdVersionSnapshot, getNextPrdVersionNumber } from "./prdVersioningUtils";
 import { canUserAccessTemplate } from "./templateAccess";
 import { collectCollaboratorIds, mapCollaboratorUsers } from "./collaborators";
 import { validateApprovalReviewers } from "./approvalReviewers";
-import { canShareWithUser, planShareAction } from "./sharePolicy";
+import {
+  assessCompilerOutcome,
+  persistCompilerRunArtifactBestEffort,
+  resolveTemplateCategoryForPrd,
+} from "./aiRouteCompilerSupport";
+import {
+  qualityStatusHttpCode,
+  withArtifactMetrics,
+} from "./aiRouteSupport";
+import { registerGuidedRoutes } from "./guidedRoutes";
 import { logger } from "./logger";
 import { isIterativeClientDisconnected } from "./iterativeRequestGuard";
+import { registerIntegrationRoutes } from "./integrationRoutes";
+import { registerModelProviderRoutes } from "./modelProviderRoutes";
+import { registerPrdCommentRoutes } from "./prdCommentRoutes";
+import { registerPrdMaintenanceRoutes } from "./prdMaintenanceRoutes";
+import { registerPrdShareRoutes } from "./prdShareRoutes";
+import { registerPrdVersionRoutes } from "./prdVersionRoutes";
 import { splitTokenCount } from "./tokenMath";
-import { MODEL_TIERS, getDefaultFallbackModelForTier, sanitizeConfiguredModel, resolveModelTier, DEFAULT_FREE_FALLBACK_CHAIN } from "./openrouter";
+import {
+  MODEL_TIERS,
+  getDefaultFallbackModelForTier,
+  sanitizeConfiguredModel,
+  resolveModelTier,
+  DEFAULT_FREE_FALLBACK_CHAIN,
+  isOpenRouterConfigured,
+  getOpenRouterConfigError,
+} from "./openrouter";
 import { initializeModelRegistry } from "./modelRegistry";
 import { resolvePrdWorkflowMode } from "./prdWorkflowMode";
 import {
-  buildCompilerRunDiagnostics,
   classifyRunFailure,
   mergeDiagnosticsIntoIterationLog,
   type PrdQualityStatus,
 } from "./prdRunQuality";
+import { getCompilerRunMetrics } from "./compilerRunMetrics";
+import type { ModelCallAttemptUpdate } from "./openrouterFallback";
 import {
   updateUserSchema,
   createTemplateSchema,
   updatePrdSchema,
   requestApprovalSchema,
   respondApprovalSchema,
-  sharePrdSchema,
 } from "./schemas";
 
 /**
@@ -124,41 +134,6 @@ export function syncPrdHeaderMetadata(
   );
 
   return updatedContent;
-}
-
-function qualityStatusHttpCode(status: PrdQualityStatus): number {
-  if (status === 'failed_quality') return 422;
-  if (status === 'cancelled') return 409;
-  if (status === 'failed_runtime') return 500;
-  return 200;
-}
-
-function assessCompilerOutcome(params: {
-  content: string;
-  mode: 'generate' | 'improve';
-  existingContent?: string;
-  templateCategory?: string;
-  baseDiagnostics?: Record<string, any>;
-}) {
-  const compiled = compilePrdDocument(params.content, {
-    mode: params.mode,
-    existingContent: params.existingContent,
-    templateCategory: params.templateCategory,
-    strictCanonical: true,
-    strictLanguageConsistency: true,
-    enableFeatureAggregation: true,
-  });
-  const qualityStatus: PrdQualityStatus = compiled.quality.valid ? 'passed' : 'failed_quality';
-  const compilerDiagnostics = buildCompilerRunDiagnostics({
-    quality: compiled.quality,
-    base: params.baseDiagnostics || {},
-  });
-  return {
-    qualityStatus,
-    compiled,
-    compilerDiagnostics,
-    finalizationStage: 'final' as const,
-  };
 }
 
 // Rate-limiter factory — reusable in-memory per-IP limiter
@@ -245,6 +220,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       hasDevGenerator: !!stored.tierModels?.development?.generatorModel,
       hasProdGenerator: !!stored.tierModels?.production?.generatorModel,
       hasPremiumGenerator: !!stored.tierModels?.premium?.generatorModel,
+      hasDevVerifier: !!stored.tierModels?.development?.verifierModel,
     });
     
     const tier = resolveModelTier(stored.tier);
@@ -253,6 +229,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const rawTierModels = (stored.tierModels || {}) as Record<string, {
       generatorModel?: string;
       reviewerModel?: string;
+      verifierModel?: string;
       fallbackModel?: string;
       fallbackChain?: string[];
     }>;
@@ -262,6 +239,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const defaults = MODEL_TIERS[typedTier] || MODEL_TIERS.development;
         const sanitizedGenerator = sanitizeConfiguredModel(modelSet?.generatorModel);
         const sanitizedReviewer = sanitizeConfiguredModel(modelSet?.reviewerModel);
+        const sanitizedVerifier = sanitizeConfiguredModel(modelSet?.verifierModel);
         const sanitizedFallback = sanitizeConfiguredModel(modelSet?.fallbackModel);
         
         // DEBUG: Log sanitization results (sanitized – no PII)
@@ -271,6 +249,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           hasSanitizedGenerator: !!sanitizedGenerator,
           hasOriginalReviewer: !!modelSet?.reviewerModel,
           hasSanitizedReviewer: !!sanitizedReviewer,
+          hasOriginalVerifier: !!modelSet?.verifierModel,
+          hasSanitizedVerifier: !!sanitizedVerifier,
         });
         
         return [
@@ -279,6 +259,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             ...(modelSet || {}),
             generatorModel: sanitizedGenerator || defaults.generator,
             reviewerModel: sanitizedReviewer || defaults.reviewer,
+            verifierModel: sanitizedVerifier || defaults.verifier || defaults.reviewer,
             fallbackModel: sanitizedFallback || getDefaultFallbackModelForTier(typedTier),
             fallbackChain: Array.isArray(modelSet?.fallbackChain) ? modelSet.fallbackChain : undefined,
           },
@@ -293,6 +274,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const resolvedReviewerModel =
       sanitizeConfiguredModel(activeTierModels.reviewerModel || stored.reviewerModel) ||
       tierDefaults.reviewer;
+    const resolvedVerifierModel =
+      sanitizeConfiguredModel(activeTierModels.verifierModel || stored.verifierModel) ||
+      resolvedReviewerModel ||
+      tierDefaults.verifier;
     const resolvedFallbackModel =
       sanitizeConfiguredModel(activeTierModels.fallbackModel || stored.fallbackModel) ||
       getDefaultFallbackModelForTier(tierKey);
@@ -307,6 +292,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       tierModels,
       generatorModel: resolvedGeneratorModel,
       reviewerModel: resolvedReviewerModel,
+      verifierModel: resolvedVerifierModel,
       fallbackModel: resolvedFallbackModel,
       fallbackChain: resolvedFallbackChain,
       iterativeTimeoutMinutes: stored.iterativeTimeoutMinutes || 30,
@@ -319,6 +305,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       hasDevGenerator: !!preferences.tierModels?.development?.generatorModel,
       hasProdGenerator: !!preferences.tierModels?.production?.generatorModel,
       hasPremiumGenerator: !!preferences.tierModels?.premium?.generatorModel,
+      hasDevVerifier: !!preferences.tierModels?.development?.verifierModel,
     });
 
     res.json(preferences);
@@ -335,6 +322,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       hasTier: !!preferences.tier,
       hasGenerator: !!preferences.generatorModel,
       hasReviewer: !!preferences.reviewerModel,
+      hasVerifier: !!preferences.verifierModel,
       tierModelCount: Object.keys(preferences.tierModels || {}).length,
     });
 
@@ -351,6 +339,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       hasDevGenerator: !!existingTierModels.development?.generatorModel,
       hasProdGenerator: !!existingTierModels.production?.generatorModel,
       hasPremiumGenerator: !!existingTierModels.premium?.generatorModel,
+      hasDevVerifier: !!existingTierModels.development?.verifierModel,
     });
 
     const activeTier = resolveModelTier(preferences.tier || existingPrefs.tier);
@@ -365,6 +354,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const incomingTierModels = (preferences.tierModels || {}) as Record<string, {
       generatorModel?: string;
       reviewerModel?: string;
+      verifierModel?: string;
       fallbackModel?: string;
       fallbackChain?: string[];
     } | undefined>;
@@ -385,6 +375,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             ...(modelSet || {}),
             generatorModel: normalizeIncomingModel(modelSet?.generatorModel, tierDefaults.generator) ?? modelSet?.generatorModel,
             reviewerModel: normalizeIncomingModel(modelSet?.reviewerModel, tierDefaults.reviewer) ?? modelSet?.reviewerModel,
+            verifierModel: normalizeIncomingModel(modelSet?.verifierModel, tierDefaults.verifier || tierDefaults.reviewer) ?? modelSet?.verifierModel,
             fallbackModel: normalizeIncomingModel(modelSet?.fallbackModel, getDefaultFallbackModelForTier(typedTier)) ?? modelSet?.fallbackModel,
             ...(Array.isArray(modelSet?.fallbackChain)
               ? { fallbackChain: modelSet!.fallbackChain.map(m => sanitizeConfiguredModel(m)).filter(Boolean) as string[] }
@@ -403,6 +394,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     if (preferences.reviewerModel) {
       tierUpdate.reviewerModel = normalizeIncomingModel(preferences.reviewerModel, activeTierDefaults.reviewer)!;
+    }
+    if (preferences.verifierModel) {
+      tierUpdate.verifierModel = normalizeIncomingModel(preferences.verifierModel, activeTierDefaults.verifier || activeTierDefaults.reviewer)!;
     }
     if (preferences.fallbackModel) {
       tierUpdate.fallbackModel = normalizeIncomingModel(preferences.fallbackModel, getDefaultFallbackModelForTier(activeTierKey))!;
@@ -428,6 +422,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       hasDevGenerator: !!updatedTierModels.development?.generatorModel,
       hasProdGenerator: !!updatedTierModels.production?.generatorModel,
       hasPremiumGenerator: !!updatedTierModels.premium?.generatorModel,
+      hasDevVerifier: !!updatedTierModels.development?.verifierModel,
     });
 
     // ÄNDERUNG 02.03.2025: Kritischer Bugfix - Reihenfolge der Merge-Operationen korrigiert
@@ -451,6 +446,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ...preferencesWithoutTierModels,
       ...(preferences.generatorModel ? { generatorModel: tierUpdate.generatorModel } : {}),
       ...(preferences.reviewerModel ? { reviewerModel: tierUpdate.reviewerModel } : {}),
+      ...(preferences.verifierModel ? { verifierModel: tierUpdate.verifierModel } : {}),
       ...(preferences.fallbackModel ? { fallbackModel: tierUpdate.fallbackModel } : {}),
       ...(Array.isArray(preferences.fallbackChain) ? { fallbackChain: tierUpdate.fallbackChain } : {}),
       // WICHTIG: Die finalen tierModels setzen - das überschreibt ggf. preferences.tierModels
@@ -463,6 +459,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       hasDevGenerator: !!merged.tierModels?.development?.generatorModel,
       hasProdGenerator: !!merged.tierModels?.production?.generatorModel,
       hasPremiumGenerator: !!merged.tierModels?.premium?.generatorModel,
+      hasDevVerifier: !!merged.tierModels?.development?.verifierModel,
     });
 
     await db.update(users)
@@ -665,173 +662,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(template);
   }));
 
-  // Version routes
-  app.get('/api/prds/:id/versions', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { id } = req.params;
-    const prd = await requirePrdAccess(storage, req, res, id, 'view');
-    if (!prd) return;
+  // ÄNDERUNG 08.03.2026: Versionsrouten in eigenes kleines Registrierungsmodul ausgelagert.
+  registerPrdVersionRoutes(app, isAuthenticated, {
+    storage,
+    requirePrdAccess,
+    getNextPrdVersionNumber,
+    buildPrdVersionSnapshot,
+  });
 
-    const versions = await storage.getPrdVersions(id);
-    res.json(versions);
-  }));
+  // ÄNDERUNG 08.03.2026: Share-Routen in eigenes kleines Registrierungsmodul ausgelagert.
+  registerPrdShareRoutes(app, isAuthenticated, {
+    storage,
+    requirePrdAccess,
+  });
 
-  app.post('/api/prds/:id/versions', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { id } = req.params;
-    const userId = req.user.claims.sub;
-    const prd = await requirePrdAccess(storage, req, res, id, 'edit');
-    if (!prd) return;
+  // ÄNDERUNG 08.03.2026: Kommentar-Routen in eigenes kleines Registrierungsmodul ausgelagert.
+  registerPrdCommentRoutes(app, isAuthenticated, {
+    storage,
+    requirePrdAccess,
+    loadUsersByIds: async (userIds) => {
+      if (userIds.length === 0) {
+        return [];
+      }
 
-    const versions = await storage.getPrdVersions(id);
-    const versionNumber = getNextPrdVersionNumber(versions.length);
-    const version = await storage.createPrdVersion(
-      buildPrdVersionSnapshot(prd as any, versionNumber, userId),
-    );
-
-    res.json(version);
-  }));
-
-  app.delete('/api/prds/:id/versions/:versionId', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { id, versionId } = req.params;
-
-    const prd = await requirePrdAccess(storage, req, res, id, 'edit');
-    if (!prd) return;
-
-    const version = await storage.getPrdVersion(versionId);
-    if (!version) {
-      return res.status(404).json({ message: "Version not found" });
-    }
-
-    if (version.prdId !== id) {
-      return res.status(400).json({ message: "Version does not belong to this PRD" });
-    }
-
-    const versions = await storage.getPrdVersions(id);
-    if (versions.length > 0 && versions[0].id === versionId) {
-      return res.status(400).json({ message: "Cannot delete the current (latest) version" });
-    }
-
-    await storage.deletePrdVersion(versionId);
-    res.json({ success: true });
-  }));
-
-  // Share routes
-  app.post('/api/prds/:id/share', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { id } = req.params;
-    const { email, permission } = sharePrdSchema.parse(req.body);
-
-    // Only the owner can share a PRD
-    const userId = req.user.claims.sub;
-    const prd = await storage.getPrd(id);
-    if (!prd) return res.status(404).json({ message: "PRD not found" });
-    if (prd.userId !== userId) {
-      return res.status(403).json({ message: "Only the owner can share this PRD" });
-    }
-    // Find user by email
-    const sharedUser = await storage.getUserByEmail(email);
-    if (!sharedUser) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    if (!canShareWithUser(userId, sharedUser.id)) {
-      return res.status(400).json({ message: "You cannot share a PRD with yourself" });
-    }
-
-    const requestedPermission: "view" | "edit" = permission === "edit" ? "edit" : "view";
-    const existingShares = await storage.getPrdShares(id);
-    const existingShare = existingShares.find((share) => share.sharedWith === sharedUser.id);
-    const action = planShareAction(existingShare, requestedPermission);
-
-    if (action.type === "none" && existingShare) {
-      return res.json(existingShare);
-    }
-
-    if (action.type === "update") {
-      const updatedShare = await storage.updateSharedPrdPermission(action.shareId, action.permission);
-      return res.json(updatedShare);
-    }
-
-    const share = await storage.createSharedPrd({
-      prdId: id,
-      sharedWith: sharedUser.id,
-      permission: requestedPermission,
-    });
-    res.json(share);
-  }));
-
-  app.get('/api/prds/:id/shares', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { id } = req.params;
-    const prd = await requirePrdAccess(storage, req, res, id, 'view');
-    if (!prd) return;
-
-    const shares = await storage.getPrdShares(id);
-    res.json(shares);
-  }));
-
-  // Comment routes
-  app.get('/api/prds/:id/comments', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { id } = req.params;
-    const prd = await requirePrdAccess(storage, req, res, id, 'view');
-    if (!prd) return;
-
-    const commentsData = await storage.getComments(id);
-
-    // Batch-fetch all unique users (avoids N+1 queries)
-    const userIds = Array.from(new Set(commentsData.map((c: any) => c.userId)));
-    const usersData: Array<{ id: string; firstName: string | null; lastName: string | null; email: string | null; profileImageUrl: string | null }> = userIds.length > 0
-      ? await db.select().from(users).where(inArray(users.id, userIds))
-      : [];
-    const userMap = new Map(usersData.map(u => [u.id, u]));
-
-    const commentsWithUsers = commentsData.map(comment => {
-      const user = userMap.get(comment.userId);
-      return {
-        ...comment,
-        user: user ? {
-          id: user.id,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          email: user.email,
-          profileImageUrl: user.profileImageUrl,
-        } : null,
-      };
-    });
-
-    res.json(commentsWithUsers);
-  }));
-
-  app.post('/api/prds/:id/comments', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { id } = req.params;
-    const prd = await requirePrdAccess(storage, req, res, id, 'view');
-    if (!prd) return;
-
-    const userId = req.user.claims.sub;
-    const { content, sectionId } = req.body;
-
-    if (!content || content.trim() === '') {
-      return res.status(400).json({ message: "Comment content is required" });
-    }
-
-    const comment = await storage.createComment({
-      prdId: id,
-      userId,
-      content,
-      sectionId: sectionId || null,
-    });
-
-    // Return comment with user info
-    const user = await storage.getUser(userId);
-    res.json({
-      ...comment,
-      user: user ? {
-        id: user.id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        profileImageUrl: user.profileImageUrl,
-      } : null,
-    });
-    broadcastPrdUpdate(id, 'comment:added');
-  }));
+      return await db
+        .select({
+          id: users.id,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          email: users.email,
+          profileImageUrl: users.profileImageUrl,
+        })
+        .from(users)
+        .where(inArray(users.id, userIds));
+    },
+    broadcastPrdUpdate,
+  });
 
   // Approval routes
   app.get('/api/prds/:id/approval', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
@@ -979,203 +845,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   }));
 
-  // OpenRouter models list endpoint
-  const { isOpenRouterConfigured, getOpenRouterConfigError, fetchOpenRouterModels, getAllActiveCooldowns } = await import('./openrouter');
-
-  app.get('/api/openrouter/models', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    if (!isOpenRouterConfigured()) {
-      return res.status(503).json({ message: getOpenRouterConfigError() });
-    }
-    const models = await fetchOpenRouterModels();
-    res.json({ models, tierDefaults: MODEL_TIERS });
-  }));
-
-  // ÄNDERUNG 03.03.2026: Neue Provider API Endpunkte
-  // Alle verfügbaren Provider mit Konfigurationsstatus
-  app.get('/api/providers', isAuthenticated, asyncHandler(async (_req: AuthenticatedRequest, res) => {
-    const providers = getAllProviders().map(provider => ({
-      ...provider,
-      configured: isProviderConfigured(
-        provider.id,
-        process.env[provider.apiKeyEnv]
-      ),
-      apiKeyEnv: provider.apiKeyEnv,
-    }));
-    res.json({ providers });
-  }));
-
-  // Modelle für einen spezifischen Provider
-  app.get('/api/providers/:provider/models', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { provider } = req.params;
-    const providerKey = provider as AIProvider;
-
-    if (!['openrouter', 'groq', 'cerebras', 'nvidia'].includes(providerKey)) {
-      return res.status(400).json({ message: 'Ungültiger Provider' });
-    }
-
-    const models = await getModelsForProvider(providerKey);
-    const providerConfig = getAllProviders().find(p => p.id === providerKey);
-    const configured = isProviderConfigured(
-      providerKey,
-      process.env[providerConfig?.apiKeyEnv || '']
-    );
-
-    res.json({
-      provider: providerKey,
-      configured,
-      models,
-    });
-  }));
-
-  // Alle verfügbaren Modelle (über alle Provider)
-  app.get('/api/models', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { providers } = req.query;
-    
-    // Provider-Filter aus Query-Parametern
-    const selectedProviders = providers
-      ? String(providers).split(',').filter(p => ['openrouter', 'groq', 'cerebras', 'nvidia'].includes(p)) as AIProvider[]
-      : undefined;
-    
-    // Modelle von allen ausgewählten Providern laden
-    let allModels: any[] = [];
-    
-    // OpenRouter Modelle (immer wenn kein Filter oder explizit angefordert)
-    if (!selectedProviders || selectedProviders.includes('openrouter')) {
-      try {
-        const openRouterModels = await fetchOpenRouterModels();
-        allModels = allModels.concat(openRouterModels.map(m => ({
-          id: m.id,
-          name: m.name,
-          provider: 'openrouter' as AIProvider,
-          contextLength: m.context_length,
-          isFree: m.isFree,
-          pricing: {
-            input: parseFloat(m.pricing.prompt) * 1000000, // Convert to per 1M tokens
-            output: parseFloat(m.pricing.completion) * 1000000,
-          },
-          capabilities: ['chat', 'completion', 'streaming'],
-        })));
-      } catch (error) {
-        logger.warn('Failed to fetch OpenRouter models', { error });
-      }
-    }
-    
-    // Groq Modelle
-    if (!selectedProviders || selectedProviders.includes('groq')) {
-      try {
-        const groqModels = await getModelsForProvider('groq');
-        allModels = allModels.concat(groqModels);
-      } catch (error) {
-        logger.warn('Failed to fetch Groq models', { error });
-      }
-    }
-    
-    // Cerebras Modelle
-    if (!selectedProviders || selectedProviders.includes('cerebras')) {
-      try {
-        const cerebrasModels = await getModelsForProvider('cerebras');
-        allModels = allModels.concat(cerebrasModels);
-      } catch (error) {
-        logger.warn('Failed to fetch Cerebras models', { error });
-      }
-    }
-
-    // NVIDIA Modelle
-    if (!selectedProviders || selectedProviders.includes('nvidia')) {
-      try {
-        const nvidiaModels = await getModelsForProvider('nvidia');
-        allModels = allModels.concat(nvidiaModels);
-      } catch (error) {
-        logger.warn('Failed to fetch NVIDIA models', { error });
-      }
-    }
-
-    // Deduplizierung: Gleiche Model-ID von mehreren Providern → eine Zeile
-    // Bevorzuge Direct-Provider (schneller/gratis) ueber OpenRouter
-    const deduped = new Map<string, any>();
-    for (const model of allModels) {
-      const existing = deduped.get(model.id);
-      if (!existing) {
-        deduped.set(model.id, { ...model, availableProviders: [model.provider] });
-      } else {
-        if (!existing.availableProviders.includes(model.provider)) {
-          existing.availableProviders.push(model.provider);
-        }
-        // Direct-Provider bevorzugen
-        if (existing.provider === 'openrouter' && model.provider !== 'openrouter') {
-          deduped.set(model.id, { ...model, availableProviders: existing.availableProviders });
-        }
-      }
-    }
-    allModels = Array.from(deduped.values());
-
-    // Sortiere nach Name
-    allModels.sort((a, b) => a.name.localeCompare(b.name));
-
-    res.json({
-      models: allModels,
-      providers: selectedProviders || ['openrouter', 'groq', 'cerebras', 'nvidia'],
-      totalCount: allModels.length,
-      freeCount: allModels.filter(m => m.isFree).length,
-    });
-  }));
-
-  // Provider Status Check (API-Key gültig?)
-  app.get('/api/providers/:provider/status', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { provider } = req.params;
-    const providerKey = provider as AIProvider;
-
-    if (!['openrouter', 'groq', 'cerebras', 'nvidia'].includes(providerKey)) {
-      return res.status(400).json({ message: 'Ungültiger Provider' });
-    }
-
-    const providerConfig = getAllProviders().find(p => p.id === providerKey);
-    const apiKey = process.env[providerConfig?.apiKeyEnv || ''];
-    const configured = isProviderConfigured(providerKey, apiKey);
-
-    res.json({
-      provider: providerKey,
-      configured,
-      hasApiKey: !!apiKey,
-    });
-  }));
-
-  // Model status endpoint — returns in-memory cooldown state for pre-run checks
-  app.get('/api/openrouter/model-status', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const cooldowns = getAllActiveCooldowns();
-    const extraModels = typeof req.query.models === 'string'
-      ? req.query.models.split(',').map(m => m.trim()).filter(Boolean)
-      : [];
-    const candidates = [...new Set([...DEFAULT_FREE_FALLBACK_CHAIN, ...extraModels])];
-    const now = Date.now();
-
-    const modelStatus = Object.fromEntries(
-      candidates.map(id => {
-        const cd = cooldowns[id];
-        if (!cd) {
-          return [id, { status: 'ok' as const }];
-        }
-        return [id, {
-          status: 'cooldown' as const,
-          cooldownSecondsLeft: Math.ceil((cd.until - now) / 1000),
-          reason: cd.reason,
-        }];
-      })
-    );
-
-    res.json({ modelStatus, checkedAt: now });
-  }));
+  // ÄNDERUNG 08.03.2026: Provider-/Modell-Routen in eigenes kleines Registrierungsmodul ausgelagert.
+  await registerModelProviderRoutes(app, isAuthenticated);
 
   // Dual-AI generation routes (HRP-17)
   const { getDualAiService } = await import('./dualAiService');
   const { logAiUsage, getUserAiUsageStats } = await import('./aiUsageLogger');
-  const resolveTemplateCategoryForPrd = async (prdId?: string | null): Promise<string | undefined> => {
-    if (!prdId) return undefined;
-    const prd = await storage.getPrd(prdId);
-    if (!prd?.templateId) return undefined;
-    const template = await storage.getTemplate(prd.templateId);
-    return template?.category || undefined;
-  };
 
   // AI Usage statistics endpoint
   app.get('/api/ai/usage', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
@@ -1188,6 +863,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(stats);
   }));
 
+  app.get('/api/ai/compiler-run-metrics', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const workflow = typeof req.query.workflow === 'string' ? req.query.workflow.trim() : undefined;
+    const routeKey = typeof req.query.routeKey === 'string' ? req.query.routeKey.trim() : undefined;
+    const days = typeof req.query.days === 'string' ? Number(req.query.days) : undefined;
+    const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : undefined;
+    const includeLatest = String(req.query.includeLatest || '').trim().toLowerCase() === 'true';
+
+    if (days !== undefined && (!Number.isInteger(days) || days < 1 || days > 365)) {
+      return res.status(400).json({ message: 'days must be an integer between 1 and 365' });
+    }
+
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 5000)) {
+      return res.status(400).json({ message: 'limit must be an integer between 1 and 5000' });
+    }
+
+    const metrics = await getCompilerRunMetrics({
+      baseDir: process.cwd(),
+      workflow: workflow || undefined,
+      routeKey: routeKey || undefined,
+      days,
+      limit,
+      includeLatest,
+    });
+
+    res.json(metrics);
+  }));
+
   app.post('/api/ai/generate-dual', isAuthenticated, aiRateLimiter, asyncHandler(async (req: AuthenticatedRequest, res) => {
     // Check if OpenRouter is configured
     if (!isOpenRouterConfigured()) {
@@ -1195,6 +897,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: getOpenRouterConfigError()
       });
     }
+
+    const requestStartedAt = Date.now();
 
     const { userInput, existingContent, mode, prdId } = req.body;
     const userId = req.user.claims.sub;
@@ -1229,6 +933,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         mode: effectiveMode,
         existingContent,
         templateCategory,
+        baseDiagnostics: result.diagnostics,
       });
 
       // Log AI usage for both generator and reviewer
@@ -1251,8 +956,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
 
       const saveRequested = !!(editablePrdId && assessed.qualityStatus === 'passed');
+      const {
+        compilerArtifact,
+        diagnostics: _dualInternalDiagnostics,
+        ...publicDualResult
+      } = result;
       const responsePayload: any = {
-        ...result,
+        ...publicDualResult,
         qualityStatus: assessed.qualityStatus,
         compilerDiagnostics: assessed.compilerDiagnostics,
         finalizationStage: assessed.finalizationStage,
@@ -1266,6 +976,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // qualityStatus and compilerDiagnostics are included for client-side tracking.
       // The catch block below handles genuine failures (PrdCompilerQualityError etc.).
       res.json(responsePayload);
+
+      void persistCompilerRunArtifactBestEffort({
+        workflow: 'dual',
+        routeKey: 'dual-generate',
+        qualityStatus: assessed.qualityStatus,
+        finalizationStage: assessed.finalizationStage,
+        finalContent: result.finalContent,
+        compiledContent: assessed.compiled.content,
+        compiledStructure: assessed.compiled.structure,
+        quality: assessed.compiled.quality,
+        compilerDiagnostics: assessed.compilerDiagnostics,
+        modelsUsed: result.modelsUsed,
+        requestContext: {
+          effectiveMode,
+          templateCategory: templateCategory || null,
+          hasExistingContent: !!existingContent,
+          prdId: editablePrdId || null,
+        },
+        stageData: withArtifactMetrics({
+          requestStartedAt,
+          timings: result.timings || null,
+          totalTokens: result.totalTokens,
+          stageData: {
+          generatorResponse: result.generatorResponse,
+          reviewerResponse: result.reviewerResponse,
+          improvedVersion: result.improvedVersion,
+          compilerArtifact: compilerArtifact || null,
+          },
+        }),
+      });
 
       if (editablePrdId) {
         (async () => {
@@ -1298,6 +1038,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error: any) {
       const failure = classifyRunFailure(error);
+      void persistCompilerRunArtifactBestEffort({
+        workflow: 'dual',
+        routeKey: 'dual-generate',
+        qualityStatus: failure.qualityStatus,
+        finalizationStage: 'final',
+        compilerDiagnostics: failure.diagnostics,
+        modelsUsed: [],
+        requestContext: {
+          templateCategory: templateCategory || null,
+          hasExistingContent: !!existingContent,
+          prdId: editablePrdId || null,
+        },
+        stageData: withArtifactMetrics({
+          requestStartedAt,
+          stageData: {
+          errorMessage: failure.message,
+          qualityError: error instanceof Error ? error.message : String(error || ''),
+          },
+        }),
+      });
       if (editablePrdId) {
         try {
           const existingPrd = await storage.getPrd(editablePrdId);
@@ -1358,12 +1118,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/ai/generate-iterative', isAuthenticated, aiRateLimiter, async (req, res) => {
     const authReq = req as unknown as AuthenticatedRequest;
+    const requestStartedAt = Date.now();
     let editablePrdId: string | null = null;
     let userId = '';
     let useSSE = false;
     let sseClosed = false;
     let sseCompleted = false;
     let cleanupSseListeners = () => {};
+    const requestAbortController = new AbortController();
+    let activePhase = 'idle';
+    let lastProgressEvent: string | undefined;
+    let lastModelAttempt: ModelCallAttemptUpdate | undefined;
     const isRequestClosed = () =>
       isIterativeClientDisconnected({
         sseClosed,
@@ -1372,6 +1137,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
         resWritableEnded: res.writableEnded,
         resDestroyed: res.destroyed,
       });
+    const updateActivePhaseFromEvent = (eventType: string) => {
+      switch (eventType) {
+        case 'iteration_start':
+          activePhase = 'iteration_generator';
+          break;
+        case 'generator_done':
+          activePhase = 'iteration_review';
+          break;
+        case 'features_expanded':
+          activePhase = 'feature_expansion';
+          break;
+        case 'answerer_done':
+          activePhase = 'iteration_answerer';
+          break;
+        case 'final_review_start':
+        case 'final_review_done':
+          activePhase = 'final_review';
+          break;
+        case 'compiler_finalization_start':
+          activePhase = 'compiler_finalization';
+          break;
+        case 'content_review_start':
+          activePhase = 'content_review';
+          break;
+        case 'semantic_verification_start':
+          activePhase = 'semantic_verification';
+          break;
+        case 'final_persist_start':
+          activePhase = 'final_persist';
+          break;
+        case 'complete':
+          activePhase = 'complete';
+          break;
+        default:
+          break;
+      }
+    };
+    const buildIterativeDiagnosticBase = (base?: object) => ({
+      ...(base || {}),
+      activePhase,
+      lastProgressEvent,
+      ...(lastModelAttempt ? { lastModelAttempt } : {}),
+    });
     const safeEndSse = () => {
       if (useSSE && !res.writableEnded && !res.destroyed) {
         try { res.end(); } catch {}
@@ -1461,8 +1269,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const handleSseDisconnect = () => {
         if (sseClosed) return;
         sseClosed = true;
+        if (!requestAbortController.signal.aborted) {
+          requestAbortController.abort(new Error('Iterative SSE client disconnected'));
+        }
         if (!sseCompleted) {
-          logger.warn("Iterative SSE client disconnected", { hasPrdId: !!editablePrdId });
+          logger.warn("Iterative SSE client disconnected", {
+            hasPrdId: !!editablePrdId,
+            activePhase,
+            lastProgressEvent: lastProgressEvent || null,
+            lastModelAttempt: lastModelAttempt || null,
+          });
         }
         cleanupSseListeners();
         safeEndSse();
@@ -1472,6 +1288,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const sendSSE = useSSE
         ? (event: { type: string; [key: string]: any }) => {
             if (isRequestClosed()) return;
+            lastProgressEvent = event.type;
+            updateActivePhaseFromEvent(event.type);
             try {
               res.write(`data: ${JSON.stringify(event)}\n\n`);
             } catch {
@@ -1506,11 +1324,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userId,
         sendSSE,
         isRequestClosed,
+        requestAbortController.signal,
+        (attempt) => {
+          lastModelAttempt = attempt;
+          if (attempt.phase) {
+            activePhase = attempt.phase;
+          }
+        },
         templateCategory
       );
 
       if (isRequestClosed()) {
-        logger.debug("Iterative request closed before response", { hasPrdId: !!editablePrdId });
+        logger.debug("Iterative request closed before response", {
+          hasPrdId: !!editablePrdId,
+          activePhase,
+          lastProgressEvent: lastProgressEvent || null,
+          lastModelAttempt: lastModelAttempt || null,
+        });
+        const disconnectFailure = classifyRunFailure(
+          new Error(`Iterative generation cancelled during ${activePhase || 'unknown phase'}`),
+          buildIterativeDiagnosticBase(result.diagnostics || {}),
+        );
+        void persistCompilerRunArtifactBestEffort({
+          workflow: 'iterative',
+          routeKey: useSSE ? 'iterative-stream' : 'iterative-generate',
+          qualityStatus: disconnectFailure.qualityStatus,
+          finalizationStage: 'final',
+          compilerDiagnostics: disconnectFailure.diagnostics,
+          requestContext: {
+            prdId: editablePrdId || null,
+            useSSE,
+            effectiveMode: finalMode,
+            templateCategory: templateCategory || null,
+          },
+          stageData: withArtifactMetrics({
+            requestStartedAt,
+            timings: result.timings || null,
+            totalTokens: result.totalTokens,
+            stageData: {
+              errorMessage: 'Client disconnected before iterative response was sent.',
+              activePhase,
+              lastProgressEvent: lastProgressEvent || null,
+              lastModelAttempt: lastModelAttempt || null,
+              finalReview: result.finalReview || null,
+              compilerArtifact: result.compilerArtifact || null,
+            },
+          }),
+        });
+        if (editablePrdId && userId) {
+          try {
+            const existingPrd = await storage.getPrd(editablePrdId);
+            if (existingPrd) {
+              await storage.persistPrdRunFinalization({
+                prdId: editablePrdId,
+                userId,
+                qualityStatus: disconnectFailure.qualityStatus,
+                finalizationStage: 'final',
+                iterationLog: mergeDiagnosticsIntoIterationLog(result.iterationLog || existingPrd.iterationLog, disconnectFailure.qualityStatus, disconnectFailure.diagnostics),
+                compilerDiagnostics: disconnectFailure.diagnostics,
+              });
+            }
+          } catch (persistFailureError) {
+            logger.error("Iterative disconnect diagnostics persistence failed", { error: persistFailureError });
+          }
+        }
         return;
       }
       logger.info("Iterative service completed", {
@@ -1529,7 +1406,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         mode: finalMode,
         existingContent: finalMode === 'improve' ? finalExistingContent : undefined,
         templateCategory,
-        baseDiagnostics: result.diagnostics || {},
+        baseDiagnostics: buildIterativeDiagnosticBase(result.diagnostics || {}),
       });
 
       const includeVerboseIterations = process.env.DEBUG_ITERATIVE_VERBOSE === "true";
@@ -1578,6 +1455,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Respond first to avoid blocking UI on DB writes for large runs.
       if (useSSE) {
+        sendSSE?.({ type: 'final_persist_start', autoSaveRequested: saveRequested });
         if (!isRequestClosed()) {
           if (assessed.qualityStatus === 'passed') {
             res.write(`event: result\ndata: ${JSON.stringify(slimResult)}\n\n`);
@@ -1601,6 +1479,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
       logger.info("Iterative response sent", {
         hasPrdId: !!editablePrdId,
         qualityStatus: assessed.qualityStatus,
+      });
+
+      void persistCompilerRunArtifactBestEffort({
+        workflow: 'iterative',
+        routeKey: useSSE ? 'iterative-stream' : 'iterative-generate',
+        qualityStatus: assessed.qualityStatus,
+        finalizationStage: assessed.finalizationStage,
+        finalContent: slimResult.finalContent,
+        compiledContent: assessed.compiled.content,
+        compiledStructure: assessed.compiled.structure,
+        quality: assessed.compiled.quality,
+        compilerDiagnostics: assessed.compilerDiagnostics,
+        iterationLog: result.iterationLog,
+        modelsUsed: result.modelsUsed,
+        requestContext: {
+          effectiveMode: finalMode,
+          templateCategory: templateCategory || null,
+          baselineFeatureCount: iterativeModeResolution.assessment.featureCount,
+          baselinePartial: iterativeModeResolution.assessment.baselinePartial,
+          prdId: editablePrdId || null,
+          useSSE,
+        },
+        stageData: withArtifactMetrics({
+          requestStartedAt,
+          timings: result.timings || null,
+          totalTokens: result.totalTokens,
+          stageData: {
+          activePhase,
+          lastProgressEvent: lastProgressEvent || null,
+          lastModelAttempt: lastModelAttempt || null,
+          iterations: result.iterations,
+          finalReview: result.finalReview || null,
+          compilerArtifact: result.compilerArtifact || null,
+          },
+        }),
       });
 
       if (editablePrdId) {
@@ -1686,14 +1599,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       return;
     } catch (error: any) {
-      if (error?.name === 'AbortError' || error?.code === 'ERR_CLIENT_DISCONNECT' || isRequestClosed()) {
-        logger.warn("Iterative request aborted by client");
-        return;
+      const cancelledOrClosed = error?.name === 'AbortError' || error?.code === 'ERR_CLIENT_DISCONNECT' || isRequestClosed();
+      const failure = classifyRunFailure(error, buildIterativeDiagnosticBase());
+      if (cancelledOrClosed) {
+        logger.warn("Iterative request aborted by client", {
+          activePhase,
+          lastProgressEvent: lastProgressEvent || null,
+          lastModelAttempt: lastModelAttempt || null,
+        });
+      } else {
+        logger.error("Iterative AI generation failed", { error, activePhase, lastProgressEvent, lastModelAttempt });
       }
-
-      logger.error("Iterative AI generation failed", { error });
-      const failure = classifyRunFailure(error);
-      if (useSSE && res.headersSent && !res.writableEnded && !res.destroyed) {
+      void persistCompilerRunArtifactBestEffort({
+        workflow: 'iterative',
+        routeKey: useSSE ? 'iterative-stream' : 'iterative-generate',
+        qualityStatus: failure.qualityStatus,
+        finalizationStage: 'final',
+        compilerDiagnostics: failure.diagnostics,
+        requestContext: {
+          prdId: editablePrdId || null,
+          useSSE,
+        },
+        stageData: withArtifactMetrics({
+          requestStartedAt,
+          stageData: {
+          errorMessage: failure.message,
+          qualityError: error instanceof Error ? error.message : String(error || ''),
+          activePhase,
+          lastProgressEvent: lastProgressEvent || null,
+          lastModelAttempt: lastModelAttempt || null,
+          },
+        }),
+      });
+      if (!cancelledOrClosed && useSSE && res.headersSent && !res.writableEnded && !res.destroyed) {
         res.write(`event: error\ndata: ${JSON.stringify({
           message: failure.message,
           qualityStatus: failure.qualityStatus,
@@ -1702,7 +1640,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           autoSaveRequested: false,
         })}\n\n`);
         res.end();
-      } else {
+      } else if (!cancelledOrClosed) {
         res.status(qualityStatusHttpCode(failure.qualityStatus)).json({
           message: failure.message,
           qualityStatus: failure.qualityStatus,
@@ -1729,738 +1667,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
           logger.error("Iterative failure diagnostics persistence failed", { error: persistFailureError });
         }
       }
+      if (cancelledOrClosed) {
+        return;
+      }
     } finally {
       cleanupSseListeners();
     }
   });
 
-  // Guided AI Workflow routes (User-involved PRD generation)
-  const { getGuidedAiService } = await import('./guidedAiService');
-  
-  // Start guided workflow - returns initial analysis + questions
-  app.post('/api/ai/guided-start', isAuthenticated, aiRateLimiter, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    if (!isOpenRouterConfigured()) {
-      return res.status(503).json({
-        message: getOpenRouterConfigError()
-      });
-    }
-
-    const { projectIdea, existingContent, mode, prdId } = req.body;
-    const userId = req.user.claims.sub;
-    const editablePrdId = await requireEditablePrdId(storage, req, res, prdId, {
-      invalidMessage: "PRD ID must be a non-empty string",
-    });
-    if (prdId !== undefined && prdId !== null && !editablePrdId) {
-      return;
-    }
-    const templateCategory = await resolveTemplateCategoryForPrd(editablePrdId);
-    const normalizedIdea = typeof projectIdea === 'string' ? projectIdea.trim() : '';
-    const normalizedExistingContent = typeof existingContent === 'string' ? existingContent.trim() : '';
-    const hasExistingContent = normalizedExistingContent.length > 0;
-
-    if (!hasExistingContent && normalizedIdea.length < 10) {
-      return res.status(400).json({ message: "Please provide a project idea (at least 10 characters)" });
-    }
-
-    if (hasExistingContent && normalizedIdea.length < 3) {
-      return res.status(400).json({ message: "Please provide a refinement request (at least 3 characters)" });
-    }
-
-    const service = getGuidedAiService();
-    const result = await service.startGuidedWorkflow(normalizedIdea, userId, {
-      existingContent: hasExistingContent ? normalizedExistingContent : undefined,
-      mode: mode === 'improve' ? 'improve' : 'generate',
-      templateCategory,
-    });
-
-    res.json(result);
-  }));
-  
-  // Resume an existing guided session (e.g. after dialog close or page refresh)
-  app.post('/api/ai/guided-resume', isAuthenticated, aiRateLimiter, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { sessionId } = req.body;
-    const userId = req.user.claims.sub;
-
-    if (!sessionId || typeof sessionId !== 'string') {
-      return res.status(400).json({ message: "Session ID is required" });
-    }
-
-    const service = getGuidedAiService();
-    try {
-      const context = await service.getSessionState(sessionId, userId);
-
-      if (!context) {
-        return res.status(404).json({ message: "Session not found or expired" });
-      }
-
-      res.json({
-        sessionId,
-        roundNumber: context.roundNumber,
-        featureOverview: context.featureOverview,
-        workflowMode: context.workflowMode,
-        hasAnswers: context.answers.length > 0,
-        canFinalize: true,
-      });
-    } catch (error: any) {
-      if (error?.message?.includes('Forbidden')) {
-        return res.status(403).json({ message: "You do not have access to this session" });
-      }
-      throw error;
-    }
-  }));
-
-  // Process user answers - returns refined plan + optional follow-up questions
-  app.post('/api/ai/guided-answer', isAuthenticated, aiRateLimiter, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    if (!isOpenRouterConfigured()) {
-      return res.status(503).json({
-        message: getOpenRouterConfigError()
-      });
-    }
-
-    const { sessionId, answers, questions } = req.body;
-    const userId = req.user.claims.sub;
-
-    if (!sessionId) {
-      return res.status(400).json({ message: "Session ID is required" });
-    }
-
-    if (!answers || !Array.isArray(answers) || answers.length === 0) {
-      return res.status(400).json({ message: "At least one answer is required" });
-    }
-
-    if (!questions || !Array.isArray(questions)) {
-      return res.status(400).json({ message: "Questions array is required for context" });
-    }
-
-    const service = getGuidedAiService();
-    const result = await service.processAnswers(sessionId, answers, questions, userId);
-
-    res.json(result);
-  }));
-  
-  // Finalize PRD generation after guided workflow
-  app.post('/api/ai/guided-finalize', isAuthenticated, aiRateLimiter, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    if (!isOpenRouterConfigured()) {
-      return res.status(503).json({
-        message: getOpenRouterConfigError()
-      });
-    }
-
-    const { sessionId, prdId } = req.body;
-    const userId = req.user.claims.sub;
-    const editablePrdId = await requireEditablePrdId(storage, req, res, prdId, {
-      invalidMessage: "PRD ID must be a non-empty string",
-    });
-    if (prdId !== undefined && prdId !== null && !editablePrdId) {
-      return;
-    }
-    const templateCategory = await resolveTemplateCategoryForPrd(editablePrdId);
-
-    if (!sessionId) {
-      return res.status(400).json({ message: "Session ID is required" });
-    }
-
-    const service = getGuidedAiService();
-    try {
-      const result = await service.finalizePRD(sessionId, userId, { templateCategory });
-      const assessed = assessCompilerOutcome({
-        content: result.prdContent,
-        mode: result.workflowMode || 'generate',
-        existingContent: result.existingContent,
-        templateCategory,
-      });
-      const saveRequested = !!(editablePrdId && assessed.qualityStatus === 'passed');
-
-      // Log AI usage with actual user tier (not hardcoded)
-      if (result.modelsUsed.length > 0) {
-        const [userRow] = await db.select({ aiPreferences: users.aiPreferences }).from(users).where(eq(users.id, userId)).limit(1);
-        const userTier = resolveModelTier((userRow?.aiPreferences as any)?.tier);
-        await logAiUsage(
-          userId,
-          'generator',
-          result.modelsUsed[0],
-          userTier,
-          { prompt_tokens: 0, completion_tokens: result.tokensUsed, total_tokens: result.tokensUsed },
-          prdId
-        );
-      }
-
-      const payload: any = {
-        ...result,
-        qualityStatus: assessed.qualityStatus,
-        compilerDiagnostics: assessed.compilerDiagnostics,
-        finalizationStage: assessed.finalizationStage,
-        autoSaveRequested: saveRequested,
-        effectiveMode: result.workflowMode || 'generate',
-        baselineFeatureCount: assessed.compilerDiagnostics?.totalFeatureCount ?? 0,
-        baselinePartial: false,
-      };
-
-      if (assessed.qualityStatus !== 'passed') {
-        res.status(qualityStatusHttpCode(assessed.qualityStatus)).json(payload);
-      } else {
-        res.json(payload);
-      }
-
-      if (editablePrdId) {
-        (async () => {
-          try {
-            const existingPrd = await storage.getPrd(editablePrdId!);
-            if (!existingPrd) return;
-            const iterationLog = assessed.qualityStatus === 'passed'
-              ? existingPrd.iterationLog || null
-              : mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, assessed.qualityStatus, assessed.compilerDiagnostics);
-            await storage.persistPrdRunFinalization({
-              prdId: editablePrdId!,
-              userId,
-              qualityStatus: assessed.qualityStatus,
-              finalizationStage: 'final',
-              content: assessed.qualityStatus === 'passed' ? assessed.compiled.content : undefined,
-              structuredContent: assessed.qualityStatus === 'passed' ? assessed.compiled.structure : undefined,
-              iterationLog,
-              compilerDiagnostics: assessed.compilerDiagnostics,
-            });
-          } catch (persistError) {
-            logger.error("Guided finalize persistence failed", { error: persistError });
-          }
-        })();
-      }
-    } catch (error: any) {
-      const failure = classifyRunFailure(error);
-      if (editablePrdId) {
-        try {
-          const existingPrd = await storage.getPrd(editablePrdId);
-          if (existingPrd) {
-            await storage.persistPrdRunFinalization({
-              prdId: editablePrdId,
-              userId,
-              qualityStatus: failure.qualityStatus,
-              finalizationStage: 'final',
-              iterationLog: mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, failure.qualityStatus, failure.diagnostics),
-              compilerDiagnostics: failure.diagnostics,
-            });
-          }
-        } catch (persistFailureError) {
-          logger.error("Guided finalize failure diagnostics persistence failed", { error: persistFailureError });
-        }
-      }
-      res.status(qualityStatusHttpCode(failure.qualityStatus)).json({
-        message: failure.message,
-        qualityStatus: failure.qualityStatus,
-        compilerDiagnostics: failure.diagnostics,
-        finalizationStage: 'final',
-        autoSaveRequested: false,
-      });
-    }
-  }));
-
-  // ÄNDERUNG 02.03.2025: SSE-basierter Endpunkt für Guided Finalisierung
-  // Dieser Endpunkt ermöglicht Live-Fortschrittsanzeige im DualAiDialog
-  // ÄNDERUNG 02.03.2025: Timeout-Handling hinzugefügt für langlaufende Finalisierungen
-  // ÄNDERUNG 02.03.2025: Promise.race für Timeout-Handling (kein AbortController da
-  // service.finalizePRD aktuell kein AbortSignal unterstützt - siehe TODO unten)
-  // TODO: Wenn finalizePRD um AbortSignal-Parameter erweitert wird, kann hier ein
-  // AbortController verwendet werden um die AI-Operation tatsächlich abzubrechen.
-  // Aktuell wird nur die HTTP-Verbindung bei Timeout geschlossen, die Verarbeitung
-  // läuft im Hintergrund weiter.
-  app.post('/api/ai/guided-finalize-stream', isAuthenticated, aiRateLimiter, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    let editablePrdId: string | null = null;
-    let userId = '';
-    let sseClosed = false;
-    let sseCompleted = false;
-    let timeoutId: NodeJS.Timeout | null = null;
-    
-    const cleanupTimeout = () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-    };
-    
-    const isRequestClosed = () =>
-      isIterativeClientDisconnected({
-        sseClosed,
-        reqAborted: req.aborted,
-        reqDestroyed: req.destroyed,
-        resWritableEnded: res.writableEnded,
-        resDestroyed: res.destroyed,
-      });
-    const safeEndSse = () => {
-      cleanupTimeout();
-      if (!res.writableEnded && !res.destroyed) {
-        try { res.end(); } catch {}
-      }
-    };
-
-    try {
-      if (!isOpenRouterConfigured()) {
-        return res.status(503).json({
-          message: getOpenRouterConfigError()
-        });
-      }
-
-      const { sessionId, prdId } = req.body;
-      userId = req.user.claims.sub;
-      editablePrdId = await requireEditablePrdId(storage, req, res, prdId, {
-        invalidMessage: "PRD ID must be a non-empty string",
-      });
-      if (prdId !== undefined && prdId !== null && !editablePrdId) {
-        return;
-      }
-      const templateCategory = await resolveTemplateCategoryForPrd(editablePrdId);
-
-      if (!sessionId) {
-        return res.status(400).json({ message: "Session ID is required" });
-      }
-
-      const service = getGuidedAiService();
-
-      // SSE Setup
-      const handleSseDisconnect = () => {
-        if (sseClosed) return;
-        sseClosed = true;
-        cleanupTimeout();
-        if (!sseCompleted) {
-          logger.warn("Guided finalize SSE client disconnected", { hasPrdId: !!editablePrdId });
-        }
-        safeEndSse();
-      };
-
-      res.on('close', handleSseDisconnect);
-      req.on('aborted', handleSseDisconnect);
-
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-      res.setHeader('X-Accel-Buffering', 'no');
-      res.flushHeaders();
-
-      // Send initial event
-      if (!isRequestClosed()) {
-        res.write(`data: ${JSON.stringify({ type: 'generation_start' })}\n\n`);
-      }
-
-      // ÄNDERUNG 02.03.2025: Timeout starten BEVOR finalizePRD aufgerufen wird
-      // für konsistente Zeitmessung über alle Modi
-      // WICHTIG: Timer muss VOR finalizePRD() gestartet werden, damit ein hängender
-      // Service-Aufruf trotzdem vom Timeout erfasst wird (Race Condition vermeiden)
-      // ÄNDERUNG 02.03.2025: Vereinfachtes Timeout-Handling ohne AbortController,
-      // da service.finalizePRD kein AbortSignal unterstützt
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          logger.warn("Guided finalize timeout reached", { hasPrdId: !!editablePrdId });
-          reject(new Error('Guided finalize aborted due to timeout'));
-        }, GUIDED_FINALIZE_TIMEOUT_MS);
-      });
-
-      const finalizePromise = service.finalizePRD(sessionId, userId, { templateCategory });
-      const result = await Promise.race([finalizePromise, timeoutPromise]);
-
-      if (isRequestClosed()) {
-        logger.debug("Guided finalize request closed before response", { hasPrdId: !!editablePrdId });
-        return;
-      }
-
-      const assessed = assessCompilerOutcome({
-        content: result.prdContent,
-        mode: result.workflowMode || 'generate',
-        existingContent: result.existingContent,
-        templateCategory,
-      });
-
-      // Log AI usage
-      if (result.modelsUsed.length > 0) {
-        const [userRow] = await db.select({ aiPreferences: users.aiPreferences }).from(users).where(eq(users.id, userId)).limit(1);
-        const userTier = resolveModelTier((userRow?.aiPreferences as any)?.tier);
-        await logAiUsage(
-          userId,
-          'generator',
-          result.modelsUsed[0],
-          userTier,
-          { prompt_tokens: 0, completion_tokens: result.tokensUsed, total_tokens: result.tokensUsed },
-          prdId
-        );
-      }
-
-      const payload = {
-        finalContent: result.prdContent,
-        prdContent: result.prdContent,
-        tokensUsed: result.tokensUsed,
-        modelsUsed: result.modelsUsed,
-        workflowMode: result.workflowMode,
-        totalTokens: result.tokensUsed,
-        qualityStatus: assessed.qualityStatus,
-        compilerDiagnostics: assessed.compilerDiagnostics,
-        finalizationStage: assessed.finalizationStage,
-        effectiveMode: result.workflowMode || 'generate',
-        baselineFeatureCount: assessed.compilerDiagnostics?.totalFeatureCount ?? 0,
-        baselinePartial: false,
-      };
-
-      // ÄNDERUNG 02.03.2025: SSE Event basierend auf assessed.status senden
-      // ÄNDERUNG 02.03.2025: event: complete -> event: result für Konsistenz mit readSSEStream
-      // Bei failed_quality wird ein error Event gesendet, sonst result
-      if (!isRequestClosed()) {
-        if (assessed.qualityStatus === 'passed') {
-          res.write(`event: result\ndata: ${JSON.stringify(payload)}\n\n`);
-        } else {
-          // Bei fehlgeschlagener Qualitätsprüfung ein error Event senden
-          res.write(`event: error\ndata: ${JSON.stringify({
-            message: 'Compiler quality gate failed after final verification.',
-            status: assessed.qualityStatus,
-            ...payload
-          })}\n\n`);
-        }
-      }
-      sseCompleted = true;
-      safeEndSse();
-
-      // Persist if needed
-      if (editablePrdId) {
-        (async () => {
-          try {
-            const existingPrd = await storage.getPrd(editablePrdId!);
-            if (!existingPrd) return;
-            const iterationLog = assessed.qualityStatus === 'passed'
-              ? existingPrd.iterationLog || null
-              : mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, assessed.qualityStatus, assessed.compilerDiagnostics);
-            await storage.persistPrdRunFinalization({
-              prdId: editablePrdId!,
-              userId,
-              qualityStatus: assessed.qualityStatus,
-              finalizationStage: 'final',
-              content: assessed.qualityStatus === 'passed' ? assessed.compiled.content : undefined,
-              structuredContent: assessed.qualityStatus === 'passed' ? assessed.compiled.structure : undefined,
-              iterationLog,
-              compilerDiagnostics: assessed.compilerDiagnostics,
-            });
-          } catch (persistError) {
-            logger.error("Guided finalize SSE persistence failed", { error: persistError });
-          }
-        })();
-      }
-
-    } catch (error: any) {
-      // ÄNDERUNG 02.03.2025: Timer immer aufräumen in finally-equivalentem Pattern
-      cleanupTimeout();
-      // Ignoriere AbortError vom Timeout - wurde bereits geloggt
-      if (error?.message?.includes('aborted due to timeout') || error?.name === 'AbortError') {
-        logger.debug("Guided finalize aborted due to timeout", { hasPrdId: !!editablePrdId });
-        // SSE-Stream sauber beenden mit Timeout-Error
-        if (res.headersSent && !res.writableEnded && !res.destroyed) {
-          res.write(`event: error\ndata: ${JSON.stringify({
-            message: 'Guided finalize aborted due to timeout',
-            qualityStatus: 'cancelled',
-            finalizationStage: 'final',
-            autoSaveRequested: false,
-          })}\n\n`);
-          res.end();
-        }
-        return;
-      }
-      
-      logger.error("Guided finalize SSE error", { error });
-      const failure = classifyRunFailure(error);
-
-      if (res.headersSent && !res.writableEnded && !res.destroyed) {
-        res.write(`event: error\ndata: ${JSON.stringify({
-          message: failure.message,
-          qualityStatus: failure.qualityStatus,
-          compilerDiagnostics: failure.diagnostics,
-          finalizationStage: 'final',
-          autoSaveRequested: false,
-        })}\n\n`);
-        res.end();
-      } else if (!res.headersSent) {
-        res.status(qualityStatusHttpCode(failure.qualityStatus)).json({
-          message: failure.message,
-          qualityStatus: failure.qualityStatus,
-          compilerDiagnostics: failure.diagnostics,
-          finalizationStage: 'final',
-          autoSaveRequested: false,
-        });
-      }
-
-      if (editablePrdId && userId) {
-        try {
-          const existingPrd = await storage.getPrd(editablePrdId);
-          if (existingPrd) {
-            await storage.persistPrdRunFinalization({
-              prdId: editablePrdId,
-              userId,
-              qualityStatus: failure.qualityStatus,
-              finalizationStage: 'final',
-              iterationLog: mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, failure.qualityStatus, failure.diagnostics),
-              compilerDiagnostics: failure.diagnostics,
-            });
-          }
-        } catch (persistFailureError) {
-          logger.error("Guided finalize SSE failure persistence failed", { error: persistFailureError });
-        }
-      }
-    }
-  }));
-
-  // Skip guided workflow and generate PRD directly
-  app.post('/api/ai/guided-skip', isAuthenticated, aiRateLimiter, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    if (!isOpenRouterConfigured()) {
-      return res.status(503).json({
-        message: getOpenRouterConfigError()
-      });
-    }
-
-    const { projectIdea, existingContent, mode, prdId } = req.body;
-    const userId = req.user.claims.sub;
-    const editablePrdId = await requireEditablePrdId(storage, req, res, prdId, {
-      invalidMessage: "PRD ID must be a non-empty string",
-    });
-    if (prdId !== undefined && prdId !== null && !editablePrdId) {
-      return;
-    }
-    const templateCategory = await resolveTemplateCategoryForPrd(editablePrdId);
-    const normalizedIdea = typeof projectIdea === 'string' ? projectIdea.trim() : '';
-    const normalizedExistingContent = typeof existingContent === 'string' ? existingContent.trim() : '';
-    const hasExistingContent = normalizedExistingContent.length > 0;
-
-    if (!hasExistingContent && normalizedIdea.length < 10) {
-      return res.status(400).json({ message: "Please provide a project idea (at least 10 characters)" });
-    }
-
-    if (hasExistingContent && normalizedIdea.length < 3) {
-      return res.status(400).json({ message: "Please provide a refinement request (at least 3 characters)" });
-    }
-
-    const service = getGuidedAiService();
-    try {
-      const requestedMode: 'improve' | 'generate' = mode === 'improve' ? 'improve' : 'generate';
-      const result = await service.skipToFinalize(normalizedIdea, userId, {
-        existingContent: hasExistingContent ? normalizedExistingContent : undefined,
-        mode: requestedMode,
-        templateCategory,
-      });
-      const assessed = assessCompilerOutcome({
-        content: result.prdContent,
-        mode: result.workflowMode || requestedMode,
-        existingContent: result.existingContent,
-        templateCategory,
-      });
-      const saveRequested = !!(editablePrdId && assessed.qualityStatus === 'passed');
-
-      // Log AI usage with actual user tier (not hardcoded)
-      if (result.modelsUsed.length > 0) {
-        const [userRow] = await db.select({ aiPreferences: users.aiPreferences }).from(users).where(eq(users.id, userId)).limit(1);
-        const userTier = resolveModelTier((userRow?.aiPreferences as any)?.tier);
-        await logAiUsage(
-          userId,
-          'generator',
-          result.modelsUsed[0],
-          userTier,
-          { prompt_tokens: 0, completion_tokens: result.tokensUsed, total_tokens: result.tokensUsed },
-          prdId
-        );
-      }
-
-      const payload: any = {
-        ...result,
-        qualityStatus: assessed.qualityStatus,
-        compilerDiagnostics: assessed.compilerDiagnostics,
-        finalizationStage: assessed.finalizationStage,
-        autoSaveRequested: saveRequested,
-        effectiveMode: result.workflowMode || requestedMode,
-        baselineFeatureCount: assessed.compilerDiagnostics?.totalFeatureCount ?? 0,
-        baselinePartial: false,
-      };
-
-      if (assessed.qualityStatus !== 'passed') {
-        res.status(qualityStatusHttpCode(assessed.qualityStatus)).json(payload);
-      } else {
-        res.json(payload);
-      }
-
-      if (editablePrdId) {
-        (async () => {
-          try {
-            const existingPrd = await storage.getPrd(editablePrdId!);
-            if (!existingPrd) return;
-            const iterationLog = assessed.qualityStatus === 'passed'
-              ? existingPrd.iterationLog || null
-              : mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, assessed.qualityStatus, assessed.compilerDiagnostics);
-            await storage.persistPrdRunFinalization({
-              prdId: editablePrdId!,
-              userId,
-              qualityStatus: assessed.qualityStatus,
-              finalizationStage: 'final',
-              content: assessed.qualityStatus === 'passed' ? assessed.compiled.content : undefined,
-              structuredContent: assessed.qualityStatus === 'passed' ? assessed.compiled.structure : undefined,
-              iterationLog,
-              compilerDiagnostics: assessed.compilerDiagnostics,
-            });
-          } catch (persistError) {
-            logger.error("Guided skip persistence failed", { error: persistError });
-          }
-        })();
-      }
-    } catch (error: any) {
-      const failure = classifyRunFailure(error);
-      if (editablePrdId) {
-        try {
-          const existingPrd = await storage.getPrd(editablePrdId);
-          if (existingPrd) {
-            await storage.persistPrdRunFinalization({
-              prdId: editablePrdId,
-              userId,
-              qualityStatus: failure.qualityStatus,
-              finalizationStage: 'final',
-              iterationLog: mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, failure.qualityStatus, failure.diagnostics),
-              compilerDiagnostics: failure.diagnostics,
-            });
-          }
-        } catch (persistFailureError) {
-          logger.error("Guided skip failure diagnostics persistence failed", { error: persistFailureError });
-        }
-      }
-      res.status(qualityStatusHttpCode(failure.qualityStatus)).json({
-        message: failure.message,
-        qualityStatus: failure.qualityStatus,
-        compilerDiagnostics: failure.diagnostics,
-        finalizationStage: 'final',
-        autoSaveRequested: false,
-      });
-    }
-  }));
-
-  // Export routes
-  app.post('/api/prds/:id/export', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { format } = req.body;
-    const { id } = req.params;
-    const prd = await requirePrdAccess(storage, req, res, id, 'view');
-    if (!prd) return;
-
-    if (format === 'markdown') {
-      const markdown = `# ${prd.title}\n\n${prd.description || ''}\n\n---\n\n${prd.content}`;
-      res.json({ content: markdown });
-    } else if (format === 'claudemd') {
-      const claudemd = generateClaudeMD({
-        title: prd.title,
-        description: prd.description || undefined,
-        content: prd.content,
-      });
-      res.json({ content: claudemd.content });
-    } else if (format === 'pdf') {
-      const pdfBuffer = await generatePDF({
-        title: prd.title,
-        description: prd.description || undefined,
-        content: prd.content,
-      });
-
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${prd.title.replace(/\s+/g, '-')}.pdf"`);
-      res.send(pdfBuffer);
-    } else if (format === 'word') {
-      const wordBuffer = await generateWord({
-        title: prd.title,
-        description: prd.description || undefined,
-        content: prd.content,
-      });
-
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-      res.setHeader('Content-Disposition', `attachment; filename="${prd.title.replace(/\s+/g, '-')}.docx"`);
-      res.send(wordBuffer);
-    } else {
-      res.status(400).json({ message: "Unsupported export format" });
-    }
-  }));
-
-  // Version history endpoints
-  // Restore PRD to specific version
-  app.post('/api/prds/:id/restore/:versionId', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { id: prdId, versionId } = req.params;
-
-    // Restore requires edit permission (owner or shared editor).
-    const prd = await requirePrdAccess(storage, req, res, prdId, 'edit');
-    if (!prd) return;
-
-    // Get the version
-    const versions = await storage.getPrdVersions(prdId);
-    const version = versions.find(v => v.id === versionId);
-
-    if (!version) {
-      return res.status(404).json({ message: "Version not found" });
-    }
-
-    // Use versions.length + 1 because the restore operation will create a new version snapshot
-    const newVersionNumber = getNextPrdVersionNumber(versions.length);
-    const status = version.status as 'draft' | 'in-progress' | 'review' | 'pending-approval' | 'approved' | 'completed';
-
-    // Sync the header metadata in the restored content with the new version number
-    const syncedContent = syncPrdHeaderMetadata(
-      version.content,
-      newVersionNumber,
-      status
-    );
-
-    // Restore complete state from version (with synced header + structured content if available)
-    const updatedPrd = await storage.updatePrd(prdId, {
-      title: version.title,
-      description: version.description,
-      content: syncedContent,
-      structuredContent: (version as any).structuredContent || null,
-      structuredAt: (version as any).structuredContent ? new Date() : null,
-      status: status,
-    } as any);
-
-    res.json(updatedPrd);
-    broadcastPrdUpdate(prdId, 'prd:updated');
-  }));
-
-  // Structured content endpoints
-  app.get('/api/prds/:id/structure', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { id } = req.params;
-    const accessPrd = await requirePrdAccess(storage, req, res, id, 'view');
-    if (!accessPrd) return;
-
-    const { prd, structure } = await storage.getPrdWithStructure(id);
-
-    if (!structure) {
-      return res.status(404).json({ message: "No structured content available" });
-    }
-
-    const source = (prd as any).structuredContent ? 'stored' : 'parsed';
-    res.json({
-      structure,
-      source,
-      structuredAt: (prd as any).structuredAt,
-      completeness: computeCompleteness(structure),
-    });
-  }));
-
-  app.post('/api/prds/:id/reparse', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { id } = req.params;
-    const prd = await requirePrdAccess(storage, req, res, id, 'edit');
-    if (!prd) return;
-
-    const structure = parsePRDToStructure(prd.content);
-    await storage.updatePrdStructure(id, structure);
-
-    res.json({
-      featureCount: structure.features.length,
-      completeness: computeCompleteness(structure),
-    });
-  }));
-
-  app.get('/api/prds/:id/completeness', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { id } = req.params;
-    const prd = await requirePrdAccess(storage, req, res, id, 'view');
-    if (!prd) return;
-
-    const { structure } = await storage.getPrdWithStructure(id);
-
-    if (!structure) {
-      return res.status(404).json({ message: "No structured content available for completeness check" });
-    }
-
-    res.json(computeCompleteness(structure));
-  }));
+  await registerGuidedRoutes(app, isAuthenticated, aiRateLimiter, GUIDED_FINALIZE_TIMEOUT_MS);
+
+  // ÄNDERUNG 08.03.2026: PRD-Export-/Restore-/Structure-Routen in eigenes kleines Registrierungsmodul ausgelagert.
+  registerPrdMaintenanceRoutes(app, isAuthenticated, {
+    storage,
+    generateClaudeMD,
+    generatePDF,
+    generateWord,
+    requirePrdAccess,
+    getNextPrdVersionNumber,
+    syncPrdHeaderMetadata,
+    parsePRDToStructure,
+    computeCompleteness,
+    broadcastPrdUpdate,
+  });
 
   // Error logging endpoint — rate-limited, sanitized input
   app.post('/api/errors', errorRateLimiter, asyncHandler(async (req, res) => {
@@ -2482,138 +1711,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.status(200).json({ message: 'Error logged' });
   }));
 
-  // Linear integration routes
-  app.post('/api/linear/export', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { prdId, title, description } = req.body;
-
-    if (!title) {
-      return res.status(400).json({ message: "Title and PRD ID are required" });
-    }
-
-    const editablePrdId = await requireEditablePrdId(storage, req, res, prdId, {
-      required: true,
-      requiredMessage: "Title and PRD ID are required",
-      invalidMessage: "PRD ID must be a non-empty string",
-    });
-    if (!editablePrdId) {
-      return;
-    }
-
-    const result = await exportToLinear(title, description || "");
-
-    // Update PRD with Linear issue details
-    await storage.updatePrd(editablePrdId, {
-      linearIssueId: result.issueId,
-      linearIssueUrl: result.url,
-    });
-
-    res.json(result);
-  }));
-
-  app.get('/api/linear/status', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const connected = await checkLinearConnection();
-    res.json({ connected });
-  }));
-
-  // Dart AI integration routes
-  app.get('/api/dart/dartboards', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const result = await getDartboards();
-    res.json(result);
-  }));
-
-  app.post('/api/dart/export', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { prdId, title, content, folder } = req.body;
-
-    if (!title) {
-      return res.status(400).json({ message: "Title and PRD ID are required" });
-    }
-
-    const editablePrdId = await requireEditablePrdId(storage, req, res, prdId, {
-      required: true,
-      requiredMessage: "Title and PRD ID are required",
-      invalidMessage: "PRD ID must be a non-empty string",
-    });
-    if (!editablePrdId) {
-      return;
-    }
-
-    const result = await exportToDart(title, content || "", folder);
-
-    // Update PRD with Dart AI doc details
-    await storage.updatePrd(editablePrdId, {
-      dartDocId: result.docId,
-      dartDocUrl: result.url,
-      dartFolder: result.folder,
-    });
-
-    res.json(result);
-  }));
-
-  app.get('/api/dart/status', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const connected = await checkDartConnection();
-    res.json({ connected });
-  }));
-
-  // Dart AI update endpoint - sync existing doc with current PRD content
-  app.put('/api/dart/update', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { prdId, docId, title, content } = req.body;
-    const normalizedDocId = normalizeDartDocId(docId);
-
-    if (!normalizedDocId) {
-      return res.status(400).json({ message: "Document ID and PRD ID are required" });
-    }
-
-    const editablePrdId = await requireEditablePrdId(storage, req, res, prdId, {
-      required: true,
-      requiredMessage: "Document ID and PRD ID are required",
-      invalidMessage: "PRD ID must be a non-empty string",
-    });
-    if (!editablePrdId) {
-      return;
-    }
-
-    const prd = await storage.getPrd(editablePrdId);
-    if (!prd) {
-      return res.status(404).json({ message: "PRD not found" });
-    }
-
-    if (!isDartDocUpdateConsistent(prd.dartDocId, normalizedDocId)) {
-      return res.status(409).json({ message: "Dart document ID does not match the PRD's linked document" });
-    }
-
-    const result = await updateDartDoc(normalizedDocId, title || "Untitled", content || "");
-
-    // Update PRD with latest Dart AI doc URL (might have changed)
-    await storage.updatePrd(editablePrdId, {
-      dartDocId: normalizedDocId,
-      dartDocUrl: result.url,
-    });
-
-    res.json(result);
-  }));
-
-  // ÄNDERUNG 01.03.2026: Periodische Bereinigung mit Cleanup-Logik
-  // Verhindert Memory Leaks bei Server-Restarts oder Hot-Reloads
-  const GUIDED_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
-  const guidedCleanupTimer = setInterval(async () => {
-    try {
-      const service = getGuidedAiService();
-      const removed = await service.cleanupExpiredSessions();
-      if (removed > 0) {
-        logger.info(`🧹 Cleaned up ${removed} expired guided sessions`);
-      }
-    } catch (err) {
-      logger.error('Guided session cleanup failed', { error: err });
-    }
-  }, GUIDED_CLEANUP_INTERVAL_MS);
-
-  // Cleanup bei Server-Shutdown
-  const cleanupGuidedInterval = () => {
-    clearInterval(guidedCleanupTimer);
-    logger.info('🛑 Guided session cleanup interval stopped');
-  };
-  process.once('SIGTERM', cleanupGuidedInterval);
-  process.once('SIGINT', cleanupGuidedInterval);
+  // ÄNDERUNG 08.03.2026: Linear-/Dart-Integrationsrouten in eigenes kleines Registrierungsmodul ausgelagert.
+  registerIntegrationRoutes(app, isAuthenticated);
 
   const httpServer = createServer(app);
   setupWebSocket(httpServer);

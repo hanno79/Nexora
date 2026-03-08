@@ -13,7 +13,11 @@
 /// <reference types="vitest" />
 import { describe, expect, it, vi } from 'vitest';
 import { assembleStructureToMarkdown } from '../server/prdAssembler';
-import { analyzeContentQuality, reviewAndRefineContent } from '../server/prdContentReviewer';
+import {
+  analyzeContentQuality,
+  applyTargetedContentRefinement,
+  reviewAndRefineContent,
+} from '../server/prdContentReviewer';
 import type { PRDStructure } from '../server/prdStructure';
 
 function makeStructure(featureOverrides: PRDStructure['features']): PRDStructure {
@@ -216,7 +220,7 @@ describe('prdContentReviewer Semantik', () => {
       },
     ]);
 
-    const refineGenerator = vi.fn(async () => ({
+    const reviewer = vi.fn(async () => ({
       content: `=== F-01: EmailPasswordLogin ===
 **purpose**: Authentifiziert bestehende Benutzer mit E-Mail und Passwort und startet eine gültige Sitzung.
 **actors**: Endbenutzer, Authentifizierungsdienst
@@ -235,7 +239,7 @@ describe('prdContentReviewer Semantik', () => {
 - [ ] Gültige Zugangsdaten führen zu einer aktiven Sitzung.
 - [ ] Ungültige Zugangsdaten liefern eine verständliche Fehlermeldung.`,
       model: 'mock/refine',
-      usage: {},
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
     }));
 
     const result = await reviewAndRefineContent({
@@ -243,15 +247,239 @@ describe('prdContentReviewer Semantik', () => {
       structure,
       language: 'de',
       templateCategory: 'feature',
-      refineGenerator,
+      reviewer,
     });
 
     const feature = result.structure.features[0];
-    expect(refineGenerator).toHaveBeenCalledTimes(1);
+    expect(reviewer).toHaveBeenCalledTimes(1);
     expect(result.refined).toBe(true);
     expect(result.enrichedFeatureCount).toBeGreaterThan(0);
     expect(feature.purpose).toMatch(/Authentifiziert bestehende Benutzer/);
     expect(feature.trigger).toContain('/login');
     expect(feature.acceptanceCriteria).toHaveLength(2);
+  });
+
+  it('wendet bei Feature-Repair nur explizit freigegebene Zielfelder an', async () => {
+    const structure = makeStructure([
+      {
+        id: 'F-01',
+        name: 'EmailPasswordLogin',
+        rawContent: 'Login mit E-Mail und Passwort.',
+        purpose: 'Authentifiziert bestehende Benutzer mit E-Mail und Passwort.',
+        acceptanceCriteria: ['Veraltetes Kriterium bleibt nicht bestehen.'],
+      },
+    ]);
+
+    const originalPurpose = structure.features[0].purpose;
+    const reviewer = vi.fn(async (prompt: string) => {
+      expect(prompt).toContain('Target fields: acceptanceCriteria');
+      return {
+        content: `=== F-01: EmailPasswordLogin ===
+**purpose**: Unerlaubte Aenderung an einem nicht freigegebenen Feld.
+**acceptanceCriteria**:
+- [ ] Gueltige Zugangsdaten erzeugen eine aktive Sitzung.
+- [ ] Ungueltige Zugangsdaten liefern HTTP 401 mit Fehlermeldung.`,
+        model: 'mock/refine',
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      };
+    });
+
+    const result = await applyTargetedContentRefinement({
+      content: assembleStructureToMarkdown(structure),
+      structure,
+      issues: [{
+        code: 'feature_semantic_mismatch',
+        sectionKey: 'feature:F-01',
+        message: 'Acceptance criteria no longer match the login flow. Rewrite: acceptanceCriteria',
+        severity: 'error',
+        suggestedAction: 'rewrite',
+        targetFields: ['acceptanceCriteria'],
+      }],
+      language: 'de',
+      reviewer,
+    });
+
+    expect(reviewer).toHaveBeenCalledTimes(1);
+    expect(result.refined).toBe(true);
+    expect(result.enrichedFeatureCount).toBe(1);
+    expect(result.structure.features[0].purpose).toBe(originalPurpose);
+    expect(result.structure.features[0].acceptanceCriteria).toEqual([
+      'Gueltige Zugangsdaten erzeugen eine aktive Sitzung.',
+      'Ungueltige Zugangsdaten liefern HTTP 401 mit Fehlermeldung.',
+    ]);
+  });
+
+  it('lehnt Section-Rewrites ab, wenn dabei strukturierte Features mitveraendert werden', async () => {
+    const structure = makeStructure([
+      {
+        id: 'F-01',
+        name: 'EmailPasswordLogin',
+        rawContent: 'Login mit E-Mail und Passwort.',
+        purpose: 'Authentifiziert bestehende Benutzer.',
+        acceptanceCriteria: ['Login funktioniert.'],
+      },
+    ]);
+
+    const reviewer = vi.fn(async () => ({
+      content: assembleStructureToMarkdown({
+        ...structure,
+        definitionOfDone: 'Release nur nach dokumentiertem Login-Test, QA-Freigabe und Monitoring-Check.',
+        features: [
+          {
+            ...structure.features[0],
+            purpose: 'Unerlaubte Aenderung am Feature waehrend eines Section-Rewrites.',
+          },
+        ],
+      }),
+      model: 'mock/reviewer',
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }));
+
+    const result = await applyTargetedContentRefinement({
+      content: assembleStructureToMarkdown(structure),
+      structure,
+      issues: [{
+        code: 'definition_fix',
+        sectionKey: 'definitionOfDone',
+        message: 'Definition of Done needs a concrete checklist.',
+        severity: 'error',
+        suggestedAction: 'rewrite',
+      }],
+      language: 'de',
+      reviewer,
+    });
+
+    expect(reviewer).toHaveBeenCalledTimes(1);
+    expect(result.refined).toBe(false);
+    expect(result.structure.definitionOfDone).toBe(structure.definitionOfDone);
+    expect(result.structure.features[0].purpose).toBe(structure.features[0].purpose);
+  });
+
+  it('lehnt Section-Rewrites ab, wenn Raw-Only-Features veraendert werden', async () => {
+    const structure = makeStructure([
+      {
+        id: 'F-05',
+        name: 'ProviderListManagement',
+        rawContent: [
+          '**1. Purpose**',
+          '',
+          'Liefert eine sortierte Liste verfuegbarer Provider fuer das Widget.',
+          '',
+          '**10. Acceptance Criteria**',
+          '',
+          '- Provider-Liste wird im Widget dargestellt.',
+        ].join('\n'),
+      },
+    ]);
+
+    const reviewer = vi.fn(async () => ({
+      content: assembleStructureToMarkdown({
+        ...structure,
+        definitionOfDone: 'Release nur nach dokumentierter API-Pruefung und Smoke-Test.',
+        features: [
+          {
+            ...structure.features[0],
+            rawContent: 'Unerlaubte Aenderung am Raw-Only-Feature waehrend eines Section-Rewrites.',
+          },
+        ],
+      }),
+      model: 'mock/reviewer',
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }));
+
+    const result = await applyTargetedContentRefinement({
+      content: assembleStructureToMarkdown(structure),
+      structure,
+      issues: [{
+        code: 'definition_fix',
+        sectionKey: 'definitionOfDone',
+        message: 'Definition of Done needs a concrete checklist.',
+        severity: 'error',
+        suggestedAction: 'rewrite',
+      }],
+      language: 'de',
+      reviewer,
+    });
+
+    expect(reviewer).toHaveBeenCalledTimes(1);
+    expect(result.refined).toBe(false);
+    expect(result.structure.definitionOfDone).toBe(structure.definitionOfDone);
+    expect(result.structure.features[0].rawContent).toBe(structure.features[0].rawContent);
+  });
+
+  it('lehnt targeted refinement ab, wenn unmarkierte Sektionen veraendert werden', async () => {
+    const structure = makeStructure([
+      {
+        id: 'F-01',
+        name: 'EmailPasswordLogin',
+        rawContent: 'Login mit E-Mail und Passwort.',
+        purpose: 'Authentifiziert Benutzer.',
+      },
+    ]);
+
+    const originalBoundaries = structure.systemBoundaries;
+    const reviewer = vi.fn(async () => ({
+      content: [
+        '## System Vision',
+        'Die Plattform sichert Benutzeridentitaeten mit Login, Passwort-Reset, MFA und Audit-Logging.',
+        '',
+        '## System Boundaries',
+        'Unerlaubte Aenderung ausserhalb des freigegebenen Scopes.',
+        '',
+        '## Domain Model',
+        'Entitaeten: User, Session, PasswordResetToken, MFAFactor, AuditLogEntry.',
+        '',
+        '## Global Business Rules',
+        'Jeder Zugriff wird protokolliert und sicher validiert.',
+        '',
+        '## Functional Feature Catalogue',
+        '',
+        '### F-01: EmailPasswordLogin',
+        '1. Purpose',
+        'Authentifiziert Benutzer.',
+        '10. Acceptance Criteria',
+        '- Login funktioniert.',
+        '',
+        '## Non-Functional Requirements',
+        'Antwortzeiten unter 2 Sekunden.',
+        '',
+        '## Error Handling & Recovery',
+        'Fehler werden strukturiert geloggt.',
+        '',
+        '## Deployment & Infrastructure',
+        'Containerisierte Bereitstellung.',
+        '',
+        '## Definition of Done',
+        '- Release-Checkliste ist abgearbeitet.',
+        '',
+        '## Out of Scope',
+        'Keine Social-Login-Provider in v1.',
+        '',
+        '## Timeline & Milestones',
+        'Phase 1 Login, Phase 2 MFA, Phase 3 Audit.',
+        '',
+        '## Success Criteria & Acceptance Testing',
+        'Login-Quote und Audit-Abdeckung sind messbar.',
+      ].join('\n'),
+      model: 'mock/reviewer',
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }));
+
+    const result = await applyTargetedContentRefinement({
+      content: assembleStructureToMarkdown(structure),
+      structure,
+      issues: [{
+        code: 'definition_fix',
+        sectionKey: 'definitionOfDone',
+        message: 'Definition of Done needs a concrete checklist.',
+        severity: 'error',
+        suggestedAction: 'rewrite',
+      }],
+      language: 'de',
+      reviewer,
+    });
+
+    expect(result.refined).toBe(false);
+    expect(result.structure.systemBoundaries).toBe(originalBoundaries);
   });
 });

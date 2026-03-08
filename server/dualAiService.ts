@@ -1,6 +1,7 @@
 // Dual-AI Service - Orchestrates Generator & Reviewer based on HRP-17
 import { createClientWithUserPreferences } from './openrouter';
 import type { OpenRouterClient } from './openrouter';
+import type { ModelCallAttemptUpdate } from './openrouterFallback';
 import { detectContentLanguage } from './prdLanguageDetector';
 import { runFeatureExpansionPipeline, extractVisionFromContent } from './prdFeatureExpansion';
 import {
@@ -10,6 +11,7 @@ import {
   REVIEW_FINAL,
   REPAIR_PASS,
   CONTENT_REVIEW_REFINE,
+  SEMANTIC_VERIFICATION,
   ITERATIVE_ANSWERER,
   ITERATIVE_ANSWERER_RETRY,
   ITERATIVE_CLARIFYING_Q,
@@ -31,7 +33,8 @@ import {
   type ReviewerResponse,
   type IterativeResponse,
   type IterationData,
-  type CompilerDiagnostics
+  type CompilerDiagnostics,
+  type RunStageTimings,
 } from './dualAiPrompts';
 import { expandFeature } from './services/llm/expandFeature';
 import { parsePRDToStructure, logStructureValidation, normalizeFeatureId } from './prdParser';
@@ -48,8 +51,18 @@ import { compilePrdDocument, ensurePrdRequiredSections } from './prdCompiler';
 import { isHighConfidenceFeatureDuplicate } from './prdQualitySignals';
 import { resolvePrdWorkflowMode } from './prdWorkflowMode';
 import { buildTemplateInstruction } from './prdTemplateIntent';
+import {
+  buildSemanticVerificationPrompt,
+  parseSemanticVerificationResponse,
+  type SemanticVerifierInput,
+} from './prdSemanticVerifier';
+import {
+  buildCompilerArtifactDiagnostics,
+  summarizeFinalizerResult,
+} from './compilerArtifact';
 import fs from 'fs';
 import path from 'path';
+import { logger } from './logger';
 
 const DUAL_AI_VERBOSE_LOGS = process.env.ENABLE_VERBOSE_LOGS === 'true';
 
@@ -103,6 +116,8 @@ interface IterationOpts {
   useFinalReview: boolean;
   throwIfCancelled: (stage: string) => void;
   onProgress: ((event: { type: string; [key: string]: any }) => void) | undefined;
+  abortSignal?: AbortSignal;
+  onModelAttempt?: (attempt: ModelCallAttemptUpdate) => void;
 }
 
 /** Mutable loop state shared across all iteration helpers. */
@@ -134,6 +149,8 @@ interface IterationCallResult {
 
 export class DualAiService {
   async generatePRD(request: DualAiRequest, userId?: string): Promise<DualAiResponse> {
+    const startedAt = Date.now();
+    const timings: RunStageTimings = {};
     // Create fresh client per request to prevent cross-user contamination
     const { client, contentLanguage } = await createClientWithUserPreferences(userId, dualAiLog);
     dualAiLog(`🎯 Simple run models: generator=${client.getPreferredModel('generator') || '(tier default)'}, reviewer=${client.getPreferredModel('reviewer') || '(tier default)'}, fallback=${client.getPreferredModel('fallback') || '(none)'}`);
@@ -198,12 +215,14 @@ Create an improved version that incorporates the new requirements while keeping 
         generatorPrompt = `Erstelle ein vollständiges PRD basierend auf:\n\n${userInput}\n\n${templateInstruction}`;
       }
 
+      const generatorStartedAt = Date.now();
       const genResult = await client.callWithFallback(
         'generator',
         GENERATOR_SYSTEM_PROMPT + langInstruction,
         generatorPrompt,
         PRD_GENERATION
       );
+      timings.generatorDurationMs = Date.now() - generatorStartedAt;
 
       generatorResponse = {
         content: genResult.content,
@@ -227,6 +246,7 @@ Create an improved version that incorporates the new requirements while keeping 
     let enrichedStructure: PRDStructure | undefined;
     const shouldRunFeatureExpansion = effectiveMode === 'generate';
     if (shouldRunFeatureExpansion) {
+      const expansionStartedAt = Date.now();
       const expansion = await runFeatureExpansionPipeline({
         inputText: userInput,
         draftContent: generatorResponse.content,
@@ -235,6 +255,7 @@ Create an improved version that incorporates the new requirements while keeping 
         log: dualAiLog,
         warn: dualAiWarn,
       });
+      timings.expansionDurationMs = Date.now() - expansionStartedAt;
       enrichedStructure = expansion.enrichedStructure;
       // Feed enriched structure back into content pipeline so the Reviewer and
       // Compiler Finalizer operate on the full feature set.
@@ -258,12 +279,14 @@ Create an improved version that incorporates the new requirements while keeping 
     
     const reviewerPrompt = `Bewerte folgendes PRD kritisch:\n\n${generatorResponse.content}\n\nTemplate-Kontext:\n${templateInstruction}`;
 
+    const reviewerStartedAt = Date.now();
     const reviewResult = await client.callWithFallback(
       'reviewer',
       REVIEWER_SYSTEM_PROMPT + langInstruction,
       reviewerPrompt,
       REVIEW_STANDARD
     );
+    timings.reviewerDurationMs = Date.now() - reviewerStartedAt;
 
     // Parse review response
     const reviewContent = reviewResult.content;
@@ -285,12 +308,14 @@ Create an improved version that incorporates the new requirements while keeping 
       
       const improvementPrompt = `ORIGINAL PRD:\n${generatorResponse.content}\n\nREVIEW FEEDBACK:\n${reviewContent}\n\nTemplate-Kontext:\n${templateInstruction}\n\nVerbessere das PRD und adressiere die kritischen Fragen.`;
 
+      const improvementStartedAt = Date.now();
       const improveResult = await client.callWithFallback(
         'generator',
         IMPROVEMENT_SYSTEM_PROMPT + langInstruction,
         improvementPrompt,
         PRD_IMPROVEMENT
       );
+      timings.improvementDurationMs = Date.now() - improvementStartedAt;
 
       improvedVersion = {
         content: improveResult.content,
@@ -318,9 +343,9 @@ Create an improved version that incorporates the new requirements while keeping 
       templateCategory,
       originalRequest: userInput || reviewContent || cleanedFinalContent.slice(0, 400),
       maxRepairPasses: 3,
-      repairGenerator: async (repairPrompt: string) => {
+      repairReviewer: async (repairPrompt: string) => {
         const repairResult = await client.callWithFallback(
-          'generator',
+          'reviewer',
           repairSystemPrompt,
           repairPrompt,
           REPAIR_PASS
@@ -332,9 +357,9 @@ Create an improved version that incorporates the new requirements while keeping 
           finishReason: repairResult.finishReason,
         };
       },
-      contentRefineGenerator: async (refinePrompt: string) => {
+      contentRefineReviewer: async (refinePrompt: string) => {
         const refineResult = await client.callWithFallback(
-          'generator',
+          'reviewer',
           'You are a PRD content refinement specialist. Follow the instructions precisely.' + langInstruction,
           refinePrompt,
           CONTENT_REVIEW_REFINE
@@ -345,10 +370,46 @@ Create an improved version that incorporates the new requirements while keeping 
           usage: refineResult.usage,
         };
       },
+      semanticVerifier: async (input: SemanticVerifierInput) => {
+        const verifyPrompt = buildSemanticVerificationPrompt(input);
+        let sameFamilyFallback = false;
+        const verifyResult = await client.callWithFallback(
+          'verifier',
+          'You are a strict PRD semantic verifier. Return JSON only.' + langInstruction,
+          verifyPrompt,
+          SEMANTIC_VERIFICATION,
+          { type: 'json_object' },
+          0.1,
+          {
+            avoidModelFamilies: input.avoidModelFamilies,
+            allowSameFamilyFallback: true,
+            onSameFamilyFallback: ({ model, family, blockedFamilies }) => {
+              sameFamilyFallback = true;
+              dualAiWarn(
+                `Semantic verifier fell back to blocked family ${family || 'unknown'} ` +
+                `with ${model}. Blocked families: ${blockedFamilies.join(', ') || 'none'}`
+              );
+            },
+          }
+        );
+        const parsed = parseSemanticVerificationResponse({
+          content: verifyResult.content,
+          model: verifyResult.model,
+          usage: verifyResult.usage,
+        });
+        return sameFamilyFallback
+          ? {
+              ...parsed,
+              sameFamilyFallback: true,
+              blockedFamilies: input.avoidModelFamilies || [],
+            }
+          : parsed;
+      },
     } as const;
 
     let compilerFinalized;
     let qualityFallbackUsed = false;
+    const compilerFinalizationStartedAt = Date.now();
     try {
       compilerFinalized = await finalizeWithCompilerGates({
         initialResult: {
@@ -360,6 +421,7 @@ Create an improved version that incorporates the new requirements while keeping 
       });
     } catch (error) {
       if (!(error instanceof PrdCompilerQualityError)) throw error;
+      if (error.failureStage === 'semantic_verifier') throw error;
 
       const triedModels = error.repairAttempts.map(a => a.model);
       const fallbackModel = pickNextFallbackModel(client, primaryGenerator, triedModels);
@@ -371,12 +433,14 @@ Create an improved version that incorporates the new requirements while keeping 
 
       try {
         // Re-generate draft with stronger fallback model
+        const fallbackGenerationStartedAt = Date.now();
         const fallbackDraft = await client.callWithFallback(
           'generator',
           GENERATOR_SYSTEM_PROMPT + langInstruction,
           generatorPrompt || `Erstelle ein vollständiges PRD basierend auf:\n\n${userInput}`,
           PRD_GENERATION
         );
+        timings.fallbackGenerationDurationMs = (timings.fallbackGenerationDurationMs || 0) + (Date.now() - fallbackGenerationStartedAt);
         compilerFinalized = await finalizeWithCompilerGates({
           initialResult: {
             content: this.extractCleanPRD(fallbackDraft.content),
@@ -388,6 +452,9 @@ Create an improved version that incorporates the new requirements while keeping 
         });
         dualAiLog(`✅ Quality fallback succeeded with ${fallbackModel}`);
       } catch (fallbackError) {
+        if (fallbackError instanceof PrdCompilerQualityError && fallbackError.failureStage === 'semantic_verifier') {
+          throw fallbackError;
+        }
         const degraded = pickBestDegradedResult(error, fallbackError);
         if (degraded) {
           dualAiLog(`⚠️ Both models failed quality gates — returning best degraded result`);
@@ -399,12 +466,25 @@ Create an improved version that incorporates the new requirements while keeping 
         client.setPreferredModel('generator', primaryGenerator);
       }
     }
+    timings.compilerFinalizationDurationMs = Date.now() - compilerFinalizationStartedAt;
 
     const compilerRepairTokens = compilerFinalized.repairAttempts.reduce(
       (sum, attempt) => sum + attempt.usage.total_tokens,
       0
     );
     const compilerRepairModels = compilerFinalized.repairAttempts.map(attempt => attempt.model);
+    const reviewerRepairTokens = (compilerFinalized.reviewerAttempts || []).reduce(
+      (sum, attempt) => sum + attempt.usage.total_tokens,
+      0
+    );
+    const reviewerRepairModels = (compilerFinalized.reviewerAttempts || []).map(attempt => attempt.model);
+    const semanticVerifierTokens = (compilerFinalized.semanticVerificationHistory || []).reduce(
+      (sum, result) => sum + result.usage.total_tokens,
+      0
+    );
+    const semanticVerifierModels = (compilerFinalized.semanticVerificationHistory || []).map(result => result.model);
+    const compilerArtifact = summarizeFinalizerResult(compilerFinalized);
+    const compilerArtifactDiagnostics = buildCompilerArtifactDiagnostics(compilerArtifact);
 
     // Post-compiler feature preservation (shared helper)
     if (enrichedStructure && compilerFinalized.structure) {
@@ -425,13 +505,17 @@ Create an improved version that incorporates the new requirements while keeping 
       generatorResponse.usage.total_tokens +
       reviewerResponse.usage.total_tokens +
       (improvedVersion?.usage.total_tokens || 0) +
-      compilerRepairTokens;
+      compilerRepairTokens +
+      reviewerRepairTokens +
+      semanticVerifierTokens;
 
     const modelsUsed = Array.from(new Set([
       generatorResponse.model,
       reviewerResponse.model,
       improvedVersion?.model,
       ...compilerRepairModels,
+      ...reviewerRepairModels,
+      ...semanticVerifierModels,
     ].filter(Boolean))) as string[];
 
     // Structured PRD representation — prefer enriched structure from Feature
@@ -453,7 +537,13 @@ Create an improved version that incorporates the new requirements while keeping 
       improvedVersion,
       totalTokens,
       modelsUsed,
-      structuredContent: finalStructuredContent
+      structuredContent: finalStructuredContent,
+      diagnostics: compilerArtifactDiagnostics as any,
+      compilerArtifact,
+      timings: {
+        ...timings,
+        totalDurationMs: Date.now() - startedAt,
+      },
     };
   }
 
@@ -485,6 +575,42 @@ Create an improved version that incorporates the new requirements while keeping 
     };
   }
 
+  private emitIterativeProgress(
+    opts: IterationOpts,
+    event: { type: string; [key: string]: any }
+  ): void {
+    opts.onProgress?.(event);
+  }
+
+  private async callIterativeModel(
+    opts: IterationOpts,
+    params: {
+      role: 'generator' | 'reviewer' | 'verifier';
+      systemPrompt: string;
+      userPrompt: string;
+      maxTokens: number;
+      phase: string;
+      responseFormat?: { type: 'json_object' };
+      temperature?: number;
+      constraints?: Record<string, unknown>;
+    }
+  ) {
+    return opts.client.callWithFallback(
+      params.role,
+      params.systemPrompt,
+      params.userPrompt,
+      params.maxTokens,
+      params.responseFormat,
+      params.temperature,
+      {
+        ...(params.constraints || {}),
+        abortSignal: opts.abortSignal,
+        phase: params.phase,
+        onAttemptUpdate: opts.onModelAttempt,
+      },
+    );
+  }
+
   async generateIterative(
     existingContent: string,
     additionalRequirements: string | undefined,
@@ -494,8 +620,12 @@ Create an improved version that incorporates the new requirements while keeping 
     userId?: string,
     onProgress?: (event: { type: string; [key: string]: any }) => void,
     isCancelled?: () => boolean,
+    abortSignal?: AbortSignal,
+    onModelAttempt?: (attempt: ModelCallAttemptUpdate) => void,
     templateCategory?: string
   ): Promise<IterativeResponse> {
+    const startedAt = Date.now();
+    const timings: RunStageTimings = {};
     // Create fresh client per request to prevent cross-user contamination
     const { client, contentLanguage } = await createClientWithUserPreferences(userId, dualAiLog);
     const workflowInputText = additionalRequirements || existingContent || '';
@@ -526,12 +656,18 @@ Create an improved version that incorporates the new requirements while keeping 
     }
 
     const throwIfCancelled = (stage: string) => {
-      if (!isCancelled?.()) return;
+      if (!isCancelled?.() && !abortSignal?.aborted) return;
       const cancelError: any = new Error(`Iterative generation cancelled during ${stage}`);
       cancelError.name = 'AbortError';
       cancelError.code = 'ERR_CLIENT_DISCONNECT';
       throw cancelError;
     };
+
+    client.setDefaultExecutionContext?.({
+      abortSignal,
+      phase: 'iterative',
+      onAttemptUpdate: onModelAttempt,
+    });
 
     const opts: IterationOpts = {
       iterationCount,
@@ -547,6 +683,8 @@ Create an improved version that incorporates the new requirements while keeping 
       useFinalReview,
       throwIfCancelled,
       onProgress,
+      abortSignal,
+      onModelAttempt,
     };
 
     const state: IterationLoopState = {
@@ -614,7 +752,7 @@ Create an improved version that incorporates the new requirements while keeping 
     for (let i = 1; i <= iterationCount; i++) {
       opts.throwIfCancelled(`iteration ${i} start`);
       dualAiLog(`\n📝 Iteration ${i}/${iterationCount}`);
-      opts.onProgress?.({ type: 'iteration_start', iteration: i, total: iterationCount });
+      this.emitIterativeProgress(opts, { type: 'iteration_start', iteration: i, total: iterationCount });
 
       const genResult = await this.runIterationGeneratorPhase(i, state, opts);
       await this.runIterationExpansionPhase(i, genResult, state, opts);
@@ -642,11 +780,25 @@ Create an improved version that incorporates the new requirements while keeping 
         mergedPRD: preservedPRD,
         tokensUsed: iterTokens,
       });
-      opts.onProgress?.({ type: 'iteration_complete', iteration: i, total: iterationCount, tokensUsed: iterTokens });
+      this.emitIterativeProgress(opts, { type: 'iteration_complete', iteration: i, total: iterationCount, tokensUsed: iterTokens });
     }
 
-    const finalReview = opts.useFinalReview ? await this.runOptionalFinalReview(state, opts) : undefined;
-    const { finalPRD, hardenedStructure, compilerRepairTokens } = await this.finalizeIterativeWorkflow(state, opts);
+    let finalReview: IterativeResponse['finalReview'] = undefined;
+    if (opts.useFinalReview) {
+      const finalReviewStartedAt = Date.now();
+      finalReview = await this.runOptionalFinalReview(state, opts);
+      timings.finalReviewDurationMs = Date.now() - finalReviewStartedAt;
+    }
+
+    logger.info('Iterative workflow entering compiler finalization', {
+      useFinalReview: opts.useFinalReview,
+      finalReviewCompleted: !!finalReview,
+      lastFinalReviewModel: finalReview?.model || null,
+    });
+    this.emitIterativeProgress(opts, { type: 'compiler_finalization_start' });
+    const compilerFinalizationStartedAt = Date.now();
+    const { finalPRD, hardenedStructure, compilerRepairTokens, compilerArtifact } = await this.finalizeIterativeWorkflow(state, opts);
+    timings.compilerFinalizationDurationMs = Date.now() - compilerFinalizationStartedAt;
 
     // Build iteration log document (separate from clean PRD)
     const iterationLog = this.buildIterationLog(
@@ -714,7 +866,7 @@ Create an improved version that incorporates the new requirements while keeping 
     if (fastFinalizeEnabled) {
       dualAiLog('⚡ Iterative fast finalize enabled (skipping deep post-processing)');
       opts.throwIfCancelled('fast finalize');
-      opts.onProgress?.({ type: 'complete', totalTokens });
+      this.emitIterativeProgress(opts, { type: 'complete', totalTokens });
       return {
         finalContent: finalPRD,
         mergedPRD: finalPRD,
@@ -725,6 +877,11 @@ Create an improved version that incorporates the new requirements while keeping 
         modelsUsed: Array.from(state.modelsUsed),
         diagnostics: state.diagnostics,
         structuredContent: hardenedStructure,
+        compilerArtifact,
+        timings: {
+          ...timings,
+          totalDurationMs: Date.now() - startedAt,
+        },
       };
     }
 
@@ -769,6 +926,7 @@ Create an improved version that incorporates the new requirements while keeping 
           totalTokens,
           modelsUsed: Array.from(state.modelsUsed),
           diagnostics: state.diagnostics,
+          compilerArtifact,
         });
         state.diagnostics.artifactWriteConsistency = artifactWriteResult.ok;
         state.diagnostics.artifactWriteIssues = artifactWriteResult.issues.length;
@@ -790,7 +948,7 @@ Create an improved version that incorporates the new requirements while keeping 
     }
 
     opts.throwIfCancelled('completion');
-    opts.onProgress?.({ type: 'complete', totalTokens });
+    this.emitIterativeProgress(opts, { type: 'complete', totalTokens });
     return {
       finalContent: canonicalMergedPRD,
       mergedPRD: canonicalMergedPRD,
@@ -801,6 +959,11 @@ Create an improved version that incorporates the new requirements while keeping 
       modelsUsed: Array.from(state.modelsUsed),
       diagnostics: state.diagnostics,
       structuredContent: hardenedStructure,
+      compilerArtifact,
+      timings: {
+        ...timings,
+        totalDurationMs: Date.now() - startedAt,
+      },
     };
   }
 
@@ -1037,27 +1200,30 @@ Your task:
       }
 
       opts.throwIfCancelled(`iteration ${i} generator call`);
-      genResult = await opts.client.callWithFallback(
-        'generator',
-        ITERATIVE_GENERATOR_PROMPT + opts.langInstruction,
-        generatorPrompt,
-        PRD_GENERATION
-      );
+      genResult = await this.callIterativeModel(opts, {
+        role: 'generator',
+        systemPrompt: ITERATIVE_GENERATOR_PROMPT + opts.langInstruction,
+        userPrompt: generatorPrompt,
+        maxTokens: PRD_GENERATION,
+        phase: 'iteration_generator',
+      });
 
       state.modelsUsed.add(genResult.model);
       dualAiLog(`✅ Generated ${genResult.usage.completion_tokens} tokens with ${genResult.model}`);
-      opts.onProgress?.({ type: 'generator_done', iteration: i, tokensUsed: genResult.usage.total_tokens, model: genResult.model });
+      this.emitIterativeProgress(opts, { type: 'generator_done', iteration: i, tokensUsed: genResult.usage.total_tokens, model: genResult.model });
     }
 
     if (state.featuresFrozen && i >= 2) {
       opts.throwIfCancelled(`iteration ${i} structured delta section`);
-      const deltaSection = await this.generateStructuredDeltaSection({
-        currentPrd: state.currentPRD,
-        generatorOutput: genResult.content,
-        reviewerFeedback: previousIteration?.answererOutput || '',
-        client: opts.client,
-        langInstruction: opts.langInstruction
-      });
+          const deltaSection = await this.generateStructuredDeltaSection({
+            currentPrd: state.currentPRD,
+            generatorOutput: genResult.content,
+            reviewerFeedback: previousIteration?.answererOutput || '',
+            client: opts.client,
+            langInstruction: opts.langInstruction,
+            abortSignal: opts.abortSignal,
+            onModelAttempt: opts.onModelAttempt,
+          });
       if (deltaSection && !/##\s*Feature Delta(?:\s*\(JSON\))?/i.test(genResult.content)) {
         genResult.content = `${genResult.content.trim()}\n\n---\n\n${deltaSection}`;
         dualAiLog(`🧩 Iteration ${i}: Structured Feature Delta appended via delta-only pass`);
@@ -1082,7 +1248,11 @@ Your task:
       }
     }
 
-    return genResult!;
+    if (!genResult) {
+      throw new Error(`Iteration ${i} generator phase produced no result`);
+    }
+
+    return genResult;
   }
 
   /**
@@ -1116,7 +1286,7 @@ Your task:
       });
 
       if (expansion.expandedFeatureCount > 0) {
-        opts.onProgress?.({ type: 'features_expanded', count: expansion.expandedFeatureCount, tokensUsed: expansion.expansionTokens });
+        this.emitIterativeProgress(opts, { type: 'features_expanded', count: expansion.expandedFeatureCount, tokensUsed: expansion.expansionTokens });
 
         const compiledCount = expansion.expandedFeatures.filter(
           (f: any) => f.compiled === true || f.valid === true
@@ -1179,7 +1349,9 @@ Your task:
         provisionalCleanPRD,
         opts.client,
         opts.langInstruction,
-        requiredQuestions
+        requiredQuestions,
+        opts.abortSignal,
+        opts.onModelAttempt,
       );
       questions = this.mergeQuestions(questions, fallbackQuestions);
       if (fallbackQuestions.length > 0) {
@@ -1217,12 +1389,13 @@ Your task:
     const answererPrompt = `The following PRD is being developed:\n\n${genResult.content}\n\nQuestions to answer explicitly:\n${explicitQuestionBlock}\n\nAnswer ALL questions with best practices. Also identify and resolve any Open Points, Gaps, or unresolved areas in the PRD. Your answers will be incorporated directly into the next PRD revision.`;
 
     opts.throwIfCancelled(`iteration ${i} answerer call`);
-    let answerResult = await opts.client.callWithFallback(
-      'reviewer',  // Using reviewer model for answerer role
-      BEST_PRACTICE_ANSWERER_PROMPT + opts.langInstruction,
-      answererPrompt,
-      ITERATIVE_ANSWERER
-    );
+    let answerResult = await this.callIterativeModel(opts, {
+      role: 'reviewer',
+      systemPrompt: BEST_PRACTICE_ANSWERER_PROMPT + opts.langInstruction,
+      userPrompt: answererPrompt,
+      maxTokens: ITERATIVE_ANSWERER,
+      phase: 'iteration_answerer',
+    });
 
     state.modelsUsed.add(answerResult.model);
     dualAiLog(`✅ Answered with ${answerResult.usage.completion_tokens} tokens using ${answerResult.model}`);
@@ -1231,12 +1404,13 @@ Your task:
       dualAiWarn(`⚠️ Iteration ${i}: answerer output looks truncated, retrying once with higher token budget...`);
       const retryPrompt = `${answererPrompt}\n\nIMPORTANT: Return a complete final response. Do not end mid-sentence or mid-list.`;
       opts.throwIfCancelled(`iteration ${i} answerer retry`);
-      const retryResult = await opts.client.callWithFallback(
-        'reviewer',
-        BEST_PRACTICE_ANSWERER_PROMPT + opts.langInstruction,
-        retryPrompt,
-        ITERATIVE_ANSWERER_RETRY
-      );
+      const retryResult = await this.callIterativeModel(opts, {
+        role: 'reviewer',
+        systemPrompt: BEST_PRACTICE_ANSWERER_PROMPT + opts.langInstruction,
+        userPrompt: retryPrompt,
+        maxTokens: ITERATIVE_ANSWERER_RETRY,
+        phase: 'iteration_answerer_retry',
+      });
       state.modelsUsed.add(retryResult.model);
       const retryTruncated = this.looksLikeTruncatedOutput(retryResult.content);
       const shouldUseRetry = !retryTruncated || retryResult.content.length > answerResult.content.length + 120;
@@ -1249,7 +1423,7 @@ Your task:
       }
     }
 
-    opts.onProgress?.({ type: 'answerer_done', iteration: i, tokensUsed: answerResult.usage.total_tokens, model: answerResult.model });
+    this.emitIterativeProgress(opts, { type: 'answerer_done', iteration: i, tokensUsed: answerResult.usage.total_tokens, model: answerResult.model });
 
     return { answerResult, answererOutputTruncated };
   }
@@ -1515,21 +1689,22 @@ Your task:
     if (opts.useFinalReview) {
       opts.throwIfCancelled('final review start');
       dualAiLog('\n🎯 AI #3: Final review and polish...');
-      opts.onProgress?.({ type: 'final_review_start' });
+      this.emitIterativeProgress(opts, { type: 'final_review_start' });
 
       const finalReviewerPrompt = `Review the following PRD at the highest level:\n\n${state.currentPRD}`;
 
       opts.throwIfCancelled('final reviewer call');
-      const reviewResult = await opts.client.callWithFallback(
-        'reviewer',
-        FINAL_REVIEWER_PROMPT + opts.langInstruction,
-        finalReviewerPrompt,
-        REVIEW_FINAL
-      );
+      const reviewResult = await this.callIterativeModel(opts, {
+        role: 'reviewer',
+        systemPrompt: FINAL_REVIEWER_PROMPT + opts.langInstruction,
+        userPrompt: finalReviewerPrompt,
+        maxTokens: REVIEW_FINAL,
+        phase: 'final_review',
+      });
 
       state.modelsUsed.add(reviewResult.model);
       dualAiLog(`✅ Final review complete with ${reviewResult.usage.completion_tokens} tokens`);
-      opts.onProgress?.({ type: 'final_review_done', tokensUsed: reviewResult.usage.total_tokens });
+      this.emitIterativeProgress(opts, { type: 'final_review_done', tokensUsed: reviewResult.usage.total_tokens });
 
       finalReview = {
         content: reviewResult.content,
@@ -1548,8 +1723,9 @@ Your task:
   private async finalizeIterativeWorkflow(
     state: IterationLoopState,
     opts: IterationOpts
-  ): Promise<{ finalPRD: string; hardenedStructure: PRDStructure | undefined; compilerRepairTokens: number }> {
+  ): Promise<{ finalPRD: string; hardenedStructure: PRDStructure | undefined; compilerRepairTokens: number; compilerArtifact?: import('./compilerArtifact').CompilerArtifactSummary }> {
     let currentPRD = state.currentPRD;
+    let compilerArtifact: import('./compilerArtifact').CompilerArtifactSummary | undefined;
 
     // Final hardening: guarantee all required non-feature sections are present in final output.
     let finalHardenedStructure: PRDStructure | undefined;
@@ -1619,13 +1795,14 @@ Your task:
         templateCategory: opts.templateCategory,
         originalRequest: opts.workflowInputText || currentPRD.slice(0, 400),
         maxRepairPasses: 3,
-        repairGenerator: async (repairPrompt: string) => {
-          const repairResult = await opts.client.callWithFallback(
-            'generator',
-            repairSystemPrompt,
-            repairPrompt,
-            12000
-          );
+        repairReviewer: async (repairPrompt: string) => {
+          const repairResult = await this.callIterativeModel(opts, {
+            role: 'reviewer',
+            systemPrompt: repairSystemPrompt,
+            userPrompt: repairPrompt,
+            maxTokens: 12000,
+            phase: 'compiler_repair',
+          });
           return {
             content: repairResult.content,
             model: repairResult.model,
@@ -1633,19 +1810,58 @@ Your task:
             finishReason: repairResult.finishReason,
           };
         },
-        contentRefineGenerator: async (refinePrompt: string) => {
-          const refineResult = await opts.client.callWithFallback(
-            'generator',
-            'You are a PRD content refinement specialist. Follow the instructions precisely.' + opts.langInstruction,
-            refinePrompt,
-            CONTENT_REVIEW_REFINE
-          );
+        contentRefineReviewer: async (refinePrompt: string) => {
+          const refineResult = await this.callIterativeModel(opts, {
+            role: 'reviewer',
+            systemPrompt: 'You are a PRD content refinement specialist. Follow the instructions precisely.' + opts.langInstruction,
+            userPrompt: refinePrompt,
+            maxTokens: CONTENT_REVIEW_REFINE,
+            phase: 'content_review',
+          });
           return {
             content: refineResult.content,
             model: refineResult.model,
             usage: refineResult.usage,
           };
         },
+        semanticVerifier: async (input: SemanticVerifierInput) => {
+          const verifyPrompt = buildSemanticVerificationPrompt(input);
+          let sameFamilyFallback = false;
+          const verifyResult = await this.callIterativeModel(opts, {
+            role: 'verifier',
+            systemPrompt: 'You are a strict PRD semantic verifier. Return JSON only.' + opts.langInstruction,
+            userPrompt: verifyPrompt,
+            maxTokens: SEMANTIC_VERIFICATION,
+            responseFormat: { type: 'json_object' },
+            temperature: 0.1,
+            phase: 'semantic_verification',
+            constraints: {
+              avoidModelFamilies: input.avoidModelFamilies,
+              allowSameFamilyFallback: true,
+              onSameFamilyFallback: ({ model, family, blockedFamilies }: any) => {
+                sameFamilyFallback = true;
+                dualAiWarn(
+                  `Semantic verifier fell back to blocked family ${family || 'unknown'} ` +
+                  `with ${model}. Blocked families: ${blockedFamilies.join(', ') || 'none'}`
+                );
+              },
+            },
+          });
+          const parsed = parseSemanticVerificationResponse({
+            content: verifyResult.content,
+            model: verifyResult.model,
+            usage: verifyResult.usage,
+          });
+          return sameFamilyFallback
+            ? {
+                ...parsed,
+                sameFamilyFallback: true,
+                blockedFamilies: input.avoidModelFamilies || [],
+              }
+            : parsed;
+        },
+        onStageProgress: (event: { type: 'content_review_start' | 'semantic_verification_start' }) =>
+          this.emitIterativeProgress(opts, event),
       };
 
       let compilerFinalized;
@@ -1660,6 +1876,7 @@ Your task:
         });
       } catch (error) {
         if (!(error instanceof PrdCompilerQualityError)) throw error;
+        if (error.failureStage === 'semantic_verifier') throw error;
 
         const triedModels = error.repairAttempts.map(a => a.model);
         const fallbackModel = pickNextFallbackModel(opts.client, primaryGenerator, triedModels);
@@ -1681,6 +1898,9 @@ Your task:
           });
           dualAiLog(`✅ Iterative quality fallback succeeded with ${fallbackModel}`);
         } catch (fallbackError) {
+          if (fallbackError instanceof PrdCompilerQualityError && fallbackError.failureStage === 'semantic_verifier') {
+            throw fallbackError;
+          }
           const degraded = pickBestDegradedResult(error, fallbackError);
           if (degraded) {
             dualAiLog(`⚠️ Both models failed quality gates — returning best degraded result`);
@@ -1695,12 +1915,22 @@ Your task:
 
       currentPRD = this.sanitizeFinalMarkdown(compilerFinalized.content);
       finalHardenedStructure = compilerFinalized.structure;
+      compilerArtifact = summarizeFinalizerResult(compilerFinalized);
+      Object.assign(state.diagnostics, buildCompilerArtifactDiagnostics(compilerArtifact));
       compilerRepairTokens = compilerFinalized.repairAttempts.reduce(
         (sum, attempt) => sum + attempt.usage.total_tokens,
         0
       );
       for (const attempt of compilerFinalized.repairAttempts) {
         state.modelsUsed.add(attempt.model);
+      }
+      for (const attempt of compilerFinalized.reviewerAttempts || []) {
+        state.modelsUsed.add(attempt.model);
+        compilerRepairTokens += attempt.usage.total_tokens;
+      }
+      for (const verification of compilerFinalized.semanticVerificationHistory || []) {
+        state.modelsUsed.add(verification.model);
+        compilerRepairTokens += verification.usage.total_tokens;
       }
       if (compilerFinalized.repairAttempts.length > 0) {
         dualAiLog(`🧱 Unified compiler repair passes: ${compilerFinalized.repairAttempts.length}`);
@@ -1714,7 +1944,7 @@ Your task:
     }
 
     state.currentPRD = currentPRD;
-    return { finalPRD: currentPRD, hardenedStructure: finalHardenedStructure, compilerRepairTokens };
+    return { finalPRD: currentPRD, hardenedStructure: finalHardenedStructure, compilerRepairTokens, compilerArtifact };
   }
 
 
@@ -1727,6 +1957,7 @@ Your task:
     totalTokens: number;
     modelsUsed: string[];
     diagnostics?: CompilerDiagnostics;
+    compilerArtifact?: import('./compilerArtifact').CompilerArtifactSummary;
   }): Promise<{ ok: boolean; issues: string[]; files: string[] }> {
     const issues: string[] = [];
     const repoRoot = process.cwd();
@@ -1916,7 +2147,9 @@ Your task:
     prdContent: string,
     client: OpenRouterClient,
     langInstruction: string,
-    minCount: number
+    minCount: number,
+    abortSignal?: AbortSignal,
+    onModelAttempt?: (attempt: ModelCallAttemptUpdate) => void,
   ): Promise<string[]> {
     try {
       const prompt = `Review this PRD and generate ${minCount} to 5 concrete clarifying questions about unresolved scope, UX, and operational gaps.\n\nReturn ONLY numbered questions.\n\nPRD:\n${prdContent}`;
@@ -1924,7 +2157,14 @@ Your task:
         'reviewer',
         REVIEWER_SYSTEM_PROMPT + langInstruction,
         prompt,
-        ITERATIVE_CLARIFYING_Q
+        ITERATIVE_CLARIFYING_Q,
+        undefined,
+        undefined,
+        {
+          abortSignal,
+          phase: 'clarifying_questions',
+          onAttemptUpdate: onModelAttempt,
+        }
       );
       const lines = result.content.split('\n').map(l => l.trim()).filter(Boolean);
       const parsed: string[] = [];
@@ -3080,6 +3320,8 @@ Your task:
     reviewerFeedback: string;
     client: OpenRouterClient;
     langInstruction: string;
+    abortSignal?: AbortSignal;
+    onModelAttempt?: (attempt: ModelCallAttemptUpdate) => void;
   }): Promise<string | null> {
     const { currentPrd, generatorOutput, reviewerFeedback, client, langInstruction } = params;
     const systemPrompt = `You are part of the Nexora Requirements Compiler.
@@ -3118,7 +3360,14 @@ Return JSON only.`;
         'reviewer',
         systemPrompt + langInstruction,
         userPrompt,
-        ITERATIVE_STRUCTURED_DELTA
+        ITERATIVE_STRUCTURED_DELTA,
+        undefined,
+        undefined,
+        {
+          abortSignal: params.abortSignal,
+          phase: 'structured_delta',
+          onAttemptUpdate: params.onModelAttempt,
+        }
       );
 
       const parsed = this.parseLooseJsonObject(result.content);
