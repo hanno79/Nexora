@@ -54,12 +54,26 @@ type ExportablePrd = {
   content: string;
 };
 
+const MAX_DOWNLOAD_FILENAME_BASE_LENGTH = 120;
+
 export function buildMarkdownExportContent(prd: ExportablePrd): string {
   return `# ${prd.title}\n\n${prd.description || ''}\n\n---\n\n${prd.content}`;
 }
 
-function buildDownloadFilename(title: string, extension: 'pdf' | 'docx'): string {
-  return `${title.replace(/\s+/g, '-')}.${extension}`;
+// ÄNDERUNG 08.03.2026: Download-Dateinamen gegen ungueltige Zeichen, Leerwerte und ueberlange Titel gehaertet.
+export function buildDownloadFilename(title: string, extension: 'pdf' | 'docx'): string {
+  const sanitizedTitle = title
+    .normalize('NFKC')
+    .trim()
+    .replace(/[\/\\:\*\?"<>\|\x00-\x1F]/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, MAX_DOWNLOAD_FILENAME_BASE_LENGTH)
+    .replace(/^-+|-+$/g, '');
+  const safeTitle = sanitizedTitle || 'download';
+
+  return `${safeTitle}.${extension}`;
 }
 
 export function registerPrdMaintenanceRoutes(

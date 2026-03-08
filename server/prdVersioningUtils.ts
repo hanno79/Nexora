@@ -1,13 +1,9 @@
 import type { InsertPrdVersion, Prd } from "@shared/schema";
 
-interface PrdVersionSource {
-  id: string;
-  title: string;
-  description: string | null;
-  content: string;
-  status: string;
-  structuredContent?: unknown;
-}
+export type PrdVersionSnapshotSource = Pick<
+  Prd,
+  "id" | "title" | "description" | "content" | "status" | "structuredContent"
+>;
 
 export function getNextPrdVersionNumber(existingVersionCount: number): string {
   if (!Number.isFinite(existingVersionCount) || existingVersionCount < 0) {
@@ -17,7 +13,7 @@ export function getNextPrdVersionNumber(existingVersionCount: number): string {
 }
 
 export function buildPrdVersionSnapshot(
-  prd: PrdVersionSource,
+  prd: PrdVersionSnapshotSource,
   versionNumber: string,
   createdBy: string,
 ): InsertPrdVersion {
@@ -27,7 +23,7 @@ export function buildPrdVersionSnapshot(
     title: prd.title,
     description: prd.description ?? null,
     content: prd.content,
-    structuredContent: (prd.structuredContent ?? null) as any,
+    structuredContent: prd.structuredContent ?? null,
     status: prd.status,
     createdBy,
   };

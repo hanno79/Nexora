@@ -54,6 +54,7 @@ export const DEPRECATED_MODEL_IDS = new Set<string>([
   'deepseek/deepseek-r1-0528:free',
   'deepseek-ai/deepseek-r1',
   'deepseek-ai/deepseek-r1:free',
+  'qwen-3-235b-a22b-instruct-2507',
 ]);
 
 export const DEFAULT_FALLBACK_MODEL_BY_TIER: Record<keyof ModelConfig, string> = {

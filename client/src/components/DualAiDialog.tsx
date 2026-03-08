@@ -11,7 +11,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
 import { GuidedAiDialog } from './GuidedAiDialog';
 import { useTranslation } from "@/lib/i18n";
-import { readSSEStream } from "@/lib/sseReader";
+import { extractAiRunFinalContent, extractAiRunRecord, isFailedQualityRun } from "@/lib/aiRunDiagnostics";
+import { readSSEStream, SsePayloadError } from "@/lib/sseReader";
 import { formatElapsedTime } from "@/lib/utils";
 import { useElapsedTimer } from "@/hooks/useElapsedTimer";
 
@@ -21,6 +22,24 @@ interface DualAiDialogProps {
   currentContent: string;
   prdId?: string;
   onContentGenerated: (content: string, response: any) => void;
+  onGenerationFailed?: (response: any) => void;
+}
+
+type DualAiModelSources = {
+  generatorModel?: string | null;
+  reviewerModel?: string | null;
+  verifierModel?: string | null;
+  modelsUsed?: string[] | null;
+  compilerDiagnostics?: {
+    verifierModelIds?: string[] | null;
+  } | null;
+  diagnostics?: {
+    verifierModelIds?: string[] | null;
+  } | null;
+};
+
+function getShortModelName(model: string): string {
+  return model.split('/')[1] || model;
 }
 
 export function DualAiDialog({
@@ -28,7 +47,8 @@ export function DualAiDialog({
   onOpenChange,
   currentContent,
   prdId,
-  onContentGenerated
+  onContentGenerated,
+  onGenerationFailed,
 }: DualAiDialogProps) {
   const { t } = useTranslation();
   const hasRealContent = currentContent.trim().length > 0;
@@ -39,7 +59,9 @@ export function DualAiDialog({
   const [currentStep, setCurrentStep] = useState<'idle' | 'generating' | 'reviewing' | 'improving' | 'iterating' | 'guided-finalizing' | 'done'>('idle');
   const [generatorModel, setGeneratorModel] = useState('');
   const [reviewerModel, setReviewerModel] = useState('');
+  const [verifierModel, setVerifierModel] = useState('');
   const [error, setError] = useState('');
+  const [runQualityStatus, setRunQualityStatus] = useState<'passed' | 'failed_quality' | null>(null);
   
   // Workflow-Modus: einfach, iterativ oder geführt (neu)
   const [workflowMode, setWorkflowMode] = useState<'simple' | 'iterative' | 'guided'>('simple');
@@ -68,7 +90,9 @@ export function DualAiDialog({
     setCurrentStep('idle');
     setGeneratorModel('');
     setReviewerModel('');
+    setVerifierModel('');
     setError('');
+    setRunQualityStatus(null);
     setCurrentIteration(0);
     setTotalIterations(0);
     setProgressDetail('');
@@ -81,6 +105,109 @@ export function DualAiDialog({
     setIsGenerating(false);
     resetElapsedTimer();
   }, [resetElapsedTimer]);
+
+  const applyResolvedModels = useCallback((sources: DualAiModelSources) => {
+    const nextGeneratorModel = sources.generatorModel ?? sources.modelsUsed?.[0];
+    const nextReviewerModel =
+      sources.reviewerModel
+      ?? sources.modelsUsed?.[1]
+      ?? nextGeneratorModel
+      ?? undefined;
+    const nextVerifierModel =
+      sources.verifierModel
+      ?? sources.compilerDiagnostics?.verifierModelIds?.[0]
+      ?? sources.diagnostics?.verifierModelIds?.[0]
+      ?? undefined;
+
+    if (nextGeneratorModel) {
+      setGeneratorModel(nextGeneratorModel);
+    }
+    if (nextReviewerModel) {
+      setReviewerModel(nextReviewerModel);
+    }
+    if (nextVerifierModel) {
+      setVerifierModel(nextVerifierModel);
+    }
+  }, []);
+
+  const closeDialogAfter = useCallback((delayMs: number) => {
+    setTimeout(() => {
+      onOpenChange(false);
+      resetState();
+    }, delayMs);
+  }, [onOpenChange, resetState]);
+
+  const applyRunPayload = useCallback((payload: any) => {
+    const runRecord = extractAiRunRecord(payload);
+    applyResolvedModels({
+      generatorModel: payload?.generatorResponse?.model ?? payload?.generatorModel,
+      reviewerModel:
+        payload?.reviewerResponse?.model
+        ?? payload?.reviewerModel
+        ?? payload?.generatorResponse?.model
+        ?? payload?.generatorModel,
+      verifierModel: payload?.verifierResponse?.model ?? payload?.verifierModel,
+      modelsUsed: payload?.modelsUsed,
+      compilerDiagnostics: runRecord.compilerDiagnostics,
+      diagnostics: payload?.diagnostics,
+    });
+    setModeInfo({
+      effectiveMode: payload?.effectiveMode,
+      baselineFeatureCount: payload?.baselineFeatureCount,
+      baselinePartial: payload?.baselinePartial,
+    });
+    setRunQualityStatus(runRecord.qualityStatus === 'failed_quality' ? 'failed_quality' : 'passed');
+    return runRecord;
+  }, [applyResolvedModels]);
+
+  const finalizeRun = useCallback((payload: any, closeDelayMs: number) => {
+    const runRecord = applyRunPayload(payload);
+    const finalContent = extractAiRunFinalContent(payload);
+    if (!finalContent.trim()) {
+      throw new Error('AI returned no content. Please retry.');
+    }
+
+    setCurrentStep('done');
+    setIsGenerating(false);
+    onContentGenerated(finalContent, {
+      ...payload,
+      compilerDiagnostics: runRecord.compilerDiagnostics ?? payload?.compilerDiagnostics ?? payload?.diagnostics,
+      qualityStatus: runRecord.qualityStatus ?? payload?.qualityStatus ?? 'passed',
+      degradedResult: runRecord.qualityStatus === 'failed_quality',
+    });
+    closeDialogAfter(closeDelayMs);
+  }, [applyRunPayload, closeDialogAfter, onContentGenerated]);
+
+  const handleFailedQualityPayload = useCallback((payload: any, closeDelayMs: number) => {
+    const runRecord = applyRunPayload(payload);
+    const finalContent = extractAiRunFinalContent(payload);
+    const normalizedPayload = {
+      ...payload,
+      compilerDiagnostics: runRecord.compilerDiagnostics ?? payload?.compilerDiagnostics ?? payload?.diagnostics,
+      qualityStatus: 'failed_quality',
+      degradedResult: true,
+    };
+
+    setIsGenerating(false);
+
+    if (finalContent.trim()) {
+      setCurrentStep('done');
+      onContentGenerated(finalContent, normalizedPayload);
+      closeDialogAfter(closeDelayMs);
+      return true;
+    }
+
+    if (onGenerationFailed) {
+      setCurrentStep('idle');
+      onGenerationFailed(normalizedPayload);
+      closeDialogAfter(200);
+      return true;
+    }
+
+    setCurrentStep('idle');
+    setError(runRecord.message || payload?.message || t.dualAi.qualityGateFailed);
+    return true;
+  }, [applyRunPayload, closeDialogAfter, onContentGenerated, onGenerationFailed, t.dualAi.qualityGateFailed]);
 
   // ÄNDERUNG 02.03.2025: Mit useCallback memoisiert für korrekte Dependencies
   // ÄNDERUNG 02.03.2025: AbortController-Support für Cleanup hinzugefügt
@@ -115,9 +242,15 @@ export function DualAiDialog({
 
       if (!response.ok) {
         const errorText = await response.text();
-        let msg = t.errors.generateFailed;
-        try { msg = JSON.parse(errorText).message || msg; } catch {}
-        throw new Error(msg);
+        let errorData: any = null;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {}
+        if (errorData && isFailedQualityRun(errorData)) {
+          handleFailedQualityPayload(errorData, 1500);
+          return;
+        }
+        throw new Error(errorData?.message || t.errors.generateFailed);
       }
 
       const contentType = response.headers.get('content-type') || '';
@@ -131,68 +264,44 @@ export function DualAiDialog({
               break;
             case 'complete':
               setTotalTokensSoFar(event.totalTokens || 0);
-              if (event.modelsUsed?.length > 0) {
-                setGeneratorModel(event.modelsUsed[0]);
-                setReviewerModel(event.modelsUsed[1] || event.modelsUsed[0]);
-              }
+              applyResolvedModels({
+                modelsUsed: event.modelsUsed,
+                compilerDiagnostics: event.compilerDiagnostics,
+                diagnostics: event.diagnostics,
+              });
               break;
           }
         }, t.errors.generateFailed);
 
         if (!data) throw new Error('SSE stream ended without result');
-        const finalContent = data.finalContent || data.prdContent || '';
-        if (!finalContent.trim()) throw new Error('AI returned no content. Please retry.');
-
-        setModeInfo({
-          effectiveMode: data.effectiveMode,
-          baselineFeatureCount: data.baselineFeatureCount,
-          baselinePartial: data.baselinePartial,
-        });
-        setCurrentStep('done');
-        setIsGenerating(false);
-        onContentGenerated(finalContent, data);
+        if (isFailedQualityRun(data)) {
+          handleFailedQualityPayload(data, 1500);
+          return;
+        }
+        finalizeRun(data, 2000);
 
         // Session aus localStorage entfernen
         localStorage.removeItem('nexora_guided_session_v2');
         setGuidedSessionId(null);
         setGuidedSessionInfo(null);
-
-        // Dialog nach kurzer Verzögerung schliessen damit Benutzer Erfolg sieht
-        setTimeout(() => {
-          onOpenChange(false);
-          resetState();
-        }, 2000);
       } else {
         // Fallback: klassische JSON-Antwort
         const data = await response.json();
-        const finalContent = data.prdContent || data.finalContent || '';
-        if (!finalContent.trim()) throw new Error('AI returned no content. Please retry.');
-
-        if (data.modelsUsed?.length > 0) {
-          setGeneratorModel(data.modelsUsed[0]);
-          setReviewerModel(data.modelsUsed[1] || data.modelsUsed[0]);
+        if (isFailedQualityRun(data)) {
+          handleFailedQualityPayload(data, 1500);
+          return;
         }
-
-        setModeInfo({
-          effectiveMode: data.effectiveMode,
-          baselineFeatureCount: data.baselineFeatureCount,
-          baselinePartial: data.baselinePartial,
-        });
-        setCurrentStep('done');
-        setIsGenerating(false);
-        onContentGenerated(finalContent, data);
+        finalizeRun(data, 2000);
 
         localStorage.removeItem('nexora_guided_session_v2');
         setGuidedSessionId(null);
         setGuidedSessionInfo(null);
-
-        // Dialog nach kurzer Verzögerung schliessen damit Benutzer Erfolg sieht
-        setTimeout(() => {
-          onOpenChange(false);
-          resetState();
-        }, 2000);
       }
     } catch (err: any) {
+      if ((err instanceof SsePayloadError || err?.payload) && isFailedQualityRun(err.payload)) {
+        handleFailedQualityPayload(err.payload, 1500);
+        return;
+      }
       console.error('Guided finalization error:', err);
       if (err?.name === 'AbortError') {
         setError(t.dualAi.timeoutError);
@@ -210,7 +319,7 @@ export function DualAiDialog({
       stopElapsedTimer();
     }
     // Dependencies für useCallback - alle verwendeten States und Props
-  }, [t, prdId, onContentGenerated, onOpenChange, startElapsedTimer, stopElapsedTimer, resetState]);
+  }, [t, prdId, onContentGenerated, onOpenChange, startElapsedTimer, stopElapsedTimer, resetState, handleFailedQualityPayload, finalizeRun]);
 
   // ÄNDERUNG 02.03.2025: Lade Guided Session aus localStorage beim Öffnen
   // ÄNDERUNG 02.03.2025: Race Condition behoben - setTimeout mit Closure entfernt
@@ -331,6 +440,7 @@ export function DualAiDialog({
         // Pre-load model names so they appear in the status display immediately
         if (settings.generatorModel) setGeneratorModel(settings.generatorModel);
         if (settings.reviewerModel) setReviewerModel(settings.reviewerModel);
+        if (settings.verifierModel) setVerifierModel(settings.verifierModel);
       }
     } catch (err) {
       console.error('Failed to load AI settings:', err);
@@ -406,27 +516,12 @@ export function DualAiDialog({
         releaseAbortController();
 
         // Quality-Gate-Fehler mit brauchbarem Content: Nutze den Content mit Warnung
-        if (response.status === 422 && errorData.finalContent?.trim()) {
+        if (
+          isFailedQualityRun(errorData)
+          || (response.status === 422 && (!!errorData?.finalContent?.trim() || !!errorData?.compilerDiagnostics))
+        ) {
           console.warn('AI generation passed with quality warnings:', errorData.message);
-          setGeneratorModel(errorData?.generatorResponse?.model ?? errorData?.generatorModel ?? '');
-          setReviewerModel(
-            errorData?.reviewerResponse?.model
-            ?? errorData?.reviewerModel
-            ?? errorData?.generatorResponse?.model
-            ?? errorData?.generatorModel
-            ?? ''
-          );
-          setModeInfo({
-            effectiveMode: errorData.effectiveMode,
-            baselineFeatureCount: errorData.baselineFeatureCount,
-            baselinePartial: errorData.baselinePartial,
-          });
-          setCurrentStep('done');
-          onContentGenerated(errorData.finalContent, { ...errorData, qualityStatus: 'failed_quality' });
-          setTimeout(() => {
-            onOpenChange(false);
-            resetState();
-          }, 1500);
+          handleFailedQualityPayload(errorData, 1500);
           return;
         }
 
@@ -435,32 +530,11 @@ export function DualAiDialog({
 
       const data = await response.json();
       releaseAbortController();
-      const finalContent = data.finalContent || data.mergedPRD || '';
-      if (!finalContent || !finalContent.trim()) {
-        throw new Error('AI returned no content. Please retry.');
+      if (isFailedQualityRun(data)) {
+        handleFailedQualityPayload(data, 1500);
+        return;
       }
-
-      setGeneratorModel(data?.generatorResponse?.model ?? data?.generatorModel ?? '');
-      setReviewerModel(
-        data?.reviewerResponse?.model
-        ?? data?.reviewerModel
-        ?? data?.generatorResponse?.model
-        ?? data?.generatorModel
-        ?? ''
-      );
-      setModeInfo({
-        effectiveMode: data.effectiveMode,
-        baselineFeatureCount: data.baselineFeatureCount,
-        baselinePartial: data.baselinePartial,
-      });
-      setCurrentStep('done');
-
-      onContentGenerated(finalContent, data);
-
-      setTimeout(() => {
-        onOpenChange(false);
-        resetState();
-      }, 1500);
+      finalizeRun(data, 1500);
     } catch (error) {
       releaseAbortController();
       throw error;
@@ -518,9 +592,15 @@ export function DualAiDialog({
           inactivityTimeout = null;
         }
         const errorText = await response.text();
-        let msg = t.errors.generateFailed;
-        try { msg = JSON.parse(errorText).message || msg; } catch {}
-        throw new Error(msg);
+        let errorData: any = null;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {}
+        if (errorData && isFailedQualityRun(errorData)) {
+          handleFailedQualityPayload(errorData, 1500);
+          return;
+        }
+        throw new Error(errorData?.message || t.errors.generateFailed);
       }
 
       // Prüfen, ob der Server mit SSE geantwortet hat
@@ -564,6 +644,16 @@ export function DualAiDialog({
             case 'content_review_start':
               setProgressDetail(t.dualAi.contentReviewInProgress);
               break;
+            case 'semantic_repair_start':
+              setProgressDetail(t.dualAi.semanticRepairInProgress);
+              break;
+            case 'semantic_repair_done':
+              setProgressDetail(
+                event.applied
+                  ? t.dualAi.semanticRepairComplete
+                  : t.dualAi.semanticRepairNoChange
+              );
+              break;
             case 'semantic_verification_start':
               setProgressDetail(t.dualAi.semanticVerificationInProgress);
               break;
@@ -577,45 +667,26 @@ export function DualAiDialog({
         }, t.errors.generateFailed);
 
         if (!data) throw new Error('SSE stream ended without result');
-        const finalContent = data.finalContent || data.mergedPRD || '';
-        if (!finalContent.trim()) throw new Error('AI returned no content. Please retry.');
-
-        if (data.modelsUsed?.length > 0) {
-          setGeneratorModel(data.modelsUsed[0]);
-          setReviewerModel(data.modelsUsed[1] || data.modelsUsed[0]);
+        if (isFailedQualityRun(data)) {
+          handleFailedQualityPayload(data, 1500);
+          return;
         }
-
-        setModeInfo({
-          effectiveMode: data.effectiveMode,
-          baselineFeatureCount: data.baselineFeatureCount,
-          baselinePartial: data.baselinePartial,
-        });
-        setCurrentStep('done');
-        onContentGenerated(finalContent, data);
+        finalizeRun(data, 2000);
       } else {
         // Fallback: klassische JSON-Antwort (kein SSE)
         const data = await response.json();
-        const finalContent = data.finalContent || data.mergedPRD || '';
-        if (!finalContent.trim()) throw new Error('AI returned no content. Please retry.');
-
-        if (data.modelsUsed?.length > 0) {
-          setGeneratorModel(data.modelsUsed[0]);
-          setReviewerModel(data.modelsUsed[1] || data.modelsUsed[0]);
+        if (isFailedQualityRun(data)) {
+          handleFailedQualityPayload(data, 1500);
+          return;
         }
-
-        setModeInfo({
-          effectiveMode: data.effectiveMode,
-          baselineFeatureCount: data.baselineFeatureCount,
-          baselinePartial: data.baselinePartial,
-        });
-        setCurrentStep('done');
-        onContentGenerated(finalContent, data);
+        finalizeRun(data, 2000);
       }
-
-      setTimeout(() => {
-        onOpenChange(false);
-        resetState();
-      }, 2000);
+    } catch (err: any) {
+      if ((err instanceof SsePayloadError || err?.payload) && isFailedQualityRun(err.payload)) {
+        handleFailedQualityPayload(err.payload, 1500);
+        return;
+      }
+      throw err;
     } finally {
       if (inactivityTimeout) {
         clearTimeout(inactivityTimeout);
@@ -651,7 +722,9 @@ export function DualAiDialog({
       case 'guided-finalizing':
         return <FileText className="w-5 h-5 animate-pulse text-indigo-500" />;
       case 'done':
-        return <CheckCircle2 className="w-5 h-5 text-green-500" />;
+        return runQualityStatus === 'failed_quality'
+          ? <AlertCircle className="w-5 h-5 text-amber-500" />
+          : <CheckCircle2 className="w-5 h-5 text-green-500" />;
       default:
         return <Sparkles className="w-5 h-5" />;
     }
@@ -671,7 +744,7 @@ export function DualAiDialog({
       case 'guided-finalizing':
         return t.dualAi.guidedFinalizing;
       case 'done':
-        return t.dualAi.done;
+        return runQualityStatus === 'failed_quality' ? t.dualAi.doneWithWarnings : t.dualAi.done;
       default:
         return t.dualAi.ready;
     }
@@ -814,16 +887,21 @@ export function DualAiDialog({
               )}
             </div>
             {/* Modellinformationen — direkt unter der Statusleiste */}
-            {(generatorModel || reviewerModel) && (
+            {(generatorModel || reviewerModel || verifierModel) && (
               <div className="flex gap-2 flex-wrap px-1">
                 {generatorModel && (
                   <Badge variant="outline" className="text-xs">
-                    {t.dualAi.generator}: {generatorModel.split('/')[1] || generatorModel}
+                    {t.dualAi.generator}: {getShortModelName(generatorModel)}
                   </Badge>
                 )}
                 {reviewerModel && (
                   <Badge variant="outline" className="text-xs">
-                    {t.dualAi.reviewer}: {reviewerModel.split('/')[1] || reviewerModel}
+                    {t.dualAi.reviewer}: {getShortModelName(reviewerModel)}
+                  </Badge>
+                )}
+                {verifierModel && (
+                  <Badge variant="outline" className="text-xs">
+                    {t.dualAi.verifier}: {getShortModelName(verifierModel)}
                   </Badge>
                 )}
               </div>

@@ -1042,6 +1042,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         case 'content_review_start':
           activePhase = 'content_review';
           break;
+        case 'semantic_repair_start':
+        case 'semantic_repair_done':
+          activePhase = 'semantic_repair';
+          break;
+        case 'early_drift_detected':
+        case 'early_drift_repair_start':
+        case 'early_drift_repair_done':
+          activePhase = 'early_drift';
+          break;
         case 'semantic_verification_start':
           activePhase = 'semantic_verification';
           break;

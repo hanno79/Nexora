@@ -100,6 +100,12 @@ describe('Model-Provider Registry', () => {
     expect(providers).toContain('cerebras');
   });
 
+  it('keeps qwen-3-235b-a22b-instruct-2507 on OpenRouter despite direct-provider registry noise', () => {
+    process.env.CEREBRAS_API_KEY = 'csk-test';
+    expect(resolveProvidersForModel('qwen-3-235b-a22b-instruct-2507')).toEqual([]);
+    expect(getBestDirectProvider('qwen-3-235b-a22b-instruct-2507')).toBeNull();
+  });
+
   // --- API Key Filterung ---
 
   it('returns empty when provider key is missing', () => {

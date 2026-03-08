@@ -603,11 +603,15 @@ describe('prdCompilerFinalizer', () => {
       enableFeatureAggregation: true,
       contextHint: 'Generate a verified PRD.',
     });
-    const repaired = replaceSectionBody(
+    const repairedDefinitionOfDone = replaceSectionBody(
       compiledOriginal.content,
       'Definition of Done',
       '- Release is complete only after semantic verification passes and diagnostics are persisted.'
     );
+    const repairedDefinitionOfDoneBody = repairedDefinitionOfDone
+      .split('## Definition of Done\n')[1]
+      .split('\n\n## Out of Scope')[0]
+      .trim();
     const semanticVerifier = vi.fn()
       .mockResolvedValueOnce({
         verdict: 'fail' as const,
@@ -626,10 +630,15 @@ describe('prdCompilerFinalizer', () => {
         model: 'mock/verifier',
         usage: usage(8),
       });
-    const contentRefineReviewer = vi.fn(async () => ({
-      content: repaired,
+    const semanticRefineReviewer = vi.fn(async () => ({
+      content: JSON.stringify({
+        sections: {
+          definitionOfDone: repairedDefinitionOfDoneBody,
+        },
+      }),
       model: 'mock/reviewer',
       usage: usage(12),
+      finishReason: 'stop',
     }));
 
     const result = await finalizeWithCompilerGates({
@@ -638,16 +647,142 @@ describe('prdCompilerFinalizer', () => {
       language: 'en',
       originalRequest: 'Generate a verified PRD.',
       repairReviewer: async () => ({ content: original, model: 'mock/repair', usage: usage(10) }),
-      contentRefineReviewer,
+      semanticRefineReviewer,
       semanticVerifier,
       enableContentReview: false,
     });
 
     expect(result.semanticVerification?.verdict).toBe('pass');
     expect(result.semanticRepairApplied).toBe(true);
-    expect(contentRefineReviewer).toHaveBeenCalledTimes(1);
+    expect(result.semanticRepairAttempted).toBe(true);
+    expect(result.semanticRepairIssueCodes).toEqual(['cross_section_inconsistency']);
+    expect(result.semanticRepairSectionKeys).toEqual(['definitionOfDone']);
+    expect(semanticRefineReviewer).toHaveBeenCalledTimes(1);
     expect(semanticVerifier).toHaveBeenCalledTimes(2);
     expect(result.reviewerAttempts).toHaveLength(1);
+  });
+
+  it('runs a second targeted semantic repair cycle when new blockers emerge after the first repair', async () => {
+    const original = buildSemanticVerifierPrd('- Release is complete.');
+    const compiledOriginal = compilePrdDocument(original, {
+      mode: 'improve',
+      language: 'en',
+      strictCanonical: true,
+      strictLanguageConsistency: true,
+      enableFeatureAggregation: true,
+      contextHint: 'Improve the PRD without semantic contradictions.',
+    });
+    const firstRepair = replaceSectionBody(
+      compiledOriginal.content,
+      'System Vision',
+      'The release ships a Tetris loop with power-ups and explicit roguelite meta progression that must remain consistent across feature lifecycle data.'
+    );
+    const secondRepair = replaceSectionBody(
+      firstRepair,
+      'Domain Model',
+      'PlayerProfile stores playerId, xp, and level for roguelite progression. GameSession stores sessionId, activePowerUpId, and score for each run. PowerUp stores powerUpId, label, effectType, and cooldown.'
+    );
+    const firstRepairVisionBody = firstRepair
+      .split('## System Vision\n')[1]
+      .split('\n\n## System Boundaries')[0]
+      .trim();
+    const secondRepairDomainBody = secondRepair
+      .split('## Domain Model\n')[1]
+      .split('\n\n## Global Business Rules')[0]
+      .trim();
+    const semanticVerifier = vi.fn()
+      .mockResolvedValueOnce({
+        verdict: 'fail' as const,
+        blockingIssues: [
+          {
+            code: 'cross_section_inconsistency',
+            sectionKey: 'systemVision',
+            message: 'System Vision does not describe the roguelite progression consistently.',
+            suggestedAction: 'rewrite' as const,
+          },
+          {
+            code: 'feature_section_semantic_mismatch',
+            sectionKey: 'feature:F-01',
+            message: 'Feature F-01 does not encode the progression in lifecycle fields. Rewrite: preconditions, postconditions, dataImpact',
+            suggestedAction: 'enrich' as const,
+            targetFields: ['preconditions', 'postconditions', 'dataImpact'] as const,
+          },
+        ],
+        model: 'mock/verifier',
+        usage: usage(8),
+      })
+      .mockResolvedValueOnce({
+        verdict: 'fail' as const,
+        blockingIssues: [
+          {
+            code: 'schema_field_mismatch',
+            sectionKey: 'domainModel',
+            message: 'Domain Model still lacks the cooldown field required by the business rules.',
+            suggestedAction: 'rewrite' as const,
+          },
+        ],
+        model: 'mock/verifier',
+        usage: usage(8),
+      })
+      .mockResolvedValueOnce({
+        verdict: 'pass' as const,
+        blockingIssues: [],
+        model: 'mock/verifier',
+        usage: usage(8),
+      });
+
+    const semanticRefineReviewer = vi.fn()
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          sections: {
+            systemVision: firstRepairVisionBody,
+          },
+          features: [
+            {
+              id: 'F-01',
+              fields: {
+                preconditions: 'A game session is active and the player profile already tracks XP and level progression.',
+                postconditions: 'The run updates progression state consistently with the active power-up and earned XP.',
+                dataImpact: 'Updates PlayerProfile.xp, PlayerProfile.level, GameSession.activePowerUpId, and GameSession.score.',
+              },
+            },
+          ],
+        }),
+        model: 'mock/reviewer',
+        usage: usage(12),
+        finishReason: 'stop',
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          sections: {
+            domainModel: secondRepairDomainBody,
+          },
+        }),
+        model: 'mock/reviewer',
+        usage: usage(12),
+        finishReason: 'stop',
+      });
+
+    const result = await finalizeWithCompilerGates({
+      initialResult: { content: original, model: 'mock/initial', usage: usage(40) },
+      mode: 'improve',
+      language: 'en',
+      originalRequest: 'Improve the Tetris PRD without semantic contradictions.',
+      repairReviewer: async () => ({ content: original, model: 'mock/repair', usage: usage(10) }),
+      semanticRefineReviewer,
+      semanticVerifier,
+      enableContentReview: false,
+    });
+
+    expect(result.semanticVerification?.verdict).toBe('pass');
+    expect(result.semanticRepairApplied).toBe(true);
+    expect(result.semanticRepairAttempted).toBe(true);
+    expect(result.repairCycleCount).toBe(2);
+    expect(result.initialSemanticBlockingIssues?.map(issue => issue.sectionKey)).toEqual(['systemVision', 'feature:F-01']);
+    expect(result.postRepairSemanticBlockingIssues?.map(issue => issue.sectionKey)).toEqual(['domainModel']);
+    expect(result.finalSemanticBlockingIssues).toEqual([]);
+    expect(semanticRefineReviewer).toHaveBeenCalledTimes(2);
+    expect(semanticVerifier).toHaveBeenCalledTimes(3);
   });
 
   it('fails hard when semantic verifier still reports blockers after targeted repair', async () => {
@@ -671,12 +806,26 @@ describe('prdCompilerFinalizer', () => {
       language: 'en',
       originalRequest: 'Generate a verified PRD.',
       repairReviewer: async () => ({ content: original, model: 'mock/repair', usage: usage(10) }),
-      contentRefineReviewer: async () => ({ content: original, model: 'mock/reviewer', usage: usage(12) }),
+      semanticRefineReviewer: async () => ({
+        content: JSON.stringify({
+          sections: {
+            definitionOfDone: '- Release is complete after documentation review.',
+          },
+        }),
+        model: 'mock/reviewer',
+        usage: usage(12),
+        finishReason: 'stop',
+      }),
       semanticVerifier,
       enableContentReview: false,
     })).rejects.toMatchObject({
       failureStage: 'semantic_verifier',
       semanticRepairApplied: true,
+      semanticRepairAttempted: true,
+      semanticRepairIssueCodes: ['cross_section_inconsistency'],
+      semanticRepairSectionKeys: ['definitionOfDone'],
+      repairGapReason: 'same_issues_persisted',
+      repairCycleCount: 2,
     });
 
     try {
@@ -686,7 +835,16 @@ describe('prdCompilerFinalizer', () => {
         language: 'en',
         originalRequest: 'Generate a verified PRD.',
         repairReviewer: async () => ({ content: original, model: 'mock/repair', usage: usage(10) }),
-        contentRefineReviewer: async () => ({ content: original, model: 'mock/reviewer', usage: usage(12) }),
+        semanticRefineReviewer: async () => ({
+          content: JSON.stringify({
+            sections: {
+              definitionOfDone: '- Release is complete after documentation review.',
+            },
+          }),
+          model: 'mock/reviewer',
+          usage: usage(12),
+          finishReason: 'stop',
+        }),
         semanticVerifier,
         enableContentReview: false,
       });
@@ -694,6 +852,113 @@ describe('prdCompilerFinalizer', () => {
       expect(error).toBeInstanceOf(PrdCompilerQualityError);
       const qualityError = error as PrdCompilerQualityError;
       expect(qualityError.quality.issues.some(issue => issue.code === 'semantic_verifier_blocked')).toBe(true);
+      expect(qualityError.semanticRepairAttempted).toBe(true);
+      expect(qualityError.repairGapReason).toBe('same_issues_persisted');
+      expect(qualityError.postRepairSemanticBlockingIssues.map(issue => issue.sectionKey)).toEqual(['definitionOfDone']);
+      expect(qualityError.finalSemanticBlockingIssues.map(issue => issue.sectionKey)).toEqual(['definitionOfDone']);
     }
+  });
+
+  it('retries semantic repair with smaller batches after truncation', async () => {
+    const original = buildSemanticVerifierPrd('- Release is complete.');
+    const compiledOriginal = compilePrdDocument(original, {
+      mode: 'generate',
+      language: 'en',
+      strictCanonical: true,
+      strictLanguageConsistency: true,
+      enableFeatureAggregation: true,
+      contextHint: 'Generate a verified PRD.',
+    });
+    const repairedDefinitionOfDone = replaceSectionBody(
+      compiledOriginal.content,
+      'Definition of Done',
+      '- Release is complete only after semantic verification passes and diagnostics are persisted.'
+    );
+    const repairedTimeline = replaceSectionBody(
+      repairedDefinitionOfDone,
+      'Timeline & Milestones',
+      '- Milestone 1 stabilizes compiler repair.\n- Milestone 2 resolves semantic blockers before release.\n- Milestone 3 publishes persisted diagnostics and recovery guidance.'
+    );
+    const repairedDefinitionOfDoneBody = repairedTimeline
+      .split('## Definition of Done\n')[1]
+      .split('\n\n## Out of Scope')[0]
+      .trim();
+    const repairedTimelineBody = repairedTimeline
+      .split('## Timeline & Milestones\n')[1]
+      .split('\n\n## Success Criteria & Acceptance Testing')[0]
+      .trim();
+
+    const semanticVerifier = vi.fn()
+      .mockResolvedValueOnce({
+        verdict: 'fail' as const,
+        blockingIssues: [
+          {
+            code: 'cross_section_inconsistency',
+            sectionKey: 'definitionOfDone',
+            message: 'Definition of Done omits the mandatory semantic verification gate.',
+            suggestedAction: 'rewrite' as const,
+          },
+          {
+            code: 'business_rule_contradiction',
+            sectionKey: 'timelineMilestones',
+            message: 'Timeline does not reserve a milestone for semantic verification recovery.',
+            suggestedAction: 'rewrite' as const,
+          },
+        ],
+        model: 'mock/verifier',
+        usage: usage(8),
+      })
+      .mockResolvedValueOnce({
+        verdict: 'pass' as const,
+        blockingIssues: [],
+        model: 'mock/verifier',
+        usage: usage(8),
+      });
+
+    const semanticRefineReviewer = vi.fn()
+      .mockResolvedValueOnce({
+        content: '{"sections":{"definitionOfDone":"truncated',
+        model: 'mock/reviewer',
+        usage: usage(12),
+        finishReason: 'length',
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          sections: {
+            definitionOfDone: repairedDefinitionOfDoneBody,
+          },
+        }),
+        model: 'mock/reviewer',
+        usage: usage(12),
+        finishReason: 'stop',
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          sections: {
+            timelineMilestones: repairedTimelineBody,
+          },
+        }),
+        model: 'mock/reviewer',
+        usage: usage(12),
+        finishReason: 'stop',
+      });
+
+    const result = await finalizeWithCompilerGates({
+      initialResult: { content: original, model: 'mock/initial', usage: usage(40) },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Generate a verified PRD.',
+      repairReviewer: async () => ({ content: original, model: 'mock/repair', usage: usage(10) }),
+      semanticRefineReviewer,
+      semanticVerifier,
+      enableContentReview: false,
+    });
+
+    expect(result.semanticVerification?.verdict).toBe('pass');
+    expect(result.semanticRepairApplied).toBe(true);
+    expect(result.semanticRepairTruncated).toBe(true);
+    expect(result.semanticRepairSectionKeys).toEqual(['definitionOfDone', 'timelineMilestones']);
+    expect(semanticRefineReviewer).toHaveBeenCalledTimes(3);
+    expect(semanticVerifier).toHaveBeenCalledTimes(2);
   });
 });

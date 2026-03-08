@@ -359,6 +359,81 @@ IMPORTANT:
 - The PRD should grow and improve step by step
 - LANGUAGE: Follow the language instruction provided below`;
 
+export const ITERATIVE_IMPROVE_GENERATOR_PROMPT = `You are an experienced Product Manager and PRD expert specializing in FEATURE-ORIENTED REQUIREMENTS.
+Your task is to ITERATIVELY improve an EXISTING Product Requirements Document without widening product scope.
+
+CRITICAL IMPROVE-MODE RULES:
+- You MUST preserve the existing PRD structure, section intent, and baseline feature catalogue
+- You MUST NOT invent new F-XX features in improve mode
+- You MUST NOT rename, renumber, or replace baseline features unless the user explicitly requested that exact change
+- You MUST NOT introduce new personas, target audiences, deployment/runtime models, infrastructure domains, or integration families unless the user explicitly requested them
+- You MUST keep the product anchored to the baseline System Vision, System Boundaries, Domain Model, Global Business Rules, and Out of Scope
+- If a requested improvement suggests a new feature family, convert it into a clarifying question instead of adding PRD content
+
+MANDATORY SECTIONS — the PRD must contain ALL of these H2 headings (add missing ones conservatively):
+- System Vision (purpose, executive summary, problem statement, goals with KPIs)
+- System Boundaries (target audience, personas, operating model, deployment, runtime, persistence)
+- Domain Model (core entities, relationships, data types)
+- Global Business Rules (cross-feature invariants, validation rules, authorization policies)
+- Functional Feature Catalogue with F-XX Feature Specs for each baseline feature
+- Non-Functional Requirements (performance, security, scalability, accessibility, UI/UX)
+- Error Handling & Recovery (error strategy, dependencies, risks with mitigation)
+- Deployment & Infrastructure (architecture, tech stack, integrations, CI/CD)
+- Definition of Done (feature completion criteria, quality gates)
+- Out of Scope (explicit exclusions for this version)
+- Timeline & Milestones (phases with deliverables and time estimates)
+- Success Criteria & Acceptance Testing (measurable success indicators)
+${FEATURE_SPEC_TEMPLATE}
+
+PROCESS:
+1. Analyze the current PRD and the requested improvement
+2. Preserve all baseline sections and baseline feature IDs
+3. Tighten, enrich, and clarify existing sections only
+4. Keep all changes consistent with the baseline anchor sections
+5. Ask 3-5 concrete questions about unresolved gaps inside the existing scope
+
+REQUIRED STRUCTURE of your output:
+[Write the COMPLETE PRD here — no wrapper heading, no "Revised PRD" label. Start directly with the first PRD heading like "# [Product Name]" followed by "## System Vision"]
+
+---
+
+## Feature Delta (JSON)
+\`\`\`json
+{
+  "addedFeatures": [],
+  "updatedFeatures": [
+    { "featureId": "F-01", "notes": "what was clarified or improved without changing feature scope" }
+  ]
+}
+\`\`\`
+
+Rules for Feature Delta:
+- The JSON block is MANDATORY in every iteration
+- "addedFeatures" MUST always be an empty array in improve mode
+- "updatedFeatures" MUST reference existing baseline F-XX IDs only
+- Do NOT introduce new feature families, personas, infrastructure platforms, or runtime models through the delta
+
+## Questions for Improvement
+1. [Concrete question about missing detail inside the existing product scope]
+2. [Concrete question about unclear requirement inside the existing product scope]
+3. [Concrete question about an unresolved implementation-ready detail]
+4. [Optional: additional scoped questions]
+5. [Optional: additional scoped questions]
+
+OUTPUT RULES:
+- Do NOT include any introductory text like "Here is the revised PRD", "Hier ist die überarbeitete Version", etc.
+- Do NOT label the PRD section as "## Revised PRD" or "## Überarbeitetes PRD" — start directly with the actual PRD content
+- Do NOT include meta-commentary about what you changed
+- Do NOT include any markdown after the JSON and questions sections except valid PRD content/sections
+- The PRD content must start directly with the first heading (e.g., "# [Product Name]" followed by "## System Vision")
+- Separate the PRD from questions using a "---" divider
+
+IMPORTANT:
+- Improve mode means refine the current PRD, not widen it
+- Never add new F-XX features in improve mode
+- If the user wants a truly new feature family, ask a clarifying question instead of silently expanding scope
+- LANGUAGE: Follow the language instruction provided below`;
+
 export const BEST_PRACTICE_ANSWERER_PROMPT = `You are an experienced Tech Lead and Product Strategy Consultant.
 Your task is to answer concrete PRD questions AND resolve all Open Points & Gaps with BEST PRACTICES.
 
@@ -563,6 +638,14 @@ interface IterationData {
   tokensUsed: number;
 }
 
+interface CompilerDiagnosticIssue {
+  code: string;
+  sectionKey: string;
+  message: string;
+  suggestedAction?: 'rewrite' | 'enrich';
+  targetFields?: string[];
+}
+
 interface CompilerDiagnostics {
   structuredFeatureCount: number;
   totalFeatureCount: number;
@@ -600,10 +683,29 @@ interface CompilerDiagnostics {
   contentRefined?: boolean;
   contentReviewIssueCodes?: string[];
   semanticVerifierVerdict?: 'pass' | 'fail';
+  primaryGateReason?: string;
   semanticBlockingCodes?: string[];
+  semanticBlockingIssues?: CompilerDiagnosticIssue[];
+  initialSemanticBlockingIssues?: CompilerDiagnosticIssue[];
+  postRepairSemanticBlockingIssues?: CompilerDiagnosticIssue[];
+  finalSemanticBlockingIssues?: CompilerDiagnosticIssue[];
   semanticRepairApplied?: boolean;
+  semanticRepairAttempted?: boolean;
+  semanticRepairIssueCodes?: string[];
+  semanticRepairSectionKeys?: string[];
+  semanticRepairTruncated?: boolean;
+  repairGapReason?: 'emergent_issue_after_repair' | 'same_issues_persisted' | 'repair_no_structural_change' | 'repair_budget_exhausted';
+  repairCycleCount?: number;
   semanticVerifierSameFamilyFallback?: boolean;
   semanticVerifierBlockedFamilies?: string[];
+  earlyDriftDetected?: boolean;
+  earlyDriftCodes?: string[];
+  earlyDriftSections?: string[];
+  blockedAddedFeatures?: string[];
+  earlySemanticLintCodes?: string[];
+  earlyRepairAttempted?: boolean;
+  earlyRepairApplied?: boolean;
+  primaryEarlyDriftReason?: string;
   activePhase?: string;
   lastProgressEvent?: string;
   lastModelAttempt?: {
@@ -615,6 +717,7 @@ interface CompilerDiagnostics {
     startedAt?: string;
     endedAt?: string;
     durationMs?: number;
+    finishReason?: string;
     errorMessage?: string;
   };
 }
@@ -646,5 +749,6 @@ export type {
   IterationData,
   IterativeResponse,
   CompilerDiagnostics,
+  CompilerDiagnosticIssue,
   RunStageTimings,
 };

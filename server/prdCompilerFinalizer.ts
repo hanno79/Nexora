@@ -6,6 +6,7 @@ import {
   type PrdQualityReport,
 } from './prdCompiler';
 import {
+  applySemanticPatchRefinement,
   applyTargetedContentRefinement,
   reviewAndRefineContent,
   type ContentIssue,
@@ -25,7 +26,12 @@ import {
 import { buildAvoidedModelFamilies } from './modelFamily';
 
 type SupportedLanguage = 'de' | 'en';
-export type FinalizerFailureStage = 'compiler_repair' | 'content_review' | 'semantic_verifier';
+export type FinalizerFailureStage = 'compiler_repair' | 'content_review' | 'semantic_verifier' | 'early_drift';
+export type RepairGapReason =
+  | 'emergent_issue_after_repair'
+  | 'same_issues_persisted'
+  | 'repair_no_structural_change'
+  | 'repair_budget_exhausted';
 
 export type {
   SemanticBlockingIssue,
@@ -55,9 +61,17 @@ export interface FinalizeWithCompilerGatesOptions {
   /** Reviewer for the targeted content-refine AI call. If not provided, content review runs
    *  in analysis-only mode (issues reported but no AI refinement). */
   contentRefineReviewer?: ReviewerContentGenerator;
+  /** Reviewer for targeted semantic repair patches after verifier blocking issues. */
+  semanticRefineReviewer?: ReviewerContentGenerator;
   /** Independent semantic verifier that runs after compiler/content review. */
   semanticVerifier?: (input: SemanticVerifierInput) => Promise<SemanticVerificationResult>;
-  onStageProgress?: (event: { type: 'content_review_start' | 'semantic_verification_start' }) => void;
+  onStageProgress?: (event: {
+    type: 'content_review_start' | 'semantic_verification_start' | 'semantic_repair_start' | 'semantic_repair_done';
+    issueCount?: number;
+    sectionKeys?: string[];
+    applied?: boolean;
+    truncated?: boolean;
+  }) => void;
 }
 
 export interface FinalizeWithCompilerGatesResult {
@@ -74,6 +88,16 @@ export interface FinalizeWithCompilerGatesResult {
   semanticVerification?: SemanticVerificationResult;
   semanticVerificationHistory?: SemanticVerificationResult[];
   semanticRepairApplied?: boolean;
+  semanticRepairAttempted?: boolean;
+  semanticRepairIssueCodes?: string[];
+  semanticRepairSectionKeys?: string[];
+  semanticRepairTruncated?: boolean;
+  initialSemanticBlockingIssues?: SemanticBlockingIssue[];
+  postRepairSemanticBlockingIssues?: SemanticBlockingIssue[];
+  finalSemanticBlockingIssues?: SemanticBlockingIssue[];
+  repairGapReason?: RepairGapReason;
+  repairCycleCount?: number;
+  earlySemanticLintCodes?: string[];
 }
 
 export class PrdCompilerQualityError extends Error {
@@ -85,6 +109,23 @@ export class PrdCompilerQualityError extends Error {
   readonly semanticVerification?: SemanticVerificationResult;
   readonly failureStage: FinalizerFailureStage;
   readonly semanticRepairApplied: boolean;
+  readonly semanticRepairAttempted: boolean;
+  readonly semanticRepairIssueCodes: string[];
+  readonly semanticRepairSectionKeys: string[];
+  readonly semanticRepairTruncated: boolean;
+  readonly initialSemanticBlockingIssues: SemanticBlockingIssue[];
+  readonly postRepairSemanticBlockingIssues: SemanticBlockingIssue[];
+  readonly finalSemanticBlockingIssues: SemanticBlockingIssue[];
+  readonly repairGapReason?: RepairGapReason;
+  readonly repairCycleCount: number;
+  readonly earlySemanticLintCodes: string[];
+  readonly earlyDriftDetected: boolean;
+  readonly earlyDriftCodes: string[];
+  readonly earlyDriftSections: string[];
+  readonly blockedAddedFeatures: string[];
+  readonly earlyRepairAttempted: boolean;
+  readonly earlyRepairApplied: boolean;
+  readonly primaryEarlyDriftReason?: string;
 
   constructor(
     message: string,
@@ -96,6 +137,23 @@ export class PrdCompilerQualityError extends Error {
       semanticVerification?: SemanticVerificationResult;
       failureStage?: FinalizerFailureStage;
       semanticRepairApplied?: boolean;
+      semanticRepairAttempted?: boolean;
+      semanticRepairIssueCodes?: string[];
+      semanticRepairSectionKeys?: string[];
+      semanticRepairTruncated?: boolean;
+      initialSemanticBlockingIssues?: SemanticBlockingIssue[];
+      postRepairSemanticBlockingIssues?: SemanticBlockingIssue[];
+      finalSemanticBlockingIssues?: SemanticBlockingIssue[];
+      repairGapReason?: RepairGapReason;
+      repairCycleCount?: number;
+      earlySemanticLintCodes?: string[];
+      earlyDriftDetected?: boolean;
+      earlyDriftCodes?: string[];
+      earlyDriftSections?: string[];
+      blockedAddedFeatures?: string[];
+      earlyRepairAttempted?: boolean;
+      earlyRepairApplied?: boolean;
+      primaryEarlyDriftReason?: string;
     }
   ) {
     super(message);
@@ -108,6 +166,23 @@ export class PrdCompilerQualityError extends Error {
     this.semanticVerification = meta?.semanticVerification;
     this.failureStage = meta?.failureStage || 'compiler_repair';
     this.semanticRepairApplied = meta?.semanticRepairApplied ?? false;
+    this.semanticRepairAttempted = meta?.semanticRepairAttempted ?? false;
+    this.semanticRepairIssueCodes = meta?.semanticRepairIssueCodes || [];
+    this.semanticRepairSectionKeys = meta?.semanticRepairSectionKeys || [];
+    this.semanticRepairTruncated = meta?.semanticRepairTruncated ?? false;
+    this.initialSemanticBlockingIssues = meta?.initialSemanticBlockingIssues || [];
+    this.postRepairSemanticBlockingIssues = meta?.postRepairSemanticBlockingIssues || [];
+    this.finalSemanticBlockingIssues = meta?.finalSemanticBlockingIssues || [];
+    this.repairGapReason = meta?.repairGapReason;
+    this.repairCycleCount = meta?.repairCycleCount ?? 0;
+    this.earlySemanticLintCodes = meta?.earlySemanticLintCodes || [];
+    this.earlyDriftDetected = meta?.earlyDriftDetected ?? false;
+    this.earlyDriftCodes = meta?.earlyDriftCodes || [];
+    this.earlyDriftSections = meta?.earlyDriftSections || [];
+    this.blockedAddedFeatures = meta?.blockedAddedFeatures || [];
+    this.earlyRepairAttempted = meta?.earlyRepairAttempted ?? false;
+    this.earlyRepairApplied = meta?.earlyRepairApplied ?? false;
+    this.primaryEarlyDriftReason = meta?.primaryEarlyDriftReason;
   }
 }
 
@@ -175,6 +250,56 @@ function toSemanticContentIssues(issues: SemanticBlockingIssue[]): ContentIssue[
       ...(issue.targetFields?.length ? { targetFields: issue.targetFields } : {}),
     };
   });
+}
+
+function cloneSemanticBlockingIssues(issues: SemanticBlockingIssue[] | undefined): SemanticBlockingIssue[] {
+  if (!Array.isArray(issues)) return [];
+  return issues.map(issue => ({
+    code: String(issue.code || '').trim() || 'cross_section_inconsistency',
+    sectionKey: String(issue.sectionKey || '').trim() || 'systemVision',
+    message: String(issue.message || '').trim() || 'Blocking semantic inconsistency.',
+    suggestedAction: issue.suggestedAction || (String(issue.sectionKey || '').trim().startsWith('feature:') ? 'enrich' : 'rewrite'),
+    ...(issue.targetFields?.length ? { targetFields: Array.from(new Set(issue.targetFields)) } : {}),
+  }));
+}
+
+function blockingIssuePairSignature(issues: SemanticBlockingIssue[] | undefined): string[] {
+  return Array.from(new Set(
+    cloneSemanticBlockingIssues(issues)
+      .map(issue => `${issue.sectionKey}::${issue.code}`)
+      .filter(Boolean)
+  )).sort();
+}
+
+function determineRepairGapReason(params: {
+  beforeRepair: SemanticBlockingIssue[];
+  afterRepair: SemanticBlockingIssue[];
+  changed: boolean;
+  exhaustedBudget?: boolean;
+}): RepairGapReason {
+  if (!params.changed) {
+    return 'repair_no_structural_change';
+  }
+
+  const beforePairs = blockingIssuePairSignature(params.beforeRepair);
+  const afterPairs = blockingIssuePairSignature(params.afterRepair);
+  if (
+    beforePairs.length === afterPairs.length
+    && beforePairs.every((pair, index) => pair === afterPairs[index])
+  ) {
+    return 'same_issues_persisted';
+  }
+
+  const hasEmergentIssue = afterPairs.some(pair => !beforePairs.includes(pair));
+  if (hasEmergentIssue) {
+    return 'emergent_issue_after_repair';
+  }
+
+  if (params.exhaustedBudget) {
+    return 'repair_budget_exhausted';
+  }
+
+  return 'same_issues_persisted';
 }
 
 function withSyntheticQualityIssue(
@@ -289,6 +414,15 @@ export async function finalizeWithCompilerGates(
   let contentRefined = false;
   let semanticVerification: SemanticVerificationResult | undefined;
   let semanticRepairApplied = false;
+  let semanticRepairAttempted = false;
+  let semanticRepairIssueCodes: string[] = [];
+  let semanticRepairSectionKeys: string[] = [];
+  let semanticRepairTruncated = false;
+  let initialSemanticBlockingIssues: SemanticBlockingIssue[] = [];
+  let postRepairSemanticBlockingIssues: SemanticBlockingIssue[] = [];
+  let finalSemanticBlockingIssues: SemanticBlockingIssue[] = [];
+  let repairGapReason: RepairGapReason | undefined;
+  let repairCycleCount = 0;
 
   if (enableContentReview) {
     options.onStageProgress?.({ type: 'content_review_start' });
@@ -367,25 +501,107 @@ export async function finalizeWithCompilerGates(
     };
 
     let verification = await runSemanticVerifier();
-    if (verification.verdict === 'fail' && verification.blockingIssues.length > 0 && options.contentRefineReviewer) {
-      const semanticRepair = await applyTargetedContentRefinement({
+    finalSemanticBlockingIssues = cloneSemanticBlockingIssues(verification.blockingIssues);
+    const semanticRepairReviewer = options.semanticRefineReviewer || options.contentRefineReviewer;
+    const maxSemanticRepairCycles = semanticRepairReviewer ? 2 : 0;
+
+    if (verification.verdict === 'fail' && verification.blockingIssues.length > 0) {
+      initialSemanticBlockingIssues = cloneSemanticBlockingIssues(verification.blockingIssues);
+    }
+
+    while (
+      verification.verdict === 'fail'
+      && verification.blockingIssues.length > 0
+      && repairCycleCount < maxSemanticRepairCycles
+      && semanticRepairReviewer
+    ) {
+      const beforeRepairIssues = cloneSemanticBlockingIssues(verification.blockingIssues);
+      const semanticIssues = toSemanticContentIssues(beforeRepairIssues);
+      semanticRepairAttempted = true;
+      repairCycleCount += 1;
+      semanticRepairIssueCodes = Array.from(new Set([
+        ...semanticRepairIssueCodes,
+        ...semanticIssues.map(issue => issue.code).filter(Boolean),
+      ]));
+      semanticRepairSectionKeys = Array.from(new Set([
+        ...semanticRepairSectionKeys,
+        ...semanticIssues.map(issue => issue.sectionKey).filter(Boolean),
+      ]));
+      options.onStageProgress?.({
+        type: 'semantic_repair_start',
+        issueCount: beforeRepairIssues.length,
+        sectionKeys: semanticIssues.map(issue => issue.sectionKey).filter(Boolean),
+      });
+      const semanticRepair = await applySemanticPatchRefinement({
         content: compiled.content,
         structure: compiled.structure,
-        issues: toSemanticContentIssues(verification.blockingIssues),
+        issues: semanticIssues,
         language: language || 'en',
         templateCategory,
-        reviewer: options.contentRefineReviewer,
+        originalRequest,
+        reviewer: semanticRepairReviewer,
       });
       reviewerAttempts.push(...semanticRepair.reviewerAttempts);
+      semanticRepairTruncated = semanticRepairTruncated || semanticRepair.truncated;
+      options.onStageProgress?.({
+        type: 'semantic_repair_done',
+        issueCount: beforeRepairIssues.length,
+        sectionKeys: semanticIssues.map(issue => issue.sectionKey).filter(Boolean),
+        applied: semanticRepair.refined,
+        truncated: semanticRepair.truncated,
+      });
 
-      if (semanticRepair.refined) {
-        const recompiled = compileCurrent(semanticRepair.content);
-        if (recompiled.quality.valid || qualityScore(recompiled.quality) >= bestScore) {
-          compiled = recompiled;
-          bestScore = Math.max(bestScore, qualityScore(recompiled.quality));
-          semanticRepairApplied = true;
-          verification = await runSemanticVerifier();
+      if (!semanticRepair.refined) {
+        repairGapReason = determineRepairGapReason({
+          beforeRepair: beforeRepairIssues,
+          afterRepair: beforeRepairIssues,
+          changed: false,
+          exhaustedBudget: repairCycleCount >= maxSemanticRepairCycles,
+        });
+        if (repairCycleCount === 1) {
+          postRepairSemanticBlockingIssues = cloneSemanticBlockingIssues(beforeRepairIssues);
         }
+        finalSemanticBlockingIssues = cloneSemanticBlockingIssues(beforeRepairIssues);
+        break;
+      }
+
+      const recompiled = compileCurrent(semanticRepair.content);
+      if (!(recompiled.quality.valid || qualityScore(recompiled.quality) >= bestScore)) {
+        repairGapReason = determineRepairGapReason({
+          beforeRepair: beforeRepairIssues,
+          afterRepair: beforeRepairIssues,
+          changed: false,
+          exhaustedBudget: repairCycleCount >= maxSemanticRepairCycles,
+        });
+        if (repairCycleCount === 1) {
+          postRepairSemanticBlockingIssues = cloneSemanticBlockingIssues(beforeRepairIssues);
+        }
+        finalSemanticBlockingIssues = cloneSemanticBlockingIssues(beforeRepairIssues);
+        break;
+      }
+
+      compiled = recompiled;
+      bestScore = Math.max(bestScore, qualityScore(recompiled.quality));
+      semanticRepairApplied = true;
+      verification = await runSemanticVerifier();
+      finalSemanticBlockingIssues = cloneSemanticBlockingIssues(verification.blockingIssues);
+      if (repairCycleCount === 1) {
+        postRepairSemanticBlockingIssues = cloneSemanticBlockingIssues(verification.blockingIssues);
+      }
+
+      if (verification.verdict === 'pass' || verification.blockingIssues.length === 0) {
+        repairGapReason = undefined;
+        break;
+      }
+
+      if (repairCycleCount >= maxSemanticRepairCycles) {
+        repairGapReason = determineRepairGapReason({
+          beforeRepair: beforeRepairIssues,
+          afterRepair: verification.blockingIssues,
+          changed: true,
+          exhaustedBudget: true,
+        });
+        break;
       }
     }
 
@@ -405,6 +621,15 @@ export async function finalizeWithCompilerGates(
         semanticVerification: verification,
         failureStage: 'semantic_verifier',
         semanticRepairApplied,
+        semanticRepairAttempted,
+        semanticRepairIssueCodes,
+        semanticRepairSectionKeys,
+        semanticRepairTruncated,
+        initialSemanticBlockingIssues,
+        postRepairSemanticBlockingIssues,
+        finalSemanticBlockingIssues,
+        repairGapReason,
+        repairCycleCount,
       }
     );
   }
@@ -422,5 +647,14 @@ export async function finalizeWithCompilerGates(
     semanticVerification,
     semanticVerificationHistory,
     semanticRepairApplied,
+    semanticRepairAttempted,
+    semanticRepairIssueCodes,
+    semanticRepairSectionKeys,
+    semanticRepairTruncated,
+    initialSemanticBlockingIssues,
+    postRepairSemanticBlockingIssues,
+    finalSemanticBlockingIssues,
+    repairGapReason,
+    repairCycleCount,
   };
 }

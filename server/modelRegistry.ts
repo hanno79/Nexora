@@ -23,12 +23,24 @@ interface ModelProviderEntry {
 const registry = new Map<string, ModelProviderEntry>();
 let initialized = false;
 
+// Known provider mismatches or temporarily unsupported direct-provider mappings.
+// These models should stay on OpenRouter until the provider routing is verified again.
+const DIRECT_PROVIDER_DENYLIST = new Map<string, Set<AIProvider>>([
+  ['qwen-3-235b-a22b-instruct-2507', new Set<AIProvider>(['cerebras'])],
+]);
+
 /**
  * Normalisiert eine Model-ID fuer Registry-Lookup.
  * Entfernt :free Suffix (OpenRouter-Konzept) und konvertiert zu lowercase.
  */
 function normalizeModelId(modelId: string): string {
   return modelId.replace(/:free$/, '').toLowerCase();
+}
+
+function resolveDeniedProviders(modelId: string): Set<AIProvider> | undefined {
+  const normalized = normalizeModelId(modelId);
+  const tail = normalized.includes('/') ? normalized.split('/').pop() || normalized : normalized;
+  return DIRECT_PROVIDER_DENYLIST.get(normalized) || DIRECT_PROVIDER_DENYLIST.get(tail);
 }
 
 /**
@@ -102,7 +114,9 @@ export function resolveProvidersForModel(modelId: string): AIProvider[] {
 
   return entry.providers.filter(provider => {
     const envKey = API_KEY_ENV[provider];
-    return !!process.env[envKey];
+    if (!process.env[envKey]) return false;
+    const deniedProviders = resolveDeniedProviders(modelId);
+    return !deniedProviders?.has(provider);
   });
 }
 

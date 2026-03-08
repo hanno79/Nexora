@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { assembleStructureToMarkdown } from '../server/prdAssembler';
 import {
   analyzeContentQuality,
+  applySemanticPatchRefinement,
   applyTargetedContentRefinement,
   reviewAndRefineContent,
 } from '../server/prdContentReviewer';
@@ -481,5 +482,107 @@ describe('prdContentReviewer Semantik', () => {
 
     expect(result.refined).toBe(false);
     expect(result.structure.systemBoundaries).toBe(originalBoundaries);
+  });
+
+  it('baut semantische Repair-Prompts mit Cluster-Kontext, Evidenz und priorisierten Batches', async () => {
+    const structure = makeStructure([
+      {
+        id: 'F-01',
+        name: 'Password Reset',
+        rawContent: 'Reset flow updates User.passwordHash after token confirmation.',
+        purpose: 'Erlaubt Benutzern einen Password Reset fuer ihren Zugang.',
+        actors: 'Endbenutzer, Authentifizierungsdienst',
+        trigger: 'Benutzer fordert einen Password Reset an.',
+        preconditions: 'Benutzer kennt die registrierte E-Mail-Adresse.',
+        postconditions: 'Ein neues Passwort ist gespeichert.',
+        dataImpact: 'User.passwordHash und Session.resetToken werden aktualisiert.',
+        uiImpact: 'Die UI zeigt Dialoge fuer Password Reset und Token-Bestaetigung.',
+        mainFlow: [
+          'Benutzer fordert Password Reset an.',
+          'System bestaetigt das Reset-Token und aktualisiert User.passwordHash.',
+        ],
+        acceptanceCriteria: ['Password reset aktualisiert das Passwort nach Token-Bestaetigung.'],
+      },
+    ]);
+    structure.domainModel = 'Entitaeten: User(passwordDigest, email), Session(sessionId, userId).';
+    structure.globalBusinessRules = 'Antwortzeit fuer Authentifizierung ist maximal 200 ms. Password reset ist erst in v2 erlaubt.';
+    structure.systemBoundaries = 'Die Web-Anwendung deckt Login und Sitzungsverwaltung ab, aber keinen Password-Reset in v1.';
+    structure.outOfScope = 'Password reset ist in v1 ausgeschlossen.';
+    structure.nonFunctional = 'Antwortzeit fuer Authentifizierung betraegt 500 ms.';
+    structure.timelineMilestones = 'Phase 1 Login, Phase 2 MFA.';
+
+    const prompts: string[] = [];
+    const reviewer = vi.fn(async (prompt: string) => {
+      prompts.push(prompt);
+      return {
+        content: '{"sections":{},"features":[]}',
+        model: 'mock/semantic-reviewer',
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        finishReason: 'stop' as const,
+      };
+    });
+
+    const result = await applySemanticPatchRefinement({
+      content: assembleStructureToMarkdown(structure),
+      structure,
+      issues: [
+        {
+          code: 'feature_section_semantic_mismatch',
+          sectionKey: 'feature:F-01',
+          message: 'Feature F-01 reintroduces password reset and conflicts with the schema. Rewrite: purpose, dataImpact',
+          severity: 'error',
+          suggestedAction: 'enrich',
+          targetFields: ['purpose', 'dataImpact'],
+        },
+        {
+          code: 'schema_field_mismatch',
+          sectionKey: 'domainModel',
+          message: 'Domain Model does not match the User.passwordHash reference.',
+          severity: 'error',
+          suggestedAction: 'rewrite',
+        },
+        {
+          code: 'business_rule_contradiction',
+          sectionKey: 'globalBusinessRules',
+          message: 'Business rules conflict with the password reset flow.',
+          severity: 'error',
+          suggestedAction: 'rewrite',
+        },
+        {
+          code: 'cross_section_inconsistency',
+          sectionKey: 'systemBoundaries',
+          message: 'System boundaries contradict the reset flow.',
+          severity: 'error',
+          suggestedAction: 'rewrite',
+        },
+        {
+          code: 'scope_meta_leakage',
+          sectionKey: 'outOfScope',
+          message: 'Out of Scope reintroduces excluded reset work.',
+          severity: 'error',
+          suggestedAction: 'rewrite',
+        },
+      ],
+      language: 'de',
+      originalRequest: 'Bitte verbessere den Login-Flow ohne Password Reset in v1.',
+      reviewer,
+    });
+
+    expect(result.refined).toBe(false);
+    expect(reviewer).toHaveBeenCalledTimes(3);
+    expect(prompts[0]).toContain('## Target Feature: F-01 - Password Reset');
+    expect(prompts[0]).toContain('## Target Section: domainModel');
+    expect(prompts[1]).toContain('## Target Section: globalBusinessRules');
+    expect(prompts[2]).toContain('## Target Section: systemBoundaries');
+    expect(prompts[2]).toContain('## Target Section: outOfScope');
+
+    const combinedPrompts = prompts.join('\n');
+    expect(combinedPrompts).toContain('CONSISTENCY CLUSTER SNAPSHOT');
+    expect(combinedPrompts).toContain('System Boundaries: Die Web-Anwendung deckt Login und Sitzungsverwaltung ab, aber keinen Password-Reset in v1.');
+    expect(combinedPrompts).toContain('Out of Scope: Password reset ist in v1 ausgeschlossen.');
+    expect(combinedPrompts).toContain('Deterministic Evidence:');
+    expect(combinedPrompts).toContain('User.passwordHash');
+    expect(combinedPrompts).toContain('business_rule_constraint_conflict');
+    expect(combinedPrompts).toContain('out_of_scope_reintroduced');
   });
 });

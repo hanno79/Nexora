@@ -95,7 +95,49 @@ const GROQ_MAX_OUTPUT_TOKENS: Record<string, number> = {
   'llama3-70b-8192': 8192,
   'llama3-8b-8192': 8192,
   'llama-guard-3-8b': 8192,
+  'llama-4-maverick-17b-128e-instruct': 8192,
+  'llama-4-scout-17b-16e-instruct': 8192,
 };
+
+const GROQ_CONTEXT_WINDOW_TOKENS: Record<string, number> = {
+  'llama-3.3-70b-versatile': 128000,
+  'llama-3.1-8b-instant': 128000,
+  'gemma2-9b-it': 8192,
+  'mixtral-8x7b-32768': 32768,
+  'llama3-70b-8192': 8192,
+  'llama3-8b-8192': 8192,
+  'llama-guard-3-8b': 8192,
+  'llama-4-maverick-17b-128e-instruct': 131072,
+  'llama-4-scout-17b-16e-instruct': 131072,
+};
+
+const GROQ_SAFE_REQUEST_BYTES = 16 * 1024 * 1024;
+const GROQ_CONTEXT_SAFETY_MARGIN_TOKENS = 4096;
+const GROQ_MIN_INPUT_BUDGET_TOKENS = 4096;
+
+function normalizeGroqModelId(model: string): string {
+  const normalized = String(model || '').trim().toLowerCase();
+  if (!normalized) return '';
+  const vendorPrefixed = normalized.includes('/') ? normalized.split('/').pop() : normalized;
+  return vendorPrefixed || normalized;
+}
+
+function estimateGroqPromptTokens(messages: Array<{ content: string }>): number {
+  return messages.reduce((total, message) => {
+    const content = String(message?.content || '');
+    const estimatedTokens = Math.ceil(content.length / 4);
+    return total + estimatedTokens + 12;
+  }, 0);
+}
+
+function getGroqContextWindow(model: string): number {
+  const normalized = normalizeGroqModelId(model);
+  return GROQ_CONTEXT_WINDOW_TOKENS[normalized] || 128000;
+}
+
+function buildGroqPreflightError(message: string): Error {
+  return new Error(`Groq API: Request zu gross (preflight). ${message}`);
+}
 
 export class GroqProvider extends BaseAIProvider {
   getProviderConfig(): ProviderConfig {
@@ -162,8 +204,30 @@ export class GroqProvider extends BaseAIProvider {
     };
 
     if (maxTokens) {
-      const modelLimit = GROQ_MAX_OUTPUT_TOKENS[model];
+      const modelLimit = GROQ_MAX_OUTPUT_TOKENS[normalizeGroqModelId(model)];
       requestBody.max_tokens = modelLimit ? Math.min(maxTokens, modelLimit) : maxTokens;
+    }
+
+    const requestBodyJson = JSON.stringify(requestBody);
+    const requestBytes = Buffer.byteLength(requestBodyJson, 'utf8');
+    if (requestBytes > GROQ_SAFE_REQUEST_BYTES) {
+      throw this.handleError(buildGroqPreflightError(
+        `Estimated payload size ${requestBytes} bytes exceeds the safe Groq request size of ${GROQ_SAFE_REQUEST_BYTES} bytes. Please reduce the prompt context.`,
+      ));
+    }
+
+    const estimatedPromptTokens = estimateGroqPromptTokens(messages);
+    const outputBudget = requestBody.max_tokens ?? 0;
+    const safeInputBudget = Math.max(
+      GROQ_MIN_INPUT_BUDGET_TOKENS,
+      getGroqContextWindow(model) - outputBudget - GROQ_CONTEXT_SAFETY_MARGIN_TOKENS,
+    );
+    const estimatedTotalTokens = estimatedPromptTokens + outputBudget;
+    if (estimatedPromptTokens > safeInputBudget || estimatedTotalTokens > getGroqContextWindow(model)) {
+      throw this.handleError(buildGroqPreflightError(
+        `Estimated token budget ${estimatedTotalTokens} exceeds the safe Groq limit for ${model}. ` +
+        `Prompt estimate: ${estimatedPromptTokens}, output budget: ${outputBudget}, safe input budget: ${safeInputBudget}.`,
+      ));
     }
 
     try {
@@ -173,7 +237,7 @@ export class GroqProvider extends BaseAIProvider {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestBody),
+        body: requestBodyJson,
       }, undefined, abortSignal);
 
       if (!fetchResponse.ok) {

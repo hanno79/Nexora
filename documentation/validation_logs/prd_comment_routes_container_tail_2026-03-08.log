@@ -1,0 +1,6 @@
+__EXIT_CODE__:0
+
+    await invokeRoute(findRoute(routes, 'post', '/api/prds/:id/comments'), { content: 'Event bitte senden' }, { id: 'prd-1' });
+    expect(dependencies.broadcastPrdUpdate).toHaveBeenCalledWith('prd-1', 'comment:added');
+  });
+});

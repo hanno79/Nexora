@@ -5,6 +5,7 @@ import {
   REVIEWER_SYSTEM_PROMPT,
   IMPROVEMENT_SYSTEM_PROMPT,
   ITERATIVE_GENERATOR_PROMPT,
+  ITERATIVE_IMPROVE_GENERATOR_PROMPT,
   BEST_PRACTICE_ANSWERER_PROMPT,
   FINAL_REVIEWER_PROMPT,
   FEATURE_SPEC_TEMPLATE,
@@ -156,6 +157,19 @@ describe('ITERATIVE_GENERATOR_PROMPT', () => {
 
   it('has minimum length (>500 chars)', () => {
     expect(ITERATIVE_GENERATOR_PROMPT.length).toBeGreaterThan(500);
+  });
+});
+
+describe('ITERATIVE_IMPROVE_GENERATOR_PROMPT', () => {
+  it('forbids new features in improve mode', () => {
+    expect(ITERATIVE_IMPROVE_GENERATOR_PROMPT).toContain('MUST NOT invent new F-XX features');
+    expect(ITERATIVE_IMPROVE_GENERATOR_PROMPT).toContain('"addedFeatures" MUST always be an empty array');
+  });
+
+  it('anchors improve mode to baseline scope', () => {
+    expect(ITERATIVE_IMPROVE_GENERATOR_PROMPT).toContain('System Vision');
+    expect(ITERATIVE_IMPROVE_GENERATOR_PROMPT).toContain('Out of Scope');
+    expect(ITERATIVE_IMPROVE_GENERATOR_PROMPT).toContain('baseline feature catalogue');
   });
 });
 

@@ -138,6 +138,7 @@ ${templateInstruction}
 - Resolve repeated boilerplate phrasing so each feature spec stays concrete and unique.
 - Remove prompt/meta artifacts (e.g., Iteration X, Questions Identified, Answer:, Reasoning:, ORIGINAL PRD, REVIEW FEEDBACK).
 - Target language: ${language || 'en'}. Write ALL body content in this language. Keep only the canonical H2 headings in English.
+- In "Domain Model", keep technical entity, field, API, and schema identifiers in their canonical code form if needed; only the explanatory prose around them must follow the target language.
 - No truncation, placeholders, or unfinished bullets/sentences.`;
   }
 
@@ -167,5 +168,6 @@ ${templateInstruction}
 - Resolve repeated boilerplate phrasing so each feature spec stays concrete and unique.
 - Remove prompt/meta artifacts (e.g., Iteration X, Questions Identified, Answer:, Reasoning:, ORIGINAL PRD, REVIEW FEEDBACK).
 - Target language: ${language || 'en'}. Write ALL body content in this language. Keep only the canonical H2 headings in English.
+- In "Domain Model", keep technical entity, field, API, and schema identifiers in their canonical code form if needed; only the explanatory prose around them must follow the target language.
 - No truncation, placeholders, or unfinished bullets/sentences.`;
 }

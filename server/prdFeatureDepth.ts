@@ -9,8 +9,11 @@ Beschreibung: Hilfsfunktionen fuer Feature-Depth, Hint-Extraktion und strukturie
 
 import { hasText } from './prdTextUtils';
 import type { PRDStructure, FeatureSpec } from './prdStructure';
+import { parseFeatureSubsections } from './prdFeatureParser';
 
 type SupportedLanguage = 'de' | 'en';
+
+const STRUCTURED_FEATURE_LABEL_PATTERN = /^(?:\*{0,2})?(?:purpose|zweck|ziel|nutzen|actors|akteure|beteiligte|rollen|trigger|ausloeser|ausloser|preconditions|vorbedingungen|voraussetzungen|main\s+flow|hauptablauf|hauptfluss|ablauf|alternate\s+flows|alternative\s+ablaeufe|alternativablaeufe|alternative\s+flows|ausnahmefaelle|postconditions|nachbedingungen|ergebniszustand|data\s+impact|datenauswirkungen|datenwirkungen|datenwirkung|ui\s+impact|ui-auswirkungen|benutzeroberflaechen-auswirkungen|oberflaechen-auswirkungen|acceptance\s+criteria|akzeptanzkriterien|abnahmekriterien)(?:\*{0,2})?\s*:/i;
 
 export const FEATURE_STRUCTURED_FIELDS: Array<keyof FeatureSpec> = [
   'purpose',
@@ -28,6 +31,47 @@ export const FEATURE_STRUCTURED_FIELDS: Array<keyof FeatureSpec> = [
 function hasStructuredFeatureValue(value: unknown): boolean {
   if (Array.isArray(value)) return value.length > 0;
   return hasText(value);
+}
+
+function sanitizeExtractedText(value: unknown): string {
+  return String(value || '')
+    .trim()
+    .replace(/^\*+|\*+$/g, '')
+    .replace(/^[-*•]\s+/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isStructuredOutlineItem(value: string): boolean {
+  const sanitized = sanitizeExtractedText(value);
+  if (!sanitized) return false;
+  return STRUCTURED_FEATURE_LABEL_PATTERN.test(sanitized);
+}
+
+function sanitizeExtractedList(
+  values: unknown,
+  options?: { rejectOutlineItems?: boolean }
+): string[] {
+  const entries = Array.isArray(values) ? values : [];
+  return entries
+    .map(entry => sanitizeExtractedText(entry))
+    .filter(entry => entry.length >= 8)
+    .filter(entry => !(options?.rejectOutlineItems && isStructuredOutlineItem(entry)));
+}
+
+function getParsedFieldValue(
+  parsed: Partial<Pick<FeatureSpec, 'purpose' | 'actors' | 'trigger' | 'preconditions' | 'mainFlow' | 'alternateFlows' | 'postconditions' | 'dataImpact' | 'uiImpact' | 'acceptanceCriteria'>>,
+  field: keyof FeatureSpec
+): string | string[] | undefined {
+  const value = parsed[field as keyof typeof parsed];
+  if (Array.isArray(value)) {
+    const rejectOutlineItems = field === 'mainFlow' || field === 'alternateFlows' || field === 'acceptanceCriteria';
+    const sanitized = sanitizeExtractedList(value, { rejectOutlineItems });
+    return sanitized.length > 0 ? sanitized : undefined;
+  }
+
+  const sanitized = sanitizeExtractedText(value);
+  return sanitized || undefined;
 }
 
 function extractLabeledSection(rawContent: string, labelPattern: RegExp): string | undefined {
@@ -67,6 +111,7 @@ export function extractFieldHintsFromRaw(rawContent: string): {
   uiImpactHint?: string;
 } {
   if (!rawContent || rawContent.length < 20) return {};
+  const parsed = parseFeatureSubsections(rawContent);
 
   // Fuer Rollen- und Trigger-Heuristiken nur den Freitext vor dem ersten
   // strukturierten Unterabschnitt verwenden, damit Compile-Parse-Compile-Laeufe
@@ -82,12 +127,17 @@ export function extractFieldHintsFromRaw(rawContent: string): {
     .filter(Boolean);
 
   let purposeHint: string | undefined;
-  for (const line of lines) {
-    if (/^F-\d+/i.test(line)) continue;
-    if (line.length < 15) continue;
-    if (/^\d+\.\s/.test(line)) continue;
-    purposeHint = line.endsWith('.') ? line : `${line}.`;
-    break;
+  const parsedPurpose = getParsedFieldValue(parsed, 'purpose');
+  if (typeof parsedPurpose === 'string' && parsedPurpose.length >= 15) {
+    purposeHint = parsedPurpose.endsWith('.') ? parsedPurpose : `${parsedPurpose}.`;
+  } else {
+    for (const line of lines) {
+      if (/^F-\d+/i.test(line)) continue;
+      if (line.length < 15) continue;
+      if (/^\d+\.\s/.test(line)) continue;
+      purposeHint = line.endsWith('.') ? line : `${line}.`;
+      break;
+    }
   }
 
   const actorPatterns: [RegExp, string][] = [
@@ -102,23 +152,47 @@ export function extractFieldHintsFromRaw(rawContent: string): {
   }
   const actorHint = foundActors.length > 0 ? foundActors.join(', ') : undefined;
 
-  const triggerMatch = proseSource.match(
-    /\b(?:clicks?|taps?|navigates?|submits?|opens?|selects?|starts?|initiates?|klickt|navigiert|startet|oeffnet|waehlt)\s+[^.\n]{5,60}/i
-  );
-  const triggerHint = triggerMatch ? triggerMatch[0].trim() : undefined;
+  const parsedTrigger = getParsedFieldValue(parsed, 'trigger');
+  const triggerMatch = typeof parsedTrigger === 'string'
+    ? null
+    : proseSource.match(
+      /\b(?:clicks?|taps?|navigates?|submits?|opens?|selects?|starts?|initiates?|klickt|navigiert|startet|oeffnet|waehlt)\s+[^.\n]{5,60}/i
+    );
+  const triggerHint = typeof parsedTrigger === 'string'
+    ? parsedTrigger
+    : triggerMatch ? triggerMatch[0].trim() : undefined;
 
+  const parsedMainFlow = getParsedFieldValue(parsed, 'mainFlow');
   const numberedSteps = rawContent
     .split('\n')
     .map(l => l.trim())
     .filter(l => /^\d+\.\s+/.test(l))
     .map(l => l.replace(/^\d+\.\s+/, '').trim())
-    .filter(l => l.length >= 10);
-  const mainFlowHint = numberedSteps.length >= 2 ? numberedSteps : undefined;
+    .map(step => sanitizeExtractedText(step))
+    .filter(step => step.length >= 10)
+    .filter(step => !isStructuredOutlineItem(step));
+  const mainFlowHint = Array.isArray(parsedMainFlow) && parsedMainFlow.length >= 2
+    ? parsedMainFlow
+    : numberedSteps.length >= 2
+      ? numberedSteps
+      : undefined;
 
-  const preconditionsHint = extractLabeledSection(rawContent, /(?:preconditions?|vorbedingungen?|voraussetzungen?)/i);
-  const postconditionsHint = extractLabeledSection(rawContent, /(?:postconditions?|nachbedingungen?|ergebnis(?:se)?)/i);
-  const dataImpactHint = extractLabeledSection(rawContent, /(?:data\s*impact|daten(?:bank)?|speicher|storage|database|persist)/i);
-  const uiImpactHint = extractLabeledSection(rawContent, /(?:ui\s*impact|oberfl[aä]che|anzeige|display|screen|component)/i);
+  const parsedPreconditions = getParsedFieldValue(parsed, 'preconditions');
+  const preconditionsHint = typeof parsedPreconditions === 'string'
+    ? parsedPreconditions
+    : extractLabeledSection(rawContent, /(?:preconditions?|vorbedingungen?|voraussetzungen?)/i);
+  const parsedPostconditions = getParsedFieldValue(parsed, 'postconditions');
+  const postconditionsHint = typeof parsedPostconditions === 'string'
+    ? parsedPostconditions
+    : extractLabeledSection(rawContent, /(?:postconditions?|nachbedingungen?|ergebnis(?:se)?)/i);
+  const parsedDataImpact = getParsedFieldValue(parsed, 'dataImpact');
+  const dataImpactHint = typeof parsedDataImpact === 'string'
+    ? parsedDataImpact
+    : extractLabeledSection(rawContent, /(?:data\s*impact|daten(?:bank)?|speicher|storage|database|persist)/i);
+  const parsedUiImpact = getParsedFieldValue(parsed, 'uiImpact');
+  const uiImpactHint = typeof parsedUiImpact === 'string'
+    ? parsedUiImpact
+    : extractLabeledSection(rawContent, /(?:ui\s*impact|oberfl[aä]che|anzeige|display|screen|component)/i);
 
   return { purposeHint, actorHint, triggerHint, mainFlowHint, preconditionsHint, postconditionsHint, dataImpactHint, uiImpactHint };
 }
@@ -133,6 +207,7 @@ export function ensurePrdFeatureDepth(
   for (let i = 0; i < (structure.features || []).length; i++) {
     const feature = { ...(structure.features[i] || {}) } as FeatureSpec;
     const hints = extractFieldHintsFromRaw(feature.rawContent || '');
+    const parsedFields = parseFeatureSubsections(feature.rawContent || '');
     let changed = false;
 
     for (const field of FEATURE_STRUCTURED_FIELDS) {
@@ -140,7 +215,10 @@ export function ensurePrdFeatureDepth(
       if (hasStructuredFeatureValue(currentValue)) continue;
 
       const safeName = feature.name || feature.id;
-      if (field === 'purpose' && hints.purposeHint) {
+      const parsedValue = getParsedFieldValue(parsedFields, field);
+      if (parsedValue !== undefined) {
+        (feature as any)[field] = parsedValue;
+      } else if (field === 'purpose' && hints.purposeHint) {
         (feature as any)[field] = hints.purposeHint;
       } else if (field === 'actors' && hints.actorHint) {
         (feature as any)[field] = language === 'de'
@@ -179,8 +257,14 @@ export function ensurePrdFeatureDepth(
         changed = true;
       } else if (critField === 'acceptanceCriteria') {
         (feature as any)[critField] = language === 'de'
-          ? [`${safeName} kann erfolgreich ausgeführt werden.`, `Fehlerfälle liefern eine klare Fehlermeldung.`]
-          : [`${safeName} can be executed successfully.`, `Error cases produce a clear error message.`];
+          ? [
+            `${safeName} kann mit gültigen Eingaben erfolgreich ausgeführt werden.`,
+            `Ungültige Eingaben oder Ausführungsfehler bei ${safeName} erzeugen verständliches Feedback ohne inkonsistenten Zustand.`,
+          ]
+          : [
+            `${safeName} completes successfully with valid input.`,
+            `Invalid input or execution failures in ${safeName} produce clear feedback without leaving inconsistent state.`,
+          ];
         changed = true;
       }
     }

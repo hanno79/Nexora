@@ -23,6 +23,25 @@ Erstelle das Datenbankschema fuer das Leaderboard mit Spieler-Scores.
     expect(hints.mainFlowHint![1]).toMatch(/scores/);
   });
 
+  it('does not treat numbered feature field labels as mainFlow steps', () => {
+    const raw = `### F-11: Game Session End Recording
+
+1. Purpose: Persistiert das Ergebnis einer beendeten Spiel-Session.
+2. Actors: Frontend-Engine, Session-Service.
+3. Trigger: Spiel-Engine sendet POST /api/sessions/{sessionId}/end.
+4. Preconditions: Session ist aktiv.
+5. Main Flow:
+6. Alternate Flows:
+7. Postconditions: Session-Datensatz ist final.
+8. Data Impact: Update game_sessions.
+9. UI Impact: End-Screen zeigt Score und XP.
+10. Acceptance Criteria:`;
+
+    const hints = extractFieldHintsFromRaw(raw);
+
+    expect(hints.mainFlowHint).toBeUndefined();
+  });
+
   it('extracts purpose from first substantive line', () => {
     const raw = `### F-03: Get Leaderboard API
 
@@ -161,8 +180,47 @@ Initialisiere die SQLite-Datenbank.
       'Result is displayed.',
     ]);
     expect(feature.acceptanceCriteria).toEqual([
-      'Test Feature can be executed successfully.',
-      'Error cases produce a clear error message.',
+      'Test Feature completes successfully with valid input.',
+      'Invalid input or execution failures in Test Feature produce clear feedback without leaving inconsistent state.',
+    ]);
+  });
+
+  it('uses parsed subsection fields and falls back cleanly when recursive outline blocks provide no real mainFlow', () => {
+    const structure = makeStructure([{
+      id: 'F-11',
+      name: 'Game Session End Recording',
+      rawContent: `### F-11: Game Session End Recording
+
+1. Purpose: Persistiert das Ergebnis einer beendeten Spiel-Session und löst nachgelagerte Prozesse aus.
+2. Actors: Frontend-Engine, Session-Service, XP-Service.
+3. Trigger: Spiel-Engine sendet POST /api/sessions/{sessionId}/end mit Score.
+4. Preconditions: Session ist aktiv, Score ist berechnet.
+5. Main Flow:
+6. Alternate Flows:
+7. Postconditions: Session-Datensatz ist final und XP ist aktualisiert.
+8. Data Impact: Update game_sessions, Update users.
+9. UI Impact: End-Screen zeigt Score, XP-Gewinn und Rang.
+10. Acceptance Criteria:`,
+    }]);
+
+    const result = ensurePrdFeatureDepth(structure, 'de');
+    const feature = result.structure.features[0];
+
+    expect(feature.purpose).toContain('Persistiert das Ergebnis');
+    expect(feature.actors).toBe('Frontend-Engine, Session-Service, XP-Service.');
+    expect(feature.trigger).toContain('POST /api/sessions');
+    expect(feature.preconditions).toContain('Session ist aktiv');
+    expect(feature.postconditions).toContain('Session-Datensatz ist final');
+    expect(feature.dataImpact).toContain('game_sessions');
+    expect(feature.uiImpact).toContain('End-Screen zeigt Score');
+    expect(feature.mainFlow).toEqual([
+      'Nutzer initiiert Game Session End Recording.',
+      'System führt Game Session End Recording aus.',
+      'Ergebnis wird angezeigt.',
+    ]);
+    expect(feature.acceptanceCriteria).toEqual([
+      'Game Session End Recording kann mit gültigen Eingaben erfolgreich ausgeführt werden.',
+      'Ungültige Eingaben oder Ausführungsfehler bei Game Session End Recording erzeugen verständliches Feedback ohne inkonsistenten Zustand.',
     ]);
   });
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { compilePrdDocument } from '../server/prdCompiler';
 
 function buildPrd(params?: {
+  systemVision?: string;
   domainModel?: string;
   globalBusinessRules?: string;
   nonFunctional?: string;
@@ -16,7 +17,7 @@ function buildPrd(params?: {
 
   return [
     '## System Vision',
-    'A reusable LLM widget lets teams configure provider fallback order with deterministic validation and release gating.',
+    params?.systemVision || 'A reusable LLM widget lets teams configure provider fallback order with deterministic validation and release gating.',
     '',
     '## System Boundaries',
     'The system includes a React widget, a backend configuration API, and persistent tier settings stored in PostgreSQL.',
@@ -125,6 +126,51 @@ describe('deterministic semantic compiler lints', () => {
     });
 
     expect(compiled.quality.issues.some(issue => issue.code === 'out_of_scope_reintroduced')).toBe(true);
+    expect(compiled.quality.valid).toBe(false);
+  });
+
+  it('flags business-rule properties that are missing from the Domain Model', () => {
+    const compiled = compilePrdDocument(buildPrd({
+      domainModel: '- GameSession (sessionId, activePowerUpId, score)\n- PowerUp (powerUpId, label, effectType)',
+      globalBusinessRules: '- Only one active power-up may be enabled per session and cooldown must be tracked before another use.',
+      featureName: 'Power-Up Session Control',
+      featurePurpose: 'Control power-up usage in the session loop.',
+      featureDataImpact: 'Updates GameSession.activePowerUpId and score when a power-up is used.',
+    }), {
+      mode: 'improve',
+      language: 'en',
+    });
+
+    expect(compiled.quality.issues.some(issue => issue.code === 'rule_schema_property_coverage_missing')).toBe(true);
+    expect(compiled.quality.valid).toBe(false);
+  });
+
+  it('flags feature core semantic gaps when core mechanics are not reflected in lifecycle fields', () => {
+    const compiled = compilePrdDocument(buildPrd({
+      systemVision: 'A web-based Tetris experience combines power-ups with roguelite meta progression and persistent XP-based level growth.',
+      domainModel: '- PlayerProfile (playerId, xp, level)\n- GameSession (sessionId, activePowerUpId, score)\n- PowerUp (powerUpId, label, effectType, cooldown)',
+      globalBusinessRules: '- Power-up usage requires a cooldown after activation.\n- Players level up only when XP reaches the threshold for the next level.',
+      featureName: 'Core Tetris Session',
+      featurePurpose: 'Deliver classic Tetris gameplay with power-ups and roguelite meta progression.',
+      featureDataImpact: 'Updates GameSession.score only after each piece lock.',
+    }), {
+      mode: 'improve',
+      language: 'en',
+    });
+
+    expect(compiled.quality.issues.some(issue => issue.code === 'feature_core_semantic_gap')).toBe(true);
+    expect(compiled.quality.valid).toBe(false);
+  });
+
+  it('flags future-oriented leakage in Out of Scope language', () => {
+    const compiled = compilePrdDocument(buildPrd({
+      outOfScope: '- VR integration may become part of a later roadmap phase, but it is not in this release.',
+    }), {
+      mode: 'improve',
+      language: 'en',
+    });
+
+    expect(compiled.quality.issues.some(issue => issue.code === 'out_of_scope_future_leakage')).toBe(true);
     expect(compiled.quality.valid).toBe(false);
   });
 });

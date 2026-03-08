@@ -1,0 +1,5 @@
+nexora-app|Up About an hour (healthy)
+nexora-db|Up About an hour (healthy)
+multi_agent_poc-frontend-1|Exited (1) 9 days ago
+multi_agent_poc-backend-1|Exited (137) 9 days ago
+planungsdb_postgres|Exited (255) 2 weeks ago

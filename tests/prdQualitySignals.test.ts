@@ -105,6 +105,46 @@ describe('prdQualitySignals', () => {
     expect(issues.some(issue => issue.code === 'language_mismatch_section_systemVision')).toBe(false);
   });
 
+  it('does not flag a German domain model that uses English schema identifiers', () => {
+    const structure = baseStructure();
+    structure.domainModel = [
+      '- **User**: id, username, email, passwordHash, level, experience, unlockedSkins, nextLevelXP',
+      '- **GameSession**: id, userId, startTime, endTime, score, linesCleared, levelReached',
+      '- **PowerUp**: id, name, description, effectType, cooldown, rarity',
+      '- **InventoryItem**: id, userId, powerUpId, quantity, lastUsed',
+      '- **LeaderboardEntry**: userId, score, rank, timestamp',
+      '- **LevelConfig**: level, xpThreshold, unlockedSkinId, unlockedPowerUpId, quantity',
+      '',
+      '**Beziehungen**: User 1-* GameSession, User 1-* InventoryItem, PowerUp 1-* InventoryItem, User 1-* LeaderboardEntry, LevelConfig 1-* (wird zur Unlock-Logik referenziert).',
+    ].join('\n');
+
+    const issues = collectLanguageConsistencyIssues(structure, 'de', 'feature');
+
+    expect(issues.some(issue => issue.code === 'language_mismatch_section_domainModel')).toBe(false);
+  });
+
+  it('still flags genuinely English domain model prose for German target language', () => {
+    const structure = baseStructure();
+    structure.domainModel = 'Core entities include User, Session, PowerUp, and InventoryItem. Relationships are defined between users, sessions, and power-up inventory records.';
+
+    const issues = collectLanguageConsistencyIssues(structure, 'de', 'feature');
+
+    expect(issues.some(issue => issue.code === 'language_mismatch_section_domainModel')).toBe(true);
+  });
+
+  it('does not flag domain models with almost only technical identifiers and minimal German prose', () => {
+    const structure = baseStructure();
+    structure.domainModel = [
+      '- **User**: id, username, email, passwordHash',
+      '- **GameSession**: id, userId, score, linesCleared',
+      '**Beziehungen**: User 1-* GameSession',
+    ].join('\n');
+
+    const issues = collectLanguageConsistencyIssues(structure, 'de', 'feature');
+
+    expect(issues.some(issue => issue.code === 'language_mismatch_section_domainModel')).toBe(false);
+  });
+
   it('flags short feature names when they drift to the wrong language (warning for minority)', () => {
     const structure = baseStructure();
     structure.features = [

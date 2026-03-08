@@ -135,6 +135,19 @@ const DE_ACTION_MARKERS = new Set([
   'registrierung', 'authentifizierung', 'benachrichtigung', 'automatisierung', 'integration',
 ]);
 
+const DOMAIN_MODEL_EN_MARKERS = new Set([
+  'core', 'entity', 'entities', 'relationship', 'relationships', 'constraint', 'constraints',
+  'lifecycle', 'define', 'defined', 'include', 'includes', 'reference', 'references', 'referenced',
+]);
+
+const DOMAIN_MODEL_DE_MARKERS = new Set([
+  'kernentitaet', 'kernentitaeten', 'entitaet', 'entitaeten', 'beziehung', 'beziehungen',
+  'randbedingung', 'randbedingungen', 'lebenszyklus', 'lebenszyklusregel', 'lebenszyklusregeln',
+  'definiert', 'umfasst', 'referenziert',
+]);
+
+const DOMAIN_MODEL_DESCRIPTOR_LABEL_PATTERN = /\b(?:core\s+entities|entities|entitaeten|entitäten|relationships|beziehungen|constraints|randbedingungen|lifecycle(?:\s+rules)?|lebenszyklus(?:regeln)?|fields|felder)\b/i;
+
 const TECH_ALLOWLIST = new Set([
   'api', 'apis', 'oauth', 'oidc', 'rbac', 'abac', 'sso', 'jwt', 'sql', 'nosql', 'http', 'https',
   'rest', 'graphql', 'grpc', 'webhook', 'webhooks', 'docker', 'kubernetes', 'k8s', 'terraform',
@@ -546,6 +559,67 @@ function countLanguageMarkers(tokens: string[]): { en: number; de: number } {
   return { en, de };
 }
 
+function countDomainModelLanguageMarkers(tokens: string[]): { en: number; de: number } {
+  let en = 0;
+  let de = 0;
+  for (const token of tokens) {
+    if (TECH_ALLOWLIST.has(token)) continue;
+    if (EN_MARKERS.has(token) || EN_ACTION_MARKERS.has(token) || DOMAIN_MODEL_EN_MARKERS.has(token)) en++;
+    if (DE_MARKERS.has(token) || DE_ACTION_MARKERS.has(token) || DOMAIN_MODEL_DE_MARKERS.has(token)) de++;
+  }
+  return { en, de };
+}
+
+function looksLikeTechnicalDomainModelRemainder(value: string): boolean {
+  const stripped = String(value || '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\b\d+\s*[-–*]+\s*\d*\b/g, ' ')
+    .replace(/[,:;()[\]{}*_`]/g, ' ')
+    .replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, ' ')
+    .replace(/\s+/g, '');
+  return stripped.length === 0;
+}
+
+function normalizeDomainModelForLanguageCheck(value: string): string {
+  const lines = String(value || '').split(/\r?\n/);
+  const cleanedLines: string[] = [];
+
+  for (const rawLine of lines) {
+    let line = String(rawLine || '').replace(/\*\*/g, '').trim();
+    if (!line) continue;
+
+    const withoutBullet = line.replace(/^[-*+]\s+/, '').trim();
+    const labeledMatch = withoutBullet.match(/^([^:]{1,80}):\s*(.+)$/);
+    if (labeledMatch && looksLikeTechnicalDomainModelRemainder(labeledMatch[2])) {
+      const label = labeledMatch[1].trim();
+      const trailingProseMatch = labeledMatch[2].match(/\(([^)]*[A-Za-zÄÖÜäöüß][^)]*)\)\s*$/);
+      const trailingProse = trailingProseMatch ? trailingProseMatch[1].trim() : '';
+
+      if (DOMAIN_MODEL_DESCRIPTOR_LABEL_PATTERN.test(label)) {
+        line = trailingProse ? `${label}: ${trailingProse}` : `${label}:`;
+      } else if (trailingProse) {
+        line = trailingProse;
+      } else {
+        continue;
+      }
+    } else {
+      line = withoutBullet;
+    }
+
+    line = line
+      .replace(/\b[A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]+)+\b/g, ' ')
+      .replace(/\b[a-z]+(?:[A-Z][A-Za-z0-9]+)+\b/g, ' ')
+      .replace(/\b[A-Z][A-Za-z0-9_]*\b\s+\d+\s*[-–*]+\s*(?:\d+\s*)?\b[A-Z][A-Za-z0-9_]*\b/g, ' ')
+      .replace(/\b\d+\s*[-–*]+\s*\d*\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (line) cleanedLines.push(line);
+  }
+
+  return cleanedLines.join('\n').trim();
+}
+
 function isLanguageMismatch(
   value: string,
   targetLanguage: SupportedLanguage,
@@ -576,6 +650,33 @@ function isLanguageMismatch(
   if (hasGermanTransliterationSignals && markers.de >= 1) return true;
   if (allowShort) return markers.de >= 1 && markers.de > markers.en;
   return markers.de >= 3 && markers.de > markers.en * 1.4;
+}
+
+function isDomainModelLanguageMismatch(
+  value: string,
+  targetLanguage: SupportedLanguage
+): boolean {
+  const normalizedValue = normalizeDomainModelForLanguageCheck(value);
+  if (!normalizedValue) return false;
+
+  const normalized = normalizeText(normalizedValue);
+  if (!normalized) return false;
+
+  const tokens = tokenize(normalized).filter(token => !TECH_ALLOWLIST.has(token));
+  if (tokens.length < 3) return false;
+
+  const hasGermanUmlaut = /[äöüß]/i.test(normalizedValue);
+  const hasGermanTransliterationSignals = /\b(?:fuer|ueber|aender|loesch|benutzer|nutzer|aufgabe|soll|muss|nicht)\b/i.test(normalized);
+  const markers = countDomainModelLanguageMarkers(tokens);
+
+  if (targetLanguage === 'de') {
+    if (hasGermanUmlaut || hasGermanTransliterationSignals) return false;
+    return markers.en >= 2 && markers.en > markers.de * 1.2;
+  }
+
+  if (hasGermanUmlaut) return true;
+  if (hasGermanTransliterationSignals && markers.de >= 1) return true;
+  return markers.de >= 2 && markers.de > markers.en * 1.2;
 }
 
 function splitIntoSentences(value: string): string[] {
@@ -739,7 +840,10 @@ export function collectLanguageConsistencyIssues(
   for (const key of SECTION_KEYS) {
     const value = String((structure as any)[key] || '').trim();
     if (!value) continue;
-    if (!isLanguageMismatch(value, targetLanguage)) continue;
+    const hasMismatch = key === 'domainModel'
+      ? isDomainModelLanguageMismatch(value, targetLanguage)
+      : isLanguageMismatch(value, targetLanguage);
+    if (!hasMismatch) continue;
     issues.push({
       code: `language_mismatch_section_${String(key)}`,
       message: `Section "${String(key)}" is not consistently written in target language "${targetLanguage}".`,

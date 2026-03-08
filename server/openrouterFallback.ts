@@ -61,6 +61,7 @@ export interface ModelCallAttemptUpdate {
   startedAt: string;
   endedAt?: string;
   durationMs?: number;
+  finishReason?: string;
   errorMessage?: string;
 }
 
@@ -124,6 +125,8 @@ interface ExecuteOpenRouterFallbackParams {
     model: string,
     run: () => Promise<T>,
   ) => Promise<T>;
+  isModelQuarantined?: (model: string) => boolean;
+  recordFailureForRun?: (model: string, errorMessage: string) => void;
 }
 
 type FallbackFailureCategory =
@@ -241,6 +244,8 @@ export async function executeOpenRouterFallback(
     preferredFallbackChain,
     callModel,
     withTemporaryPreferredModel,
+    isModelQuarantined,
+    recordFailureForRun,
   } = params;
 
   const errors: string[] = [];
@@ -271,6 +276,10 @@ export async function executeOpenRouterFallback(
   const addIfNew = (model: string | undefined, isPrimary: boolean) => {
     const sanitized = sanitizeConfiguredModel(model);
     if (!sanitized || seen.has(sanitized)) return;
+    if (isModelQuarantined?.(sanitized)) {
+      console.warn(`Skipping ${sanitized} — quarantined for this run after repeated invalid/provider-400 failures`);
+      return;
+    }
     seen.add(sanitized);
 
     const family = getModelFamily(sanitized);
@@ -411,6 +420,7 @@ export async function executeOpenRouterFallback(
       }
       const errorMessage = error?.message || '';
       applyFailureCooldown(attemptModel, errorMessage);
+      recordFailureForRun?.(attemptModel, errorMessage);
       const appliedCooldown = getGlobalCooldownStatus(attemptModel);
       if (appliedCooldown) {
         rememberCooldownSkippedModel(attemptModel, isPrimary, appliedCooldown.reason);

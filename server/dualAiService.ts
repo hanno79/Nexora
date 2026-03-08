@@ -24,6 +24,7 @@ import {
   REVIEWER_SYSTEM_PROMPT,
   IMPROVEMENT_SYSTEM_PROMPT,
   ITERATIVE_GENERATOR_PROMPT,
+  ITERATIVE_IMPROVE_GENERATOR_PROMPT,
   BEST_PRACTICE_ANSWERER_PROMPT,
   FINAL_REVIEWER_PROMPT,
   getLanguageInstruction,
@@ -49,6 +50,8 @@ import { finalizeWithCompilerGates, PrdCompilerQualityError } from './prdCompile
 import { pickNextFallbackModel, pickBestDegradedResult } from './prdQualityFallback';
 import { compilePrdDocument, ensurePrdRequiredSections } from './prdCompiler';
 import { isHighConfidenceFeatureDuplicate } from './prdQualitySignals';
+import { applySemanticPatchRefinement, type ContentIssue } from './prdContentReviewer';
+import { collectDeterministicSemanticIssues } from './prdDeterministicSemanticLints';
 import { resolvePrdWorkflowMode } from './prdWorkflowMode';
 import { buildTemplateInstruction } from './prdTemplateIntent';
 import {
@@ -56,6 +59,7 @@ import {
   parseSemanticVerificationResponse,
   type SemanticVerifierInput,
 } from './prdSemanticVerifier';
+import type { PrdQualityReport } from './prdCompiler';
 import {
   buildCompilerArtifactDiagnostics,
   summarizeFinalizerResult,
@@ -145,6 +149,16 @@ interface IterationCallResult {
   model: string;
   tier: string;
   usedFallback: boolean;
+  finishReason?: string;
+}
+
+interface ImproveDriftFinding extends ContentIssue {}
+
+interface ImproveDriftEvaluation {
+  blockingIssues: ImproveDriftFinding[];
+  blockedAddedFeatures: string[];
+  semanticLintCodes: string[];
+  primaryReason?: string;
 }
 
 export class DualAiService {
@@ -368,6 +382,23 @@ Create an improved version that incorporates the new requirements while keeping 
           content: refineResult.content,
           model: refineResult.model,
           usage: refineResult.usage,
+          finishReason: refineResult.finishReason,
+        };
+      },
+      semanticRefineReviewer: async (refinePrompt: string) => {
+        const refineResult = await client.callWithFallback(
+          'reviewer',
+          'You are a PRD semantic repair specialist. Return JSON only.' + langInstruction,
+          refinePrompt,
+          CONTENT_REVIEW_REFINE,
+          { type: 'json_object' },
+          0.1,
+        );
+        return {
+          content: refineResult.content,
+          model: refineResult.model,
+          usage: refineResult.usage,
+          finishReason: refineResult.finishReason,
         };
       },
       semanticVerifier: async (input: SemanticVerifierInput) => {
@@ -718,6 +749,14 @@ Create an improved version that incorporates the new requirements while keeping 
         languageFixRequired: false,
         boilerplateHits: 0,
         metaLeakHits: 0,
+        earlyDriftDetected: false,
+        earlyDriftCodes: [],
+        earlyDriftSections: [],
+        blockedAddedFeatures: [],
+        earlySemanticLintCodes: [],
+        earlyRepairAttempted: false,
+        earlyRepairApplied: false,
+        primaryEarlyDriftReason: undefined,
       },
       modelsUsed: new Set<string>(),
       iterations: [],
@@ -767,8 +806,18 @@ Create an improved version that incorporates the new requirements while keeping 
         await this.validateAndPreserveIterationStructure(i, provisionalCleanPRD, structuredDeltaResult, state, opts);
       if (shouldContinue) continue; // rollback path — iteration record intentionally NOT pushed
 
-      if (candidateStructure) state.previousStructure = candidateStructure;
-      state.currentPRD = preservedPRD;
+      const improvedIteration = await this.enforceImproveModeDriftGuardrails({
+        iterationNumber: i,
+        preservedPRD,
+        candidateStructure,
+        state,
+        opts,
+      });
+
+      if (improvedIteration.candidateStructure) {
+        state.previousStructure = improvedIteration.candidateStructure;
+      }
+      state.currentPRD = improvedIteration.preservedPRD;
 
       const iterTokens = genResult.usage.total_tokens + answerResult.usage.total_tokens;
       state.iterations.push({
@@ -777,7 +826,7 @@ Create an improved version that incorporates the new requirements while keeping 
         answererOutput: answerResult.content,
         answererOutputTruncated,
         questions,
-        mergedPRD: preservedPRD,
+        mergedPRD: improvedIteration.preservedPRD,
         tokensUsed: iterTokens,
       });
       this.emitIterativeProgress(opts, { type: 'iteration_complete', iteration: i, total: iterationCount, tokensUsed: iterTokens });
@@ -1129,6 +1178,9 @@ Create an improved version that incorporates the new requirements while keeping 
 
       let generatorPrompt: string;
       const templateInstruction = buildTemplateInstruction(opts.templateCategory, opts.resolvedLanguage);
+      const improveAnchorContext = opts.isImprovement
+        ? this.buildImproveAnchorContext(state.freezeBaselineStructure)
+        : '';
 
       if (i === 1) {
         if (opts.isImprovement) {
@@ -1136,6 +1188,8 @@ Create an improved version that incorporates the new requirements while keeping 
 
 EXISTING PRD (PRESERVE THIS STRUCTURE AND CONTENT):
 ${opts.existingContent}
+
+${improveAnchorContext}
 
 ${templateInstruction}
 
@@ -1147,11 +1201,13 @@ Your task:
 2. ADD the new requirements into the appropriate existing sections
 3. ENHANCE and EXPAND existing content where relevant
 4. Do NOT remove or replace existing content unless it contradicts the new requirements
-5. Ask questions about any unclear aspects of the new requirements` : `Your task:
+5. Do NOT add new features, personas, deployment models, or infrastructure domains unless the user explicitly requested them
+6. Ask questions about any unclear aspects of the new requirements` : `Your task:
 1. KEEP all existing sections and their content
 2. ENHANCE and EXPAND existing content with more details
 3. Identify gaps and missing information
-4. Ask questions to improve specific sections`}`;
+4. Do NOT add new features, personas, deployment models, or infrastructure domains
+5. Ask questions to improve specific sections inside the existing scope`}`;
         } else {
           generatorPrompt = `INITIAL INPUT:\n${opts.additionalRequirements || opts.existingContent}\n\n${templateInstruction}\n\nCreate an initial PRD draft and ask questions about open points.`;
         }
@@ -1172,9 +1228,13 @@ You are strictly forbidden to:
 - Modify compiled feature structures
 
 You may only:
-- Add new features using NEW sequential F-XX IDs (e.g., F-03, F-04 if F-01 and F-02 exist)
+${opts.isImprovement
+  ? `- Extend baseline sections without widening product scope
+- Improve descriptive content for existing baseline features only
+- Preserve the original personas, deployment model, infrastructure assumptions, and excluded scope unless explicitly requested otherwise`
+  : `- Add new features using NEW sequential F-XX IDs (e.g., F-03, F-04 if F-01 and F-02 exist)
 - Extend non-feature sections
-- Improve descriptive content outside compiled features
+- Improve descriptive content outside compiled features`}
 
 If you modify or remove existing features, your output will be discarded.
 === END CRITICAL RULE ===
@@ -1188,6 +1248,8 @@ ${state.currentPRD}
 ANSWERS FROM PREVIOUS ITERATION (MUST be incorporated into the PRD):
 ${previousIteration.answererOutput}
 
+${improveAnchorContext}
+
 ${templateInstruction}
 
 Your task:
@@ -1195,14 +1257,16 @@ Your task:
 2. INCORPORATE all answers from the previous iteration directly into the appropriate PRD sections — do NOT leave them as separate Q&A
 3. RESOLVE any Open Points or Gaps by using the expert answers — the information must become part of the PRD content
 4. EXPAND sections that are still incomplete
-5. Ask questions about remaining gaps only (do NOT repeat already-answered questions)
+5. ${opts.isImprovement
+  ? 'Do NOT widen scope beyond the baseline feature catalogue, personas, deployment model, or infrastructure assumptions'
+  : 'Ask questions about remaining gaps only (do NOT repeat already-answered questions)'}
 6. The final PRD must be self-contained — a reader should find all information IN the document, not in a separate Q&A section`
       }
 
       opts.throwIfCancelled(`iteration ${i} generator call`);
       genResult = await this.callIterativeModel(opts, {
         role: 'generator',
-        systemPrompt: ITERATIVE_GENERATOR_PROMPT + opts.langInstruction,
+        systemPrompt: (opts.isImprovement ? ITERATIVE_IMPROVE_GENERATOR_PROMPT : ITERATIVE_GENERATOR_PROMPT) + opts.langInstruction,
         userPrompt: generatorPrompt,
         maxTokens: PRD_GENERATION,
         phase: 'iteration_generator',
@@ -1276,14 +1340,41 @@ Your task:
       }
 
       opts.throwIfCancelled(`iteration ${i} feature expansion`);
+      const baselineFeatureIds = (state.freezeBaselineStructure?.features || [])
+        .map(feature => normalizeFeatureId(feature.id) || String(feature.id || '').trim().toUpperCase())
+        .filter(Boolean);
       const expansion = await runFeatureExpansionPipeline({
         inputText: opts.workflowInputText,
         draftContent: genResult.content,
         client: opts.client,
         language: opts.resolvedLanguage,
+        allowedFeatureIds: opts.isImprovement ? baselineFeatureIds : undefined,
+        allowFeatureDiscovery: !opts.isImprovement,
+        seedFeatures: opts.isImprovement
+          ? (state.freezeBaselineStructure?.features || []).map(feature => ({ ...feature }))
+          : undefined,
         log: dualAiLog,
         warn: dualAiWarn,
       });
+
+      if (opts.isImprovement && expansion.blockedFeatureIds && expansion.blockedFeatureIds.length > 0) {
+        state.diagnostics.blockedAddedFeatures = Array.from(new Set([
+          ...(state.diagnostics.blockedAddedFeatures || []),
+          ...expansion.blockedFeatureIds,
+        ]));
+        state.diagnostics.earlyDriftDetected = true;
+        state.diagnostics.earlyDriftCodes = Array.from(new Set([
+          ...(state.diagnostics.earlyDriftCodes || []),
+          'improve_new_feature_blocked',
+        ]));
+        this.emitIterativeProgress(opts, {
+          type: 'early_drift_detected',
+          iteration: i,
+          codes: ['improve_new_feature_blocked'],
+          blockedAddedFeatures: expansion.blockedFeatureIds,
+        });
+        dualAiWarn(`🚫 Iteration ${i}: blocked improve-mode feature additions (${expansion.blockedFeatureIds.join(', ')})`);
+      }
 
       if (expansion.expandedFeatureCount > 0) {
         this.emitIterativeProgress(opts, { type: 'features_expanded', count: expansion.expandedFeatureCount, tokensUsed: expansion.expansionTokens });
@@ -1345,11 +1436,15 @@ Your task:
     const requiredQuestions = i >= 2 ? 2 : (i < opts.iterationCount ? 3 : 0);
     if (requiredQuestions > 0 && questions.length < requiredQuestions) {
       opts.throwIfCancelled(`iteration ${i} clarifying questions`);
+      const improveAnchorContext = opts.isImprovement
+        ? this.buildImproveAnchorContext(state.freezeBaselineStructure)
+        : '';
       const fallbackQuestions = await this.generateClarifyingQuestions(
         provisionalCleanPRD,
         opts.client,
         opts.langInstruction,
         requiredQuestions,
+        improveAnchorContext,
         opts.abortSignal,
         opts.onModelAttempt,
       );
@@ -1386,7 +1481,10 @@ Your task:
     const explicitQuestionBlock = questions.length > 0
       ? questions.map((q, idx) => `${idx + 1}. ${q}`).join('\n')
       : '1. Identify the top unresolved product scope risk.\n2. Identify the top unresolved UX risk.\n3. Identify the top unresolved data/operational risk.';
-    const answererPrompt = `The following PRD is being developed:\n\n${genResult.content}\n\nQuestions to answer explicitly:\n${explicitQuestionBlock}\n\nAnswer ALL questions with best practices. Also identify and resolve any Open Points, Gaps, or unresolved areas in the PRD. Your answers will be incorporated directly into the next PRD revision.`;
+    const improveAnchorContext = opts.isImprovement
+      ? this.buildImproveAnchorContext(state.freezeBaselineStructure)
+      : '';
+    const answererPrompt = `The following PRD is being developed:\n\n${genResult.content}\n\n${improveAnchorContext ? `${improveAnchorContext}\n\n` : ''}Questions to answer explicitly:\n${explicitQuestionBlock}\n\nAnswer ALL questions with best practices. Also identify and resolve any Open Points, Gaps, or unresolved areas in the PRD.${opts.isImprovement ? ' Keep every recommendation inside the existing baseline scope; do not introduce new feature families, personas, runtime models, or infrastructure domains unless explicitly requested.' : ''} Your answers will be incorporated directly into the next PRD revision.`;
 
     opts.throwIfCancelled(`iteration ${i} answerer call`);
     let answerResult = await this.callIterativeModel(opts, {
@@ -1533,6 +1631,19 @@ Your task:
         if (warnings.length > 0) {
           state.allDriftWarnings.set(i, warnings);
           state.diagnostics.driftEvents += warnings.length;
+          if (opts.isImprovement && diff.missingSections.includes('featureCatalogueIntro')) {
+            state.diagnostics.earlyDriftDetected = true;
+            state.diagnostics.earlyDriftCodes = Array.from(new Set([
+              ...(state.diagnostics.earlyDriftCodes || []),
+              'section_anchor_mismatch',
+            ]));
+            state.diagnostics.earlyDriftSections = Array.from(new Set([
+              ...(state.diagnostics.earlyDriftSections || []),
+              'featureCatalogueIntro',
+            ]));
+            state.diagnostics.primaryEarlyDriftReason = state.diagnostics.primaryEarlyDriftReason
+              || 'Section featureCatalogueIntro drifted away from the baseline anchor during iteration.';
+          }
         }
 
         if (!featureWriteLockActive && diff.removedFeatures.length > 0) {
@@ -1608,6 +1719,7 @@ Your task:
           workflowInputText: opts.workflowInputText,
           structuredDelta,
           enforceStructuredDeltaOnly: state.featuresFrozen && i >= 2,
+          allowNewFeatures: !opts.isImprovement,
           contentLanguage: opts.resolvedLanguage,
           client: opts.client
         });
@@ -1622,6 +1734,18 @@ Your task:
           dualAiLog(`🧹 Iteration ${i}: Dropped duplicate feature candidates (${deltaResult.droppedDuplicates.join(', ')})`);
           preservedPRD = assembleStructureToMarkdown(currentStructure);
           forceReassembleFromStructure = true;
+        }
+        if (deltaResult.blockedAddedFeatures.length > 0) {
+          state.diagnostics.blockedAddedFeatures = Array.from(new Set([
+            ...(state.diagnostics.blockedAddedFeatures || []),
+            ...deltaResult.blockedAddedFeatures,
+          ]));
+          state.diagnostics.earlyDriftDetected = true;
+          state.diagnostics.earlyDriftCodes = Array.from(new Set([
+            ...(state.diagnostics.earlyDriftCodes || []),
+            'improve_new_feature_blocked',
+          ]));
+          dualAiWarn(`🚫 Iteration ${i}: blocked improve-mode feature delta additions (${deltaResult.blockedAddedFeatures.join(', ')})`);
         }
       }
 
@@ -1810,7 +1934,7 @@ Your task:
             finishReason: repairResult.finishReason,
           };
         },
-        contentRefineReviewer: async (refinePrompt: string) => {
+      contentRefineReviewer: async (refinePrompt: string) => {
           const refineResult = await this.callIterativeModel(opts, {
             role: 'reviewer',
             systemPrompt: 'You are a PRD content refinement specialist. Follow the instructions precisely.' + opts.langInstruction,
@@ -1822,6 +1946,24 @@ Your task:
             content: refineResult.content,
             model: refineResult.model,
             usage: refineResult.usage,
+            finishReason: refineResult.finishReason,
+          };
+        },
+        semanticRefineReviewer: async (refinePrompt: string) => {
+          const refineResult = await this.callIterativeModel(opts, {
+            role: 'reviewer',
+            systemPrompt: 'You are a PRD semantic repair specialist. Return JSON only.' + opts.langInstruction,
+            userPrompt: refinePrompt,
+            maxTokens: CONTENT_REVIEW_REFINE,
+            responseFormat: { type: 'json_object' },
+            temperature: 0.1,
+            phase: 'semantic_repair',
+          });
+          return {
+            content: refineResult.content,
+            model: refineResult.model,
+            usage: refineResult.usage,
+            finishReason: refineResult.finishReason,
           };
         },
         semanticVerifier: async (input: SemanticVerifierInput) => {
@@ -1860,7 +2002,13 @@ Your task:
               }
             : parsed;
         },
-        onStageProgress: (event: { type: 'content_review_start' | 'semantic_verification_start' }) =>
+        onStageProgress: (event: {
+          type: 'content_review_start' | 'semantic_verification_start' | 'semantic_repair_start' | 'semantic_repair_done';
+          issueCount?: number;
+          sectionKeys?: string[];
+          applied?: boolean;
+          truncated?: boolean;
+        }) =>
           this.emitIterativeProgress(opts, event),
       };
 
@@ -1936,6 +2084,44 @@ Your task:
         dualAiLog(`🧱 Unified compiler repair passes: ${compilerFinalized.repairAttempts.length}`);
       }
     } catch (compilerFinalizationError: any) {
+      if (compilerFinalizationError instanceof PrdCompilerQualityError) {
+        const wrappedQualityError = new PrdCompilerQualityError(
+          `Unified compiler finalization failed: ${compilerFinalizationError.message}`,
+          compilerFinalizationError.quality,
+          compilerFinalizationError.repairAttempts,
+          compilerFinalizationError.compiledContent && compilerFinalizationError.compiledStructure
+            ? {
+                content: compilerFinalizationError.compiledContent,
+                structure: compilerFinalizationError.compiledStructure,
+              }
+            : undefined,
+          {
+            reviewerAttempts: compilerFinalizationError.reviewerAttempts,
+            semanticVerification: compilerFinalizationError.semanticVerification,
+            failureStage: compilerFinalizationError.failureStage,
+            semanticRepairApplied: compilerFinalizationError.semanticRepairApplied,
+            semanticRepairAttempted: compilerFinalizationError.semanticRepairAttempted,
+            semanticRepairIssueCodes: compilerFinalizationError.semanticRepairIssueCodes,
+            semanticRepairSectionKeys: compilerFinalizationError.semanticRepairSectionKeys,
+            semanticRepairTruncated: compilerFinalizationError.semanticRepairTruncated,
+            initialSemanticBlockingIssues: compilerFinalizationError.initialSemanticBlockingIssues,
+            postRepairSemanticBlockingIssues: compilerFinalizationError.postRepairSemanticBlockingIssues,
+            finalSemanticBlockingIssues: compilerFinalizationError.finalSemanticBlockingIssues,
+            repairGapReason: compilerFinalizationError.repairGapReason,
+            repairCycleCount: compilerFinalizationError.repairCycleCount,
+            earlySemanticLintCodes: compilerFinalizationError.earlySemanticLintCodes,
+            earlyDriftDetected: compilerFinalizationError.earlyDriftDetected,
+            earlyDriftCodes: compilerFinalizationError.earlyDriftCodes,
+            earlyDriftSections: compilerFinalizationError.earlyDriftSections,
+            blockedAddedFeatures: compilerFinalizationError.blockedAddedFeatures,
+            earlyRepairAttempted: compilerFinalizationError.earlyRepairAttempted,
+            earlyRepairApplied: compilerFinalizationError.earlyRepairApplied,
+            primaryEarlyDriftReason: compilerFinalizationError.primaryEarlyDriftReason,
+          }
+        );
+        wrappedQualityError.stack = compilerFinalizationError.stack;
+        throw wrappedQualityError;
+      }
       throw new Error(`Unified compiler finalization failed: ${compilerFinalizationError.message}`);
     }
 
@@ -2148,11 +2334,12 @@ Your task:
     client: OpenRouterClient,
     langInstruction: string,
     minCount: number,
+    improveAnchorContext?: string,
     abortSignal?: AbortSignal,
     onModelAttempt?: (attempt: ModelCallAttemptUpdate) => void,
   ): Promise<string[]> {
     try {
-      const prompt = `Review this PRD and generate ${minCount} to 5 concrete clarifying questions about unresolved scope, UX, and operational gaps.\n\nReturn ONLY numbered questions.\n\nPRD:\n${prdContent}`;
+      const prompt = `Review this PRD and generate ${minCount} to 5 concrete clarifying questions about unresolved scope, UX, and operational gaps.\n\n${improveAnchorContext ? `${improveAnchorContext}\n\nFor improve mode, stay inside the existing baseline scope and do not widen the product.\n\n` : ''}Return ONLY numbered questions.\n\nPRD:\n${prdContent}`;
       const result = await client.callWithFallback(
         'reviewer',
         REVIEWER_SYSTEM_PROMPT + langInstruction,
@@ -2177,6 +2364,471 @@ Your task:
       dualAiWarn(`⚠️ Fallback question synthesis failed: ${error.message}`);
       return [];
     }
+  }
+
+  private buildImproveAnchorContext(baselineStructure: PRDStructure | null | undefined): string {
+    if (!baselineStructure) return '';
+    const featureIndex = (baselineStructure.features || [])
+      .slice(0, 20)
+      .map(feature => {
+        const featureId = normalizeFeatureId(feature.id) || String(feature.id || '').trim().toUpperCase();
+        const featureName = String(feature.name || featureId || '').trim();
+        return featureId && featureName ? `- ${featureId}: ${featureName}` : null;
+      })
+      .filter((entry): entry is string => Boolean(entry))
+      .join('\n') || '- (no baseline features)';
+
+    return [
+      'BASELINE ANCHORS (DO NOT CONTRADICT OR WIDEN):',
+      `- System Vision: ${String(baselineStructure.systemVision || '(missing)').slice(0, 320)}`,
+      `- System Boundaries: ${String(baselineStructure.systemBoundaries || '(missing)').slice(0, 320)}`,
+      `- Domain Model: ${String(baselineStructure.domainModel || '(missing)').slice(0, 320)}`,
+      `- Global Business Rules: ${String(baselineStructure.globalBusinessRules || '(missing)').slice(0, 320)}`,
+      `- Out of Scope: ${String(baselineStructure.outOfScope || '(missing)').slice(0, 320)}`,
+      '- Baseline Feature IDs and Names:',
+      featureIndex,
+    ].join('\n');
+  }
+
+  private collectImproveMeaningfulTokens(value: unknown): string[] {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9äöüß\s-]/gi, ' ')
+      .split(/\s+/)
+      .map(token => token.trim())
+      .filter(token =>
+        token.length >= 4
+        && !['feature', 'system', 'scope', 'user', 'users', 'flow', 'flows', 'with', 'that', 'this', 'fuer', 'für', 'oder', 'und'].includes(token)
+      );
+  }
+
+  private collectImproveTokenOverlap(left: unknown, right: unknown): number {
+    const leftTokens = new Set(this.collectImproveMeaningfulTokens(left));
+    const rightTokens = new Set(this.collectImproveMeaningfulTokens(right));
+    if (leftTokens.size === 0 || rightTokens.size === 0) return 0;
+
+    let overlap = 0;
+    for (const token of leftTokens) {
+      if (rightTokens.has(token)) overlap++;
+    }
+
+    return overlap / Math.min(leftTokens.size, rightTokens.size);
+  }
+
+  private normalizeImproveFeatureName(value: unknown): string[] {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9äöüß\s-]/gi, ' ')
+      .split(/\s+/)
+      .map(token => token.trim())
+      .filter(token => token.length >= 3 && !['the', 'and', 'for', 'mit', 'und', 'fuer', 'für'].includes(token));
+  }
+
+  private collectImproveDriftEvaluation(params: {
+    baselineStructure: PRDStructure;
+    candidateStructure: PRDStructure;
+    workflowInputText: string;
+    language: 'de' | 'en';
+    blockedAddedFeatures?: string[];
+  }): ImproveDriftEvaluation {
+    const issues: ImproveDriftFinding[] = [];
+    const seen = new Set<string>();
+    const blockedAddedFeatures = Array.from(new Set((params.blockedAddedFeatures || []).filter(Boolean)));
+    const semanticLintCodes = new Set<string>();
+    const requestTokens = new Set(this.collectImproveMeaningfulTokens(params.workflowInputText));
+    const infraKeywords = [
+      'kubernetes',
+      'matchmaking',
+      'leaderboard',
+      'multiplayer',
+      'websocket',
+      'microservice',
+      'microservices',
+      'redis',
+      'kafka',
+      'terraform',
+      's3',
+      'cicd',
+      'pipeline',
+      'docker',
+    ];
+
+    const pushIssue = (issue: ImproveDriftFinding) => {
+      const key = JSON.stringify([
+        issue.code,
+        issue.sectionKey,
+        issue.message,
+        issue.suggestedAction || '',
+        issue.targetFields || [],
+      ]);
+      if (seen.has(key)) return;
+      seen.add(key);
+      issues.push(issue);
+    };
+
+    if (blockedAddedFeatures.length > 0) {
+      pushIssue({
+        code: 'improve_new_feature_blocked',
+        sectionKey: 'featureCatalogueIntro',
+        message: `Improve mode blocked new feature additions: ${blockedAddedFeatures.join(', ')}.`,
+        severity: 'error',
+        suggestedAction: 'rewrite',
+      });
+    }
+
+    const baselineFeatures = new Map(
+      (params.baselineStructure.features || [])
+        .map(feature => {
+          const featureId = normalizeFeatureId(feature.id) || String(feature.id || '').trim().toUpperCase();
+          return featureId ? [featureId, feature] as const : null;
+        })
+        .filter((entry): entry is readonly [string, FeatureSpec] => Boolean(entry))
+    );
+
+    for (const feature of params.candidateStructure.features || []) {
+      const featureId = normalizeFeatureId(feature.id) || String(feature.id || '').trim().toUpperCase();
+      if (!featureId) continue;
+      const baselineFeature = baselineFeatures.get(featureId);
+      if (!baselineFeature) continue;
+
+      const baselineNameTokens = this.normalizeImproveFeatureName(baselineFeature.name);
+      const candidateNameTokens = this.normalizeImproveFeatureName(feature.name);
+      const overlap = this.collectImproveTokenOverlap(
+        baselineNameTokens.join(' '),
+        candidateNameTokens.join(' '),
+      );
+      if (baselineNameTokens.length > 0 && candidateNameTokens.length > 0 && overlap < 0.34) {
+        pushIssue({
+          code: 'feature_scope_drift_detected',
+          sectionKey: `feature:${featureId}`,
+          message: `Baseline feature ${featureId} drifted from "${baselineFeature.name}" to "${feature.name}", which changes the baseline feature family.`,
+          severity: 'error',
+          suggestedAction: 'enrich',
+          targetFields: ['purpose', 'trigger', 'dataImpact', 'uiImpact'] as ContentIssue['targetFields'],
+        });
+      }
+    }
+
+    const comparableSections: Array<keyof PRDStructure> = [
+      'systemVision',
+      'systemBoundaries',
+      'deployment',
+      'domainModel',
+      'globalBusinessRules',
+      'outOfScope',
+    ];
+    for (const sectionKey of comparableSections) {
+      const baselineValue = String((params.baselineStructure as any)[sectionKey] || '').trim();
+      const candidateValue = String((params.candidateStructure as any)[sectionKey] || '').trim();
+      if (!baselineValue || !candidateValue) continue;
+
+      const overlap = this.collectImproveTokenOverlap(baselineValue, candidateValue);
+      const baselineTokenCount = this.collectImproveMeaningfulTokens(baselineValue).length;
+      const candidateTokenCount = this.collectImproveMeaningfulTokens(candidateValue).length;
+      if (baselineTokenCount >= 5 && candidateTokenCount >= 5 && overlap < 0.16) {
+        pushIssue({
+          code: 'section_anchor_mismatch',
+          sectionKey: String(sectionKey),
+          message: `Section ${String(sectionKey)} drifted too far away from the baseline anchor and likely widened product scope.`,
+          severity: 'error',
+          suggestedAction: 'rewrite',
+        });
+      }
+
+      const baselineTokens = new Set(this.collectImproveMeaningfulTokens(baselineValue));
+      const candidateTokens = new Set(this.collectImproveMeaningfulTokens(candidateValue));
+      const unsupportedKeywords = infraKeywords.filter(keyword =>
+        candidateTokens.has(keyword)
+        && !baselineTokens.has(keyword)
+        && !requestTokens.has(keyword)
+      );
+      if (unsupportedKeywords.length > 0) {
+        pushIssue({
+          code: 'baseline_scope_contradiction',
+          sectionKey: String(sectionKey),
+          message: `Section ${String(sectionKey)} introduced unsupported scope keywords not present in the baseline or user request: ${unsupportedKeywords.join(', ')}.`,
+          severity: 'error',
+          suggestedAction: 'rewrite',
+        });
+      }
+    }
+
+    const deterministicIssues = collectDeterministicSemanticIssues(params.candidateStructure, {
+      language: params.language,
+    });
+    for (const issue of deterministicIssues) {
+      if (issue.severity !== 'error') continue;
+      semanticLintCodes.add(issue.code);
+      if (issue.code.startsWith('schema_field_') || issue.code === 'rule_schema_property_coverage_missing') {
+        pushIssue({
+          code: issue.code,
+          sectionKey: 'domainModel',
+          message: issue.message,
+          severity: 'error',
+          suggestedAction: 'rewrite',
+        });
+        continue;
+      }
+      if (issue.code === 'business_rule_constraint_conflict') {
+        pushIssue({
+          code: issue.code,
+          sectionKey: 'globalBusinessRules',
+          message: issue.message,
+          severity: 'error',
+          suggestedAction: 'rewrite',
+        });
+        continue;
+      }
+      if (issue.code === 'feature_core_semantic_gap') {
+        const evidencePath = String(issue.evidencePath || '').trim();
+        const sectionKey = evidencePath.startsWith('feature:')
+          ? evidencePath.split('.')[0]
+          : 'feature:F-01';
+        pushIssue({
+          code: issue.code,
+          sectionKey,
+          message: issue.message,
+          severity: 'error',
+          suggestedAction: 'enrich',
+          targetFields: ['preconditions', 'postconditions', 'dataImpact'] as ContentIssue['targetFields'],
+        });
+        continue;
+      }
+      if (issue.code === 'out_of_scope_reintroduced' || issue.code === 'out_of_scope_future_leakage') {
+        const evidencePath = String(issue.evidencePath || '').trim();
+        const sectionKey = evidencePath.startsWith('feature:')
+          ? evidencePath.split('.')[0]
+          : (evidencePath.split('.')[0] || 'outOfScope');
+        pushIssue({
+          code: issue.code,
+          sectionKey,
+          message: issue.message,
+          severity: 'error',
+          suggestedAction: sectionKey.startsWith('feature:') ? 'enrich' : 'rewrite',
+          ...(sectionKey.startsWith('feature:')
+            ? { targetFields: ['purpose', 'trigger', 'dataImpact', 'uiImpact'] as ContentIssue['targetFields'] }
+            : {}),
+        });
+      }
+    }
+
+    const blockingIssues = issues.filter(issue => issue.code !== 'improve_new_feature_blocked');
+    const primaryReason = blockingIssues.length > 0
+      ? (() => {
+          const first = blockingIssues[0];
+          const sections = Array.from(new Set(blockingIssues.map(issue => issue.sectionKey)));
+          const suffix = sections.length > 0 ? ` Affected sections: ${sections.join(', ')}.` : '';
+          return `${first.message}${suffix}`;
+        })()
+      : (blockedAddedFeatures.length > 0
+        ? `Improve mode blocked new feature additions: ${blockedAddedFeatures.join(', ')}.`
+        : undefined);
+
+    return {
+      blockingIssues,
+      blockedAddedFeatures,
+      semanticLintCodes: Array.from(semanticLintCodes),
+      primaryReason,
+    };
+  }
+
+  private buildEarlyDriftQualityReport(structure: PRDStructure, issues: ImproveDriftFinding[]): PrdQualityReport {
+    return {
+      valid: false,
+      truncatedLikely: false,
+      missingSections: [],
+      featureCount: structure.features.length,
+      fallbackSections: [],
+      issues: issues.map(issue => ({
+        code: issue.code,
+        message: issue.message,
+        severity: 'error' as const,
+      })),
+    };
+  }
+
+  private applyImproveDriftDiagnostics(
+    state: IterationLoopState,
+    evaluation: ImproveDriftEvaluation,
+    repairAttempted?: boolean,
+    repairApplied?: boolean,
+  ): void {
+    state.diagnostics.earlyDriftDetected =
+      !!state.diagnostics.earlyDriftDetected
+      || evaluation.blockingIssues.length > 0
+      || evaluation.blockedAddedFeatures.length > 0;
+    state.diagnostics.earlyDriftCodes = Array.from(new Set([
+      ...(state.diagnostics.earlyDriftCodes || []),
+      ...evaluation.blockingIssues.map(issue => issue.code),
+      ...(evaluation.blockedAddedFeatures.length > 0 ? ['improve_new_feature_blocked'] : []),
+    ]));
+    state.diagnostics.earlyDriftSections = Array.from(new Set([
+      ...(state.diagnostics.earlyDriftSections || []),
+      ...evaluation.blockingIssues.map(issue => issue.sectionKey),
+    ]));
+    state.diagnostics.blockedAddedFeatures = Array.from(new Set([
+      ...(state.diagnostics.blockedAddedFeatures || []),
+      ...evaluation.blockedAddedFeatures,
+    ]));
+    state.diagnostics.earlySemanticLintCodes = Array.from(new Set([
+      ...(state.diagnostics.earlySemanticLintCodes || []),
+      ...evaluation.semanticLintCodes,
+    ]));
+    if (repairAttempted !== undefined) {
+      state.diagnostics.earlyRepairAttempted = repairAttempted;
+    }
+    if (repairApplied !== undefined) {
+      state.diagnostics.earlyRepairApplied = repairApplied;
+    }
+    if (evaluation.primaryReason) {
+      state.diagnostics.primaryEarlyDriftReason = evaluation.primaryReason;
+    }
+  }
+
+  private async enforceImproveModeDriftGuardrails(params: {
+    iterationNumber: number;
+    preservedPRD: string;
+    candidateStructure: PRDStructure | null;
+    state: IterationLoopState;
+    opts: IterationOpts;
+  }): Promise<{ preservedPRD: string; candidateStructure: PRDStructure | null }> {
+    const { iterationNumber, preservedPRD, candidateStructure, state, opts } = params;
+    if (!opts.isImprovement || !candidateStructure || !state.freezeBaselineStructure) {
+      return { preservedPRD, candidateStructure };
+    }
+
+    const initialEvaluation = this.collectImproveDriftEvaluation({
+      baselineStructure: state.freezeBaselineStructure,
+      candidateStructure,
+      workflowInputText: opts.workflowInputText,
+      language: opts.resolvedLanguage,
+      blockedAddedFeatures: state.diagnostics.blockedAddedFeatures,
+    });
+    this.applyImproveDriftDiagnostics(state, initialEvaluation);
+
+    if (initialEvaluation.blockingIssues.length === 0) {
+      return { preservedPRD, candidateStructure };
+    }
+
+    this.emitIterativeProgress(opts, {
+      type: 'early_drift_detected',
+      iteration: iterationNumber,
+      codes: initialEvaluation.blockingIssues.map(issue => issue.code),
+      sections: initialEvaluation.blockingIssues.map(issue => issue.sectionKey),
+      blockedAddedFeatures: initialEvaluation.blockedAddedFeatures,
+    });
+    dualAiWarn(`🚫 Iteration ${iterationNumber}: early improve-mode drift detected`);
+    for (const issue of initialEvaluation.blockingIssues) {
+      dualAiWarn(`   - [${issue.code}] ${issue.sectionKey}: ${issue.message}`);
+    }
+
+    let repairedContent = preservedPRD;
+    let repairedStructure = candidateStructure;
+    let finalEvaluation = initialEvaluation;
+
+    if (!state.diagnostics.earlyRepairAttempted) {
+      state.diagnostics.earlyRepairAttempted = true;
+      this.emitIterativeProgress(opts, {
+        type: 'early_drift_repair_start',
+        iteration: iterationNumber,
+        codes: initialEvaluation.blockingIssues.map(issue => issue.code),
+        sections: initialEvaluation.blockingIssues.map(issue => issue.sectionKey),
+      });
+
+      const repairResult = await applySemanticPatchRefinement({
+        content: preservedPRD,
+        structure: candidateStructure,
+        issues: initialEvaluation.blockingIssues,
+        language: opts.resolvedLanguage,
+        templateCategory: opts.templateCategory,
+        originalRequest: opts.workflowInputText,
+        reviewer: async (refinePrompt: string) => {
+          const refineResult = await this.callIterativeModel(opts, {
+            role: 'reviewer',
+            systemPrompt: 'You are a PRD semantic repair specialist. Return JSON only.' + opts.langInstruction,
+            userPrompt: refinePrompt,
+            maxTokens: CONTENT_REVIEW_REFINE,
+            responseFormat: { type: 'json_object' },
+            temperature: 0.1,
+            phase: 'early_drift_repair',
+          });
+          return {
+            content: refineResult.content,
+            model: refineResult.model,
+            usage: refineResult.usage,
+            finishReason: refineResult.finishReason,
+          };
+        },
+      });
+
+      for (const attempt of repairResult.reviewerAttempts || []) {
+        if (attempt.model) {
+          state.modelsUsed.add(attempt.model);
+          state.diagnostics.reviewerModelIds = Array.from(new Set([
+            ...(state.diagnostics.reviewerModelIds || []),
+            attempt.model,
+          ]));
+        }
+      }
+
+      if (repairResult.refined) {
+        repairedContent = repairResult.content;
+        try {
+          repairedStructure = parsePRDToStructure(repairedContent);
+        } catch (repairParseError: any) {
+          dualAiWarn(`⚠️ Early drift repair parse failed: ${repairParseError.message}`);
+        }
+      }
+
+      finalEvaluation = repairedStructure
+        ? this.collectImproveDriftEvaluation({
+            baselineStructure: state.freezeBaselineStructure,
+            candidateStructure: repairedStructure,
+            workflowInputText: opts.workflowInputText,
+            language: opts.resolvedLanguage,
+            blockedAddedFeatures: state.diagnostics.blockedAddedFeatures,
+          })
+        : initialEvaluation;
+
+      this.applyImproveDriftDiagnostics(
+        state,
+        finalEvaluation,
+        true,
+        repairResult.refined && finalEvaluation.blockingIssues.length === 0,
+      );
+      this.emitIterativeProgress(opts, {
+        type: 'early_drift_repair_done',
+        iteration: iterationNumber,
+        applied: repairResult.refined && finalEvaluation.blockingIssues.length === 0,
+        codes: finalEvaluation.blockingIssues.map(issue => issue.code),
+        sections: finalEvaluation.blockingIssues.map(issue => issue.sectionKey),
+      });
+
+      if (repairResult.refined && finalEvaluation.blockingIssues.length === 0) {
+        return {
+          preservedPRD: repairedContent,
+          candidateStructure: repairedStructure,
+        };
+      }
+    }
+
+    throw new PrdCompilerQualityError(
+      `Improve-mode drift blocked iteration ${iterationNumber}: ${finalEvaluation.primaryReason || initialEvaluation.primaryReason || 'Baseline scope drift remained after targeted repair.'}`,
+      this.buildEarlyDriftQualityReport(repairedStructure || candidateStructure, finalEvaluation.blockingIssues),
+      [],
+      { content: repairedContent, structure: repairedStructure || candidateStructure },
+      {
+        failureStage: 'early_drift',
+        earlyDriftDetected: true,
+        earlyDriftCodes: finalEvaluation.blockingIssues.map(issue => issue.code),
+        earlyDriftSections: finalEvaluation.blockingIssues.map(issue => issue.sectionKey),
+        blockedAddedFeatures: finalEvaluation.blockedAddedFeatures,
+        earlySemanticLintCodes: finalEvaluation.semanticLintCodes,
+        earlyRepairAttempted: !!state.diagnostics.earlyRepairAttempted,
+        earlyRepairApplied: !!state.diagnostics.earlyRepairApplied,
+        primaryEarlyDriftReason: finalEvaluation.primaryReason || initialEvaluation.primaryReason,
+      }
+    );
   }
 
   private extractCleanPRD(generatorOutput: string): string {
@@ -2398,6 +3050,7 @@ Your task:
     workflowInputText: string;
     structuredDelta?: StructuredFeatureDelta;
     enforceStructuredDeltaOnly?: boolean;
+    allowNewFeatures?: boolean;
     contentLanguage?: string | null;
     client: OpenRouterClient;
   }): Promise<{
@@ -2405,6 +3058,7 @@ Your task:
     freezeBaseline: PRDStructure;
     addedFeatureIds: string[];
     droppedDuplicates: string[];
+    blockedAddedFeatures: string[];
   }> {
     const {
       currentStructure,
@@ -2413,6 +3067,7 @@ Your task:
       workflowInputText,
       structuredDelta,
       enforceStructuredDeltaOnly,
+      allowNewFeatures = true,
       contentLanguage,
       client
     } = params;
@@ -2448,6 +3103,29 @@ Your task:
         freezeBaseline,
         addedFeatureIds: [],
         droppedDuplicates: [],
+        blockedAddedFeatures: [],
+      };
+    }
+
+    if (!allowNewFeatures) {
+      const blockedAddedFeatures = candidatePool.map(candidate => `${candidate.id}:${candidate.name}`);
+      return {
+        structure: {
+          ...currentStructure,
+          features: currentStructure.features
+            .filter(f => {
+              const canonicalId = normalizeFeatureId(f.id) || String(f.id || '').trim().toUpperCase();
+              return canonicalId.length > 0 && baselineIds.has(canonicalId);
+            })
+            .map(f => ({
+              ...f,
+              id: normalizeFeatureId(f.id) || String(f.id || '').trim().toUpperCase(),
+            })),
+        },
+        freezeBaseline,
+        addedFeatureIds: [],
+        droppedDuplicates: [],
+        blockedAddedFeatures,
       };
     }
 
@@ -2581,6 +3259,7 @@ Your task:
       freezeBaseline: mergedBaseline,
       addedFeatureIds: compiledNewFeatures.map(f => f.id),
       droppedDuplicates,
+      blockedAddedFeatures: [],
     };
   }
 

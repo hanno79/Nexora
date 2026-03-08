@@ -61,7 +61,7 @@ export const ITERATIVE_STRUCTURED_DELTA = budget('ITERATIVE_STRUCTURED_DELTA', 1
 export const REPAIR_PASS = budget('REPAIR_PASS', 12000);
 
 // === Content Review & Refinement (post-compiler) ===
-export const CONTENT_REVIEW_REFINE = budget('CONTENT_REVIEW_REFINE', 8000);
+export const CONTENT_REVIEW_REFINE = budget('CONTENT_REVIEW_REFINE', 12000);
 
 // === Section Operations ===
 export const SECTION_REGENERATION = budget('SECTION_REGENERATION', 2000);

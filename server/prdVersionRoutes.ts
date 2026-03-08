@@ -11,7 +11,11 @@ Beschreibung: Registriert PRD-Versionsrouten als kleines Modul.
 import type { Request, RequestHandler } from 'express';
 import { asyncHandler } from './asyncHandler';
 import { requirePrdAccess } from './prdAccess';
-import { buildPrdVersionSnapshot, getNextPrdVersionNumber } from './prdVersioningUtils';
+import {
+  buildPrdVersionSnapshot,
+  getNextPrdVersionNumber,
+  type PrdVersionSnapshotSource,
+} from './prdVersioningUtils';
 import type { IStorage } from './storage';
 
 type AuthenticatedRequest = Request & {
@@ -28,12 +32,18 @@ type PrdVersionStorage = Pick<
   IStorage,
   'getPrd' | 'getPrdShares' | 'getPrdVersions' | 'createPrdVersion' | 'getPrdVersion' | 'deletePrdVersion'
 >;
+type PrdVersionAccessHandler = (...args: Parameters<typeof requirePrdAccess>) => Promise<PrdVersionSnapshotSource | null>;
+type BuildPrdVersionSnapshotHandler = (
+  prd: PrdVersionSnapshotSource,
+  versionNumber: string,
+  createdBy: string,
+) => ReturnType<typeof buildPrdVersionSnapshot>;
 
 export interface PrdVersionRouteDependencies {
   storage: PrdVersionStorage;
-  requirePrdAccess: typeof requirePrdAccess;
+  requirePrdAccess: PrdVersionAccessHandler;
   getNextPrdVersionNumber: typeof getNextPrdVersionNumber;
-  buildPrdVersionSnapshot: typeof buildPrdVersionSnapshot;
+  buildPrdVersionSnapshot: BuildPrdVersionSnapshotHandler;
 }
 
 export function registerPrdVersionRoutes(
@@ -63,7 +73,7 @@ export function registerPrdVersionRoutes(
     const versions = await deps.storage.getPrdVersions(id);
     const versionNumber = deps.getNextPrdVersionNumber(versions.length);
     const version = await deps.storage.createPrdVersion(
-      deps.buildPrdVersionSnapshot(prd as any, versionNumber, userId),
+      deps.buildPrdVersionSnapshot(prd, versionNumber, userId),
     );
 
     res.json(version);

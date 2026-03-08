@@ -179,6 +179,48 @@ const CONSTRAINT_SUBJECT_PATTERNS: Array<{ subject: string; regex: RegExp }> = [
   { subject: 'availability', regex: /\b(?:availability|uptime|verfuegbarkeit)\b/i },
 ];
 
+const RULE_SCHEMA_PROPERTY_HINTS = new Set([
+  'charge',
+  'charges',
+  'combo',
+  'cooldown',
+  'count',
+  'counter',
+  'duration',
+  'experience',
+  'inventory',
+  'level',
+  'levels',
+  'life',
+  'lives',
+  'multiplier',
+  'quota',
+  'remaining',
+  'retry',
+  'score',
+  'scores',
+  'state',
+  'status',
+  'streak',
+  'timer',
+  'use',
+  'uses',
+  'xp',
+]);
+
+const OUT_OF_SCOPE_FUTURE_LEAK_PATTERNS: RegExp[] = [
+  /\b(?:future|later|eventually|potential(?:ly)?|possible|possibly|may|might|could|optional|roadmap|planned|post-launch|next release)\b/i,
+  /\b(?:zukuenftig|zukünftig|spaeter|später|spätere|moeglich|möglich|koennte|könnte|optional|roadmap|spaeteren|späteren)\b/i,
+];
+
+const FEATURE_CORE_SEMANTIC_ANCHORS: Array<{ label: string; patterns: RegExp[] }> = [
+  { label: 'roguelite/meta progression', patterns: [/\broguelite\b/i, /\broguelike\b/i, /\bmeta[- ]progress(?:ion)?\b/i] },
+  { label: 'power-up', patterns: [/\bpower[- ]?ups?\b/i] },
+  { label: 'cooldown', patterns: [/\bcooldown\b/i] },
+  { label: 'XP', patterns: [/\bxp\b/i, /\bexperience\b/i] },
+  { label: 'level progression', patterns: [/\blevel(?:ing| up)?\b/i, /\blevel-up\b/i] },
+];
+
 const COMPARATOR_MAX = /(?:<=|=<|\bat most\b|\bmax(?:imum)?\b|\bmaximal\b|\bhoechstens\b|\bunder\b|\bbelow\b|\bwithin\b)/i;
 const COMPARATOR_MIN = /(?:>=|=>|\bat least\b|\bmin(?:imum)?\b|\bmindestens\b|\babove\b|\bover\b)/i;
 const COMPARATOR_EXACT = /(?:=|\bexactly\b|\bequals?\b|\bset to\b|\bmust be\b|\bis\b|\bist\b|\bbetraegt\b)/i;
@@ -408,6 +450,154 @@ function findClosestSchemaField(schema: DomainEntitySchema, fieldKey: string): s
   }
 
   return undefined;
+}
+
+function collectDomainPropertyTokens(domainModel: string): Set<string> {
+  const tokens = new Set<string>();
+  const normalizedTokens = normalizeForMatch(domainModel)
+    .split(/\s+/)
+    .filter(token => token.length >= 2);
+  for (const token of normalizedTokens) {
+    tokens.add(token);
+  }
+
+  for (const schema of parseDomainEntitySchemas(domainModel)) {
+    tokens.add(schema.entityKey);
+    for (const entry of schema.fields.values()) {
+      const parts = splitIdentifierParts(entry);
+      for (const part of parts) {
+        if (part.length >= 2) tokens.add(singularizeIdentifierPart(part));
+      }
+    }
+  }
+
+  for (const identifier of extractCodeIdentifiers(domainModel)) {
+    const parts = splitIdentifierParts(identifier);
+    for (const part of parts) {
+      if (part.length >= 2) tokens.add(singularizeIdentifierPart(part));
+    }
+  }
+
+  return tokens;
+}
+
+function extractRuleSchemaPropertyCoverageIssues(structure: PRDStructure): DeterministicSemanticIssue[] {
+  const issues: DeterministicSemanticIssue[] = [];
+  const domainTokens = collectDomainPropertyTokens(String(structure.domainModel || ''));
+  const lines = String(structure.globalBusinessRules || '')
+    .split(/\r?\n/)
+    .flatMap(line => line.split(/[.!?]/))
+    .map(line => normalizeWhitespace(line.replace(/^[-*]\s*/, '')))
+    .filter(line => line.length >= 8);
+  const issueKeys = new Set<string>();
+
+  for (const line of lines) {
+    const constraintLike = COMPARATOR_MAX.test(line)
+      || COMPARATOR_MIN.test(line)
+      || COMPARATOR_EXACT.test(line)
+      || /\b(?:must|only|allow(?:ed)?|requires?|when|if|muss|nur|darf|erlaubt|wenn|setzt|bedarf)\b/i.test(line);
+    if (!constraintLike) continue;
+
+    const candidateTokens = new Set<string>();
+    for (const identifier of extractCodeIdentifiers(line)) {
+      for (const part of splitIdentifierParts(identifier)) {
+        const normalized = singularizeIdentifierPart(part);
+        if (normalized.length >= 2) candidateTokens.add(normalized);
+      }
+    }
+
+    const plainTokens = normalizeForMatch(line)
+      .split(/\s+/)
+      .map(token => singularizeIdentifierPart(token))
+      .filter(token => token.length >= 2 && RULE_SCHEMA_PROPERTY_HINTS.has(token));
+    for (const token of plainTokens) {
+      candidateTokens.add(token);
+    }
+
+    for (const token of candidateTokens) {
+      if (domainTokens.has(token)) continue;
+      const issueKey = `${token}:${line.toLowerCase()}`;
+      if (issueKeys.has(issueKey)) continue;
+      issueKeys.add(issueKey);
+
+      issues.push({
+        code: 'rule_schema_property_coverage_missing',
+        message: `Business rules reference property "${token}" but the Domain Model does not declare or describe it.`,
+        severity: 'error',
+        evidencePath: 'globalBusinessRules',
+        evidenceSnippet: line.slice(0, 220),
+      });
+    }
+  }
+
+  return issues;
+}
+
+function extractFeatureCoreSemanticGapIssues(structure: PRDStructure): DeterministicSemanticIssue[] {
+  const issues: DeterministicSemanticIssue[] = [];
+  const systemContext = [
+    String(structure.systemVision || '').trim(),
+    String(structure.globalBusinessRules || '').trim(),
+    String(structure.domainModel || '').trim(),
+  ].filter(Boolean).join('\n');
+
+  for (const feature of structure.features || []) {
+    const featureId = String(feature.id || '').trim();
+    if (!featureId) continue;
+
+    const summaryText = [
+      feature.name,
+      feature.purpose,
+      feature.rawContent,
+      feature.uiImpact,
+    ].map(value => String(value || '').trim()).filter(Boolean).join('\n');
+    const coreFieldText = [
+      feature.preconditions,
+      feature.postconditions,
+      feature.dataImpact,
+    ].map(value => String(value || '').trim()).filter(Boolean).join('\n');
+
+    if (!summaryText || !coreFieldText) continue;
+
+    const missingAnchors = FEATURE_CORE_SEMANTIC_ANCHORS
+      .filter(anchor => anchor.patterns.some(pattern => pattern.test(systemContext) || pattern.test(summaryText)))
+      .filter(anchor => anchor.patterns.some(pattern => pattern.test(summaryText)))
+      .filter(anchor => !anchor.patterns.some(pattern => pattern.test(coreFieldText)))
+      .map(anchor => anchor.label);
+
+    if (missingAnchors.length === 0) continue;
+
+    issues.push({
+      code: 'feature_core_semantic_gap',
+      message: `Feature "${featureId}: ${String(feature.name || '').trim()}" mentions ${missingAnchors.join(', ')} but Preconditions, Postconditions, or Data Impact do not encode it consistently.`,
+      severity: 'error',
+      evidencePath: `feature:${featureId}.preconditions`,
+      evidenceSnippet: normalizeWhitespace(summaryText).slice(0, 220),
+    });
+  }
+
+  return issues;
+}
+
+function extractOutOfScopeFutureLeakageIssues(outOfScope: string): DeterministicSemanticIssue[] {
+  const issues: DeterministicSemanticIssue[] = [];
+  const lines = String(outOfScope || '')
+    .split(/\r?\n/)
+    .map(line => normalizeWhitespace(line.replace(/^[-*]\s*/, '')))
+    .filter(Boolean);
+
+  for (const line of lines) {
+    if (!OUT_OF_SCOPE_FUTURE_LEAK_PATTERNS.some(pattern => pattern.test(line))) continue;
+    issues.push({
+      code: 'out_of_scope_future_leakage',
+      message: 'Out-of-Scope text contains future-looking or optional roadmap language instead of strict exclusions.',
+      severity: 'error',
+      evidencePath: 'outOfScope',
+      evidenceSnippet: line.slice(0, 220),
+    });
+  }
+
+  return issues;
 }
 
 function normalizeConstraintValue(rawValue: string, rawUnit?: string): { value: number; unitGroup: ConstraintUnitGroup } {
@@ -755,6 +945,16 @@ export function collectDeterministicSemanticIssues(
         });
       }
     }
+  }
+
+  if (!domainModelIsFallback && !businessRulesAreFallback) {
+    issues.push(...extractRuleSchemaPropertyCoverageIssues(structure));
+  }
+
+  issues.push(...extractFeatureCoreSemanticGapIssues(structure));
+
+  if (!outOfScopeIsFallback) {
+    issues.push(...extractOutOfScopeFutureLeakageIssues(String(structure.outOfScope || '')));
   }
 
   return issues;

@@ -93,6 +93,8 @@ class OpenRouterClient {
   private preferredModels: { generator?: string; reviewer?: string; verifier?: string; fallback?: string } = {};
   private preferredFallbackChain: string[] = [];
   private defaultExecutionContext: ModelCallExecutionContext = {};
+  private runQuarantinedModels = new Map<string, string>();
+  private runProvider400Failures = new Map<string, number>();
 
   constructor(apiKey?: string, tier: keyof ModelConfig = DEFAULT_SAFE_TIER) {
     this.apiKey = apiKey || process.env.OPENROUTER_API_KEY || '';
@@ -144,6 +146,52 @@ class OpenRouterClient {
 
   private applyFailureCooldown(model: string, errorMessage: string): void {
     applyOpenRouterFailureCooldown(model, errorMessage);
+  }
+
+  private isModelQuarantinedForRun(model: string | null | undefined): boolean {
+    const sanitized = sanitizeConfiguredModel(model);
+    return sanitized ? this.runQuarantinedModels.has(sanitized) : false;
+  }
+
+  private quarantineModelForRun(model: string, reason: string): void {
+    const sanitized = sanitizeConfiguredModel(model);
+    if (!sanitized) return;
+    if (!this.runQuarantinedModels.has(sanitized)) {
+      logger.warn('Quarantining AI model for current run after repeated hard failures', {
+        model: sanitized,
+        reason,
+      });
+    }
+    this.runQuarantinedModels.set(sanitized, reason);
+  }
+
+  private recordRunFailure(model: string, errorMessage: string): void {
+    const sanitized = sanitizeConfiguredModel(model);
+    if (!sanitized) return;
+    const normalized = String(errorMessage || '').toLowerCase();
+
+    if (
+      normalized.includes('not a valid model') ||
+      normalized.includes('not found') ||
+      normalized.includes('nicht gefunden')
+    ) {
+      this.quarantineModelForRun(sanitized, 'invalid or unavailable model id');
+      return;
+    }
+
+    const repeatedProvider400 =
+      normalized.includes('status: 400')
+      || normalized.includes('provider returned error. status: 400')
+      || normalized.includes('request too large')
+      || normalized.includes('request zu gross');
+
+    if (!repeatedProvider400) return;
+
+    const nextCount = (this.runProvider400Failures.get(sanitized) || 0) + 1;
+    this.runProvider400Failures.set(sanitized, nextCount);
+    if (nextCount >= 2) {
+      this.quarantineModelForRun(sanitized, 'repeated provider 400 failure');
+    }
   }
 
   async callModel(
@@ -404,6 +452,7 @@ class OpenRouterClient {
         status,
         endedAt,
         durationMs,
+        ...(finishReason ? { finishReason } : {}),
         ...(errorMessage ? { errorMessage } : {}),
       });
       logger.info('AI model call completed', {
@@ -507,6 +556,8 @@ class OpenRouterClient {
       tier: this.tier,
       preferredModels: this.preferredModels,
       preferredFallbackChain: this.preferredFallbackChain,
+      isModelQuarantined: (model) => this.isModelQuarantinedForRun(model),
+      recordFailureForRun: (model, errorMessage) => this.recordRunFailure(model, errorMessage),
       callModel: (role, nextSystemPrompt, nextUserPrompt, nextMaxTokens, nextTemperature, nextResponseFormat, nextExecutionContext) =>
         this.callModel(role, nextSystemPrompt, nextUserPrompt, nextMaxTokens, nextTemperature, nextResponseFormat, nextExecutionContext),
       withTemporaryPreferredModel: async (role, model, run) => {

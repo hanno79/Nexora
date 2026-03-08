@@ -7,28 +7,19 @@ Beschreibung: Gezielte Regressionstests fuer ausgelagerte PRD-Maintenance-Routen
 
 // ÄNDERUNG 08.03.2026: Regressionen fuer Export-, Restore- und Structure-Routen ergaenzt.
 
-import type { RequestHandler } from 'express';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  createFakeApp,
+  findRoute,
+  invokeRoute,
+  PASS_THROUGH_AUTH,
+} from './helpers/routeTestUtils';
+import {
+  buildDownloadFilename,
   buildMarkdownExportContent,
   registerPrdMaintenanceRoutes,
   type PrdMaintenanceRouteDependencies,
 } from '../server/prdMaintenanceRoutes';
-
-type RegisteredRoute = {
-  method: 'get' | 'post';
-  path: string;
-  handlers: RequestHandler[];
-};
-
-function createFakeApp() {
-  const routes: RegisteredRoute[] = [];
-  const app = {
-    get: (path: string, ...handlers: RequestHandler[]) => routes.push({ method: 'get', path, handlers }),
-    post: (path: string, ...handlers: RequestHandler[]) => routes.push({ method: 'post', path, handlers }),
-  };
-  return { app, routes };
-}
 
 function buildDependencies(overrides: Partial<PrdMaintenanceRouteDependencies> = {}): PrdMaintenanceRouteDependencies {
   return {
@@ -62,57 +53,6 @@ function buildDependencies(overrides: Partial<PrdMaintenanceRouteDependencies> =
   };
 }
 
-function findRoute(routes: RegisteredRoute[], method: RegisteredRoute['method'], path: string): RegisteredRoute {
-  const route = routes.find((candidate) => candidate.method === method && candidate.path === path);
-  if (!route) {
-    throw new Error(`Route ${method.toUpperCase()} ${path} wurde nicht registriert`);
-  }
-  return route;
-}
-
-async function invokeRoute(route: RegisteredRoute, body: Record<string, unknown> = {}, params: Record<string, string> = {}) {
-  let resolveDone!: () => void;
-  const done = new Promise<void>((resolve) => { resolveDone = resolve; });
-  const response = {
-    statusCode: 200,
-    payload: undefined as unknown,
-    headers: {} as Record<string, string>,
-    status(code: number) {
-      this.statusCode = code;
-      return this;
-    },
-    json(payload: unknown) {
-      this.payload = payload;
-      resolveDone();
-      return this;
-    },
-    send(payload: unknown) {
-      this.payload = payload;
-      resolveDone();
-      return this;
-    },
-    setHeader(name: string, value: string) {
-      this.headers[name] = value;
-    },
-  };
-  const request = { body, params, query: {}, user: { claims: { sub: 'user-1' } } } as any;
-  let handlerIndex = 0;
-  const next = (error?: unknown) => {
-    if (error) {
-      throw error;
-    }
-    const handler = route.handlers[handlerIndex++];
-    if (handler) {
-      handler(request, response as any, next as any);
-    }
-  };
-
-  next();
-  await done;
-  return response;
-}
-
-const PASS_THROUGH_AUTH = ((_req, _res, next) => next()) as RequestHandler;
 
 describe('prdMaintenanceRoutes Helfer', () => {
   it('baut den Markdown-Exportinhalt aus PRD-Daten auf', () => {
@@ -121,6 +61,19 @@ describe('prdMaintenanceRoutes Helfer', () => {
       description: 'Beschreibung',
       content: 'Inhalt',
     })).toBe('# Titel\n\nBeschreibung\n\n---\n\nInhalt');
+  });
+
+  it('bereinigt ungueltige Zeichen im Download-Dateinamen', () => {
+    expect(buildDownloadFilename('  Projekt / Alpha: Beta*?"<>| \u0000 2026  ', 'pdf')).toBe('Projekt-Alpha-Beta-2026.pdf');
+  });
+
+  it('verwendet fuer leere bereinigte Titel einen sicheren Fallback', () => {
+    expect(buildDownloadFilename(' /:*?"<>|\u0000 ', 'docx')).toBe('download.docx');
+  });
+
+  it('begrenzt die Laenge des Dateinamens vor der Erweiterung', () => {
+    const filename = buildDownloadFilename('a'.repeat(200), 'pdf');
+    expect(filename).toBe(`${'a'.repeat(120)}.pdf`);
   });
 });
 

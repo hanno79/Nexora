@@ -157,4 +157,33 @@ describe('OpenRouterClient fallback behavior', () => {
     expect(thrown?.message.match(/model-a:free:/g)?.length ?? 0).toBe(1);
     expect(thrown?.message.match(/model-b:free:/g)?.length ?? 0).toBe(1);
   });
+
+  it('quarantines repeated provider-400 models for the remainder of the run', async () => {
+    const client = new OpenRouterClient('test-key', 'development');
+    client.setPreferredModel('generator', 'bad-model:free');
+    client.setFallbackChain(['good-model:free']);
+
+    const attempts: string[] = [];
+    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
+      const attemptedModel = client.getPreferredModel(modelType)!;
+      attempts.push(attemptedModel);
+      if (attemptedModel === 'bad-model:free') {
+        throw new Error('Provider returned error. Status: 400');
+      }
+      return { content: 'ok', usage, model: attemptedModel };
+    });
+
+    await client.callWithFallback('generator', 'system', 'user', 1200);
+    clearGlobalCooldown('bad-model:free');
+    await client.callWithFallback('generator', 'system-2', 'user-2', 1200);
+    await client.callWithFallback('generator', 'system-3', 'user-3', 1200);
+
+    expect(attempts).toEqual([
+      'bad-model:free',
+      'good-model:free',
+      'bad-model:free',
+      'good-model:free',
+      'good-model:free',
+    ]);
+  });
 });

@@ -5,6 +5,16 @@
  * Extracted from DualAiDialog so it can be unit-tested and reused without
  * depending on component state or i18n context.
  */
+export class SsePayloadError extends Error {
+  payload: any;
+
+  constructor(payload: any, fallbackMessage: string) {
+    super(payload?.message || fallbackMessage);
+    this.name = 'SsePayloadError';
+    this.payload = payload;
+  }
+}
+
 export async function readSSEStream(
   body: ReadableStream<Uint8Array>,
   onEvent: (event: any) => void,
@@ -41,7 +51,7 @@ export async function readSSEStream(
           result = parsed;
         } else if (eventType === 'error') {
           isErrorEvent = true;
-          throw new Error(parsed.message || errorMessage);
+          throw new SsePayloadError(parsed, errorMessage);
         } else {
           onEvent(parsed);
         }

@@ -121,7 +121,28 @@ export async function generateWithCompilerGates(params: {
         refinePrompt,
         CONTENT_REVIEW_REFINE,
       );
-      return { content: refineResult.content, model: refineResult.model, usage: refineResult.usage };
+      return {
+        content: refineResult.content,
+        model: refineResult.model,
+        usage: refineResult.usage,
+        finishReason: refineResult.finishReason,
+      };
+    },
+    semanticRefineReviewer: async (refinePrompt: string) => {
+      const refineResult = await client.callWithFallback(
+        'reviewer',
+        'You are a PRD semantic repair specialist. Return JSON only.' + langInstruction,
+        refinePrompt,
+        CONTENT_REVIEW_REFINE,
+        { type: 'json_object' },
+        0.1,
+      );
+      return {
+        content: refineResult.content,
+        model: refineResult.model,
+        usage: refineResult.usage,
+        finishReason: refineResult.finishReason,
+      };
     },
     semanticVerifier: async (input: SemanticVerifierInput) => {
       const verifyPrompt = buildSemanticVerificationPrompt(input);

@@ -16,7 +16,6 @@ import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
 import { apiRequest } from "@/lib/queryClient";
 import { QueryError } from "@/components/QueryError";
 import { useToast } from "@/hooks/use-toast";
@@ -24,12 +23,22 @@ import { useMutationErrorHandler } from "@/hooks/useMutationErrorHandler";
 import { useTranslation } from "@/lib/i18n";
 import { useDebounce } from "@/hooks/useDebounce";
 import type { AIProvider } from "@/components/ProviderFilter";
-
-interface TierDefaults {
-  development?: { generator?: string; reviewer?: string };
-  production?: { generator?: string; reviewer?: string };
-  premium?: { generator?: string; reviewer?: string };
-}
+import { AiModelDisplayLabel } from "./AiModelDisplayLabel";
+import {
+  buildAiModelSettingsKey,
+  buildAiSettingsPayload,
+  buildTierModelSelection,
+  DEFAULT_FALLBACK_CHAIN,
+  DEFAULT_GENERATOR_MODEL,
+  DEFAULT_REVIEWER_MODEL,
+  DEFAULT_VERIFIER_MODEL,
+  resolveInitialAiModelSettingsState,
+  resolveTierModelSelection,
+  type AiPreferencesResponse,
+  type AiTier,
+  type TierDefaults,
+  type TierModelSelection,
+} from "./aiModelSettingsHelpers";
 
 interface AiModelSettingsSectionProps {
   providers: Array<{
@@ -40,13 +49,16 @@ interface AiModelSettingsSectionProps {
   selectedProviders: AIProvider[];
 }
 
-const DEFAULT_FALLBACK_CHAIN = [
-  'google/gemma-3-27b-it:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
-  'mistralai/mistral-small-3.1-24b-instruct:free',
-  'qwen/qwen3-coder:free',
-  'openai/gpt-oss-120b:free',
-];
+type AvailableModel = {
+  id: string;
+  name: string;
+  provider: AIProvider;
+  contextLength: number;
+  isFree: boolean;
+  pricing: { input: number; output: number };
+  capabilities: string[];
+  description?: string;
+};
 
 const blockedModelIds = new Set(['deepseek/deepseek-r1-0528:free']);
 
@@ -56,15 +68,16 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
   const onMutationError = useMutationErrorHandler();
 
   // Model states
-  const [generatorModel, setGeneratorModel] = useState("nvidia/nemotron-3-nano-30b-a3b:free");
-  const [reviewerModel, setReviewerModel] = useState("arcee-ai/trinity-large-preview:free");
-  const [fallbackChain, setFallbackChain] = useState<string[]>(["google/gemma-3-27b-it:free"]);
-  const [aiTier, setAiTier] = useState<"development" | "production" | "premium">("development");
+  const [generatorModel, setGeneratorModel] = useState(DEFAULT_GENERATOR_MODEL);
+  const [reviewerModel, setReviewerModel] = useState(DEFAULT_REVIEWER_MODEL);
+  const [verifierModel, setVerifierModel] = useState(DEFAULT_VERIFIER_MODEL);
+  const [fallbackChain, setFallbackChain] = useState<string[]>([DEFAULT_FALLBACK_CHAIN[0]]);
+  const [aiTier, setAiTier] = useState<AiTier>("development");
   const [modelFilter, setModelFilter] = useState<'all' | 'free' | 'paid'>('all');
   const [providerFilter, setProviderFilter] = useState<AIProvider | 'all'>('all');
   const [modelSearch, setModelSearch] = useState('');
   const [tierDefaults, setTierDefaults] = useState<TierDefaults>({});
-  const [savedTierModels, setSavedTierModels] = useState<Record<string, { generatorModel?: string; reviewerModel?: string; fallbackChain?: string[] }>>({});
+  const [savedTierModels, setSavedTierModels] = useState<Record<string, TierModelSelection>>({});
 
   // Feature states
   const [iterativeMode, setIterativeMode] = useState(false);
@@ -79,36 +92,14 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
   const flushPendingSaveRef = useRef<() => void>(() => {});
 
   // Fetch AI preferences
-  const { data: aiPreferences } = useQuery<{
-    generatorModel?: string;
-    reviewerModel?: string;
-    fallbackChain?: string[];
-    fallbackModel?: string;
-    tier?: "development" | "production" | "premium";
-    tierModels?: Record<string, { generatorModel?: string; reviewerModel?: string; fallbackModel?: string; fallbackChain?: string[] }>;
-    tierDefaults?: TierDefaults;
-    iterativeMode?: boolean;
-    iterationCount?: number;
-    iterativeTimeoutMinutes?: number;
-    useFinalReview?: boolean;
-    guidedQuestionRounds?: number;
-  }>({
+  const { data: aiPreferences } = useQuery<AiPreferencesResponse>({
     queryKey: ["/api/settings/ai"],
     staleTime: 0,
   });
 
   // Fetch all models
   const { data: allModelsData, isLoading: allModelsLoading, error: modelsError, refetch: refetchModels } = useQuery<{
-    models: Array<{
-      id: string;
-      name: string;
-      provider: AIProvider;
-      contextLength: number;
-      isFree: boolean;
-      pricing: { input: number; output: number };
-      capabilities: string[];
-      description?: string;
-    }>;
+    models: AvailableModel[];
   }>({
     queryKey: ["/api/models", selectedProviders.join(',')],
     queryFn: async () => {
@@ -134,27 +125,26 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
   // Initialize from preferences
   useEffect(() => {
     if (aiPreferences) {
-      const tm = aiPreferences.tierModels || {};
-      setSavedTierModels(tm);
-      setGeneratorModel(aiPreferences.generatorModel || "nvidia/nemotron-3-nano-30b-a3b:free");
-      setReviewerModel(aiPreferences.reviewerModel || "arcee-ai/trinity-large-preview:free");
-      const chain = aiPreferences.fallbackChain
-        ?? (aiPreferences.fallbackModel ? [aiPreferences.fallbackModel] : null)
-        ?? ["google/gemma-3-27b-it:free"];
-      setFallbackChain(chain);
-      setAiTier(aiPreferences.tier || "development");
-      setTierDefaults(aiPreferences.tierDefaults || {});
-      setIterativeMode(aiPreferences.iterativeMode || false);
-      setIterationCount(aiPreferences.iterationCount || 3);
-      setIterativeTimeoutMinutes(aiPreferences.iterativeTimeoutMinutes || 30);
-      setUseFinalReview(aiPreferences.useFinalReview || false);
-      setGuidedQuestionRounds(aiPreferences.guidedQuestionRounds || 3);
+      const resolvedState = resolveInitialAiModelSettingsState(aiPreferences);
+      setSavedTierModels(resolvedState.tierModels);
+      setGeneratorModel(resolvedState.generatorModel);
+      setReviewerModel(resolvedState.reviewerModel);
+      setVerifierModel(resolvedState.verifierModel);
+      setFallbackChain(resolvedState.fallbackChain);
+      setAiTier(resolvedState.aiTier);
+      setTierDefaults(resolvedState.tierDefaults);
+      setIterativeMode(resolvedState.iterativeMode);
+      setIterationCount(resolvedState.iterationCount);
+      setIterativeTimeoutMinutes(resolvedState.iterativeTimeoutMinutes);
+      setUseFinalReview(resolvedState.useFinalReview);
+      setGuidedQuestionRounds(resolvedState.guidedQuestionRounds);
 
-      lastSavedModelKeyRef.current = JSON.stringify({
-        generatorModel: aiPreferences.generatorModel || "nvidia/nemotron-3-nano-30b-a3b:free",
-        reviewerModel: aiPreferences.reviewerModel || "arcee-ai/trinity-large-preview:free",
-        fallbackChain: chain,
-        aiTier: aiPreferences.tier || "development",
+      lastSavedModelKeyRef.current = buildAiModelSettingsKey({
+        generatorModel: resolvedState.generatorModel,
+        reviewerModel: resolvedState.reviewerModel,
+        verifierModel: resolvedState.verifierModel,
+        fallbackChain: resolvedState.fallbackChain,
+        aiTier: resolvedState.aiTier,
       });
       aiPrefsLoadedRef.current = true;
     }
@@ -179,9 +169,16 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
     acc[p.id] = p;
     return acc;
   }, {} as Record<AIProvider, typeof providers[0]>);
+  const modelMetaMap = new Map(allAvailableModels.map((model) => [model.id, model]));
 
   // Debounced settings key
-  const aiModelSettingsKey = JSON.stringify({ generatorModel, reviewerModel, fallbackChain, aiTier });
+  const aiModelSettingsKey = buildAiModelSettingsKey({
+    generatorModel,
+    reviewerModel,
+    verifierModel,
+    fallbackChain,
+    aiTier,
+  });
   const debouncedModelSettings = useDebounce(aiModelSettingsKey, 1500);
 
   // Update mutation
@@ -191,43 +188,41 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
         ? JSON.parse(modelSettingsKey) as {
             generatorModel?: string;
             reviewerModel?: string;
+            verifierModel?: string;
             fallbackChain?: string[];
-            aiTier?: "development" | "production" | "premium";
+            aiTier?: AiTier;
           }
         : {};
       const generatorModelToSave = modelSettings.generatorModel || generatorModel;
       const reviewerModelToSave = modelSettings.reviewerModel || reviewerModel;
+      const verifierModelToSave = modelSettings.verifierModel || verifierModel;
       const fallbackChainToSave = modelSettings.fallbackChain || fallbackChain;
       const tierToSave = modelSettings.aiTier || aiTier;
 
-      const currentTierModels = {
-        ...savedTierModels,
-        [tierToSave]: {
-          generatorModel: generatorModelToSave,
-          reviewerModel: reviewerModelToSave,
-          fallbackChain: fallbackChainToSave,
-        },
-      };
-
-      return await apiRequest("PATCH", "/api/settings/ai", {
+      return await apiRequest("PATCH", "/api/settings/ai", buildAiSettingsPayload({
+        savedTierModels,
         generatorModel: generatorModelToSave,
         reviewerModel: reviewerModelToSave,
-        fallbackModel: fallbackChainToSave[0] || "google/gemma-3-27b-it:free",
+        verifierModel: verifierModelToSave,
         fallbackChain: fallbackChainToSave,
-        tier: tierToSave,
-        tierModels: currentTierModels,
+        aiTier: tierToSave,
         tierDefaults,
         iterativeMode,
-        iterationCount: Math.min(5, Math.max(2, iterationCount)),
-        iterativeTimeoutMinutes: Math.min(120, Math.max(5, iterativeTimeoutMinutes)),
+        iterationCount,
+        iterativeTimeoutMinutes,
         useFinalReview,
-        guidedQuestionRounds: Math.min(10, Math.max(1, guidedQuestionRounds)),
-      });
+        guidedQuestionRounds,
+      }));
     },
     onSuccess: () => {
       setSavedTierModels(prev => ({
         ...prev,
-        [aiTier]: { generatorModel, reviewerModel, fallbackChain },
+        [aiTier]: buildTierModelSelection({
+          generatorModel,
+          reviewerModel,
+          verifierModel,
+          fallbackChain,
+        }),
       }));
       toast({
         title: t.common.success,
@@ -251,26 +246,29 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
 
   // Flush pending save
   flushPendingSaveRef.current = () => {
-    const currentKey = JSON.stringify({ generatorModel, reviewerModel, fallbackChain, aiTier });
-    if (currentKey === lastSavedModelKeyRef.current) return;
-    if (!aiPrefsLoadedRef.current) return;
-    const payload = {
+    const currentKey = buildAiModelSettingsKey({
       generatorModel,
       reviewerModel,
-      fallbackModel: fallbackChain[0] || "google/gemma-3-27b-it:free",
+      verifierModel,
       fallbackChain,
-      tier: aiTier,
-      tierModels: {
-        ...savedTierModels,
-        [aiTier]: { generatorModel, reviewerModel, fallbackChain },
-      },
+      aiTier,
+    });
+    if (currentKey === lastSavedModelKeyRef.current) return;
+    if (!aiPrefsLoadedRef.current) return;
+    const payload = buildAiSettingsPayload({
+      savedTierModels,
+      generatorModel,
+      reviewerModel,
+      verifierModel,
+      fallbackChain,
+      aiTier,
       tierDefaults,
       iterativeMode,
-      iterationCount: Math.min(5, Math.max(2, iterationCount)),
-      iterativeTimeoutMinutes: Math.min(120, Math.max(5, iterativeTimeoutMinutes)),
+      iterationCount,
+      iterativeTimeoutMinutes,
       useFinalReview,
-      guidedQuestionRounds: Math.min(10, Math.max(1, guidedQuestionRounds)),
-    };
+      guidedQuestionRounds,
+    });
     const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
     const queued = navigator.sendBeacon('/api/settings/ai', blob);
     if (!queued) {
@@ -294,25 +292,29 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
   }, []);
 
   // Tier change handler
-  const handleTierChange = (value: "development" | "production" | "premium") => {
+  const handleTierChange = (value: AiTier) => {
     const nextSaved = {
       ...savedTierModels,
-      [aiTier]: { generatorModel, reviewerModel, fallbackChain },
+      [aiTier]: buildTierModelSelection({
+        generatorModel,
+        reviewerModel,
+        verifierModel,
+        fallbackChain,
+      }),
     };
     setSavedTierModels(nextSaved);
     setAiTier(value);
 
-    const saved = nextSaved[value];
-    if (saved?.generatorModel || saved?.reviewerModel || saved?.fallbackChain) {
-      if (saved.generatorModel) setGeneratorModel(saved.generatorModel);
-      if (saved.reviewerModel) setReviewerModel(saved.reviewerModel);
-      if (saved.fallbackChain) setFallbackChain(saved.fallbackChain);
-    } else {
-      const systemDefaults = tierDefaults[value];
-      if (systemDefaults?.generator) setGeneratorModel(systemDefaults.generator);
-      if (systemDefaults?.reviewer) setReviewerModel(systemDefaults.reviewer);
-      setFallbackChain([...DEFAULT_FALLBACK_CHAIN]);
-    }
+    const nextSelection = resolveTierModelSelection({
+      savedTierModels: nextSaved,
+      tier: value,
+      tierDefaults,
+    });
+
+    if (nextSelection.generatorModel) setGeneratorModel(nextSelection.generatorModel);
+    if (nextSelection.reviewerModel) setReviewerModel(nextSelection.reviewerModel);
+    if (nextSelection.verifierModel) setVerifierModel(nextSelection.verifierModel);
+    setFallbackChain(nextSelection.fallbackChain);
   };
 
   return (
@@ -418,18 +420,12 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
                       const provider = providerInfoMap?.[m.provider];
                       return (
                         <SelectItem key={m.id} value={m.id}>
-                          <span className="flex items-center gap-2">
-                            {m.name}
-                            {m.isFree && <Badge variant="secondary" className="text-[10px] bg-green-100 text-green-700">Free</Badge>}
-                            {provider && (
-                              <span
-                                className="text-[10px] px-1.5 py-0.5 rounded"
-                                style={{ backgroundColor: `${provider.color}20`, color: provider.color }}
-                              >
-                                {provider.displayName}
-                              </span>
-                            )}
-                          </span>
+                          <AiModelDisplayLabel
+                            name={m.name}
+                            isFree={m.isFree}
+                            providerDisplayName={provider?.displayName}
+                            providerColor={provider?.color}
+                          />
                         </SelectItem>
                       );
                     })
@@ -456,18 +452,12 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
                       const provider = providerInfoMap?.[m.provider];
                       return (
                         <SelectItem key={m.id} value={m.id}>
-                          <span className="flex items-center gap-2">
-                            {m.name}
-                            {m.isFree && <Badge variant="secondary" className="text-[10px] bg-green-100 text-green-700">Free</Badge>}
-                            {provider && (
-                              <span
-                                className="text-[10px] px-1.5 py-0.5 rounded"
-                                style={{ backgroundColor: `${provider.color}20`, color: provider.color }}
-                              >
-                                {provider.displayName}
-                              </span>
-                            )}
-                          </span>
+                          <AiModelDisplayLabel
+                            name={m.name}
+                            isFree={m.isFree}
+                            providerDisplayName={provider?.displayName}
+                            providerColor={provider?.color}
+                          />
                         </SelectItem>
                       );
                     })
@@ -477,6 +467,38 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
               <p className="text-xs text-muted-foreground">{t.settings.reviewerModelDesc}</p>
             </div>
 
+            {/* Verifier Model */}
+            <div className="space-y-2">
+              <Label htmlFor="verifier-model">{t.settings.verifierModel}</Label>
+              <Select value={verifierModel} onValueChange={setVerifierModel}>
+                <SelectTrigger id="verifier-model" data-testid="select-verifier-model">
+                  <SelectValue placeholder={allModelsLoading ? t.settings.loadingModels : t.settings.selectModel} />
+                </SelectTrigger>
+                <SelectContent>
+                  {allModelsLoading ? (
+                    <SelectItem value="loading" disabled>{t.settings.loadingModels}</SelectItem>
+                  ) : filteredModels.length === 0 ? (
+                    <SelectItem value="none" disabled>{t.settings.noModelsFound}</SelectItem>
+                  ) : (
+                    filteredModels.map(m => {
+                      const provider = providerInfoMap?.[m.provider];
+                      return (
+                        <SelectItem key={m.id} value={m.id}>
+                          <AiModelDisplayLabel
+                            name={m.name}
+                            isFree={m.isFree}
+                            providerDisplayName={provider?.displayName}
+                            providerColor={provider?.color}
+                          />
+                        </SelectItem>
+                      );
+                    })
+                  )}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t.settings.verifierModelDesc}</p>
+            </div>
+
             {/* Fallback Chain */}
             <div className="space-y-2">
               <Label>{t.settings.fallbackChain}</Label>
@@ -484,7 +506,8 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
 
               <div className="space-y-1">
                 {fallbackChain.map((modelId, idx) => {
-                  const modelMeta = allAvailableModels.find(m => m.id === modelId);
+                  const modelMeta = modelMetaMap.get(modelId);
+                  const provider = modelMeta ? providerInfoMap?.[modelMeta.provider] : undefined;
                   const statusEntry = modelStatusData?.modelStatus?.[modelId];
                   const statusColor = (!statusEntry || statusEntry.status === 'ok')
                     ? 'bg-green-500'
@@ -496,10 +519,13 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
                     <div key={modelId} className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm">
                       <span className="text-muted-foreground w-5 text-center text-xs">{idx + 1}</span>
                       <span title={statusTitle} className={`w-2 h-2 rounded-full ${statusColor} flex-shrink-0`} />
-                      <span className="flex-1 truncate">
-                        {modelMeta?.name ?? modelId}
-                        {modelMeta?.isFree && <span className="ml-1 text-xs text-green-600">(Free)</span>}
-                      </span>
+                      <AiModelDisplayLabel
+                        name={modelMeta?.name ?? modelId}
+                        isFree={modelMeta?.isFree}
+                        providerDisplayName={provider?.displayName}
+                        providerColor={provider?.color}
+                        className="flex-1"
+                      />
                       <Button variant="ghost" size="icon" className="h-6 w-6" disabled={idx === 0}
                         onClick={() => setFallbackChain(prev => {
                           const next = [...prev];
@@ -545,18 +571,12 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
                         const provider = providerInfoMap?.[m.provider];
                         return (
                           <SelectItem key={m.id} value={m.id}>
-                            <span className="flex items-center gap-2">
-                              {m.name}
-                              {m.isFree && <Badge variant="secondary" className="text-[10px] bg-green-100 text-green-700">Free</Badge>}
-                              {provider && (
-                                <span
-                                  className="text-[10px] px-1.5 py-0.5 rounded"
-                                  style={{ backgroundColor: `${provider.color}20`, color: provider.color }}
-                                >
-                                  {provider.displayName}
-                                </span>
-                              )}
-                            </span>
+                            <AiModelDisplayLabel
+                              name={m.name}
+                              isFree={m.isFree}
+                              providerDisplayName={provider?.displayName}
+                              providerColor={provider?.color}
+                            />
                           </SelectItem>
                         );
                       })

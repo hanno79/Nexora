@@ -87,6 +87,8 @@ vi.mock('../server/prdCompilerFinalizer', async () => {
 });
 
 import { DualAiService } from '../server/dualAiService';
+import { PrdCompilerQualityError } from '../server/prdCompilerFinalizer';
+import { parsePRDToStructure } from '../server/prdParser';
 
 function usage(total: number) {
   return {
@@ -319,5 +321,129 @@ describe('DualAiService iterative reviewer-first flow', () => {
     expect(mockClient.setDefaultExecutionContext).toHaveBeenCalled();
     expect(attemptUpdates.at(-1)?.status).toBe('aborted');
     expect(attemptUpdates.at(-1)?.phase).toBe('final_review');
+  });
+
+  it('preserves semantic quality diagnostics when compiler finalization fails', async () => {
+    const service = new DualAiService();
+    const prd = buildMinimalPrdResponse(2, 'en');
+
+    vi.spyOn(service as any, 'runIterationGeneratorPhase').mockResolvedValue({
+      content: prd,
+      usage: usage(40),
+      model: 'mock/generator:free',
+      tier: 'development',
+      usedFallback: false,
+    });
+    vi.spyOn(service as any, 'runIterationExpansionPhase').mockResolvedValue(undefined);
+    vi.spyOn(service as any, 'extractQuestionsWithFallback').mockResolvedValue(['What operational gap remains?']);
+    vi.spyOn(service as any, 'runIterationAnswererPhase').mockResolvedValue({
+      answerResult: {
+        content: 'Resolve the remaining operational gap with deterministic retry handling.',
+        usage: usage(30),
+        model: 'mock/reviewer:free',
+        tier: 'development',
+        usedFallback: false,
+      },
+      answererOutputTruncated: false,
+    });
+    vi.spyOn(service as any, 'validateAndPreserveIterationStructure').mockResolvedValue({
+      shouldContinue: false,
+      preservedPRD: prd,
+      candidateStructure: null,
+    });
+
+    mockFinalizeWithCompilerGates.mockRejectedValue(
+      new PrdCompilerQualityError(
+        'PRD compiler quality gate failed after semantic verification.',
+        {
+          valid: false,
+          issues: [
+            {
+              code: 'cross_section_inconsistency',
+              message: 'Definition of Done conflicts with milestone rollout.',
+              severity: 'error',
+            },
+          ],
+          featureCount: 2,
+          truncatedLikely: false,
+          missingSections: [],
+          fallbackSections: [],
+        } as any,
+        [],
+        undefined,
+        {
+          failureStage: 'semantic_verifier',
+          semanticVerification: {
+            verdict: 'fail',
+            blockingIssues: [
+              {
+                code: 'cross_section_inconsistency',
+                message: 'Definition of Done conflicts with milestone rollout.',
+              },
+            ],
+            model: 'mock/verifier:free',
+            usage: usage(20),
+            sameFamilyFallback: false,
+            blockedFamilies: [],
+          },
+          semanticRepairApplied: true,
+        }
+      )
+    );
+
+    await expect(
+      service.generateIterative(
+        prd,
+        'Improve reliability and final verification.',
+        'improve',
+        2,
+        true,
+        'user-iterative',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'feature',
+      )
+    ).rejects.toMatchObject({
+      name: 'PrdCompilerQualityError',
+      message: 'Unified compiler finalization failed: PRD compiler quality gate failed after semantic verification.',
+      failureStage: 'semantic_verifier',
+      semanticRepairApplied: true,
+      semanticVerification: {
+        verdict: 'fail',
+        blockingIssues: [
+          expect.objectContaining({ code: 'cross_section_inconsistency' }),
+        ],
+      },
+    });
+  });
+
+  it('detects improve-mode drift when baseline features are replaced by unrelated feature families', () => {
+    const service = new DualAiService();
+    const baseline = parsePRDToStructure(buildMinimalPrdResponse(2, 'en'));
+    const candidate = parsePRDToStructure(
+      buildMinimalPrdResponse(2, 'en')
+        .replace('User Authentication', 'Competitive Matchmaking')
+        .replace('Dashboard Analytics', 'Kubernetes Cluster Provisioning')
+        .replace(
+          'Web application with authenticated users, REST API, and PostgreSQL database. External integrations via OpenRouter.',
+          'Competitive multiplayer gaming platform for streamers with Kubernetes orchestration, S3 asset storage, and leaderboard infrastructure.'
+        )
+    );
+
+    const evaluation = (service as any).collectImproveDriftEvaluation({
+      baselineStructure: baseline,
+      candidateStructure: candidate,
+      workflowInputText: 'Improve the baseline product without adding new scope.',
+      language: 'en',
+      blockedAddedFeatures: ['F-09: Competitive Matchmaking'],
+    });
+
+    expect(evaluation.blockingIssues.map((issue: any) => issue.code)).toEqual(
+      expect.arrayContaining(['feature_scope_drift_detected', 'section_anchor_mismatch', 'baseline_scope_contradiction'])
+    );
+    expect(evaluation.blockedAddedFeatures).toEqual(['F-09: Competitive Matchmaking']);
+    expect(evaluation.primaryReason).toContain('Affected sections');
   });
 });

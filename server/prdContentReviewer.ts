@@ -26,6 +26,10 @@ import { tokenizeToSet, jaccardSimilarity, normalizeForMatch } from './prdTextUt
 import { parsePRDToStructure } from './prdParser';
 import { assembleStructureToMarkdown } from './prdAssembler';
 import {
+  collectDeterministicSemanticIssues,
+  type DeterministicSemanticIssue,
+} from './prdDeterministicSemanticLints';
+import {
   analyzeFeatureSemanticIssues,
   extractFeatureTargetFields,
   FEATURE_ENRICHABLE_FIELDS,
@@ -78,6 +82,7 @@ export interface ReviewerRefineResult {
   content: string;
   model: string;
   usage: TokenUsage;
+  finishReason?: string;
 }
 
 export interface TargetedContentRefineResult {
@@ -86,6 +91,14 @@ export interface TargetedContentRefineResult {
   refined: boolean;
   enrichedFeatureCount?: number;
   reviewerAttempts: ReviewerRefineResult[];
+}
+
+export interface SemanticPatchRefineResult {
+  content: string;
+  structure: PRDStructure;
+  refined: boolean;
+  reviewerAttempts: ReviewerRefineResult[];
+  truncated: boolean;
 }
 
 export type ReviewerContentGenerator = (prompt: string) => Promise<ReviewerRefineResult>;
@@ -121,6 +134,18 @@ const TARGETABLE_SECTION_KEYS: Array<keyof PRDStructure> = [
   'outOfScope',
   'timelineMilestones',
   'successCriteria',
+];
+
+type PatchableSectionKey = typeof TARGETABLE_SECTION_KEYS[number];
+
+const PATCHABLE_SECTION_KEY_SET = new Set<string>(
+  TARGETABLE_SECTION_KEYS.map(key => String(key))
+);
+
+const FEATURE_SEMANTIC_CLUSTER_FIELDS: FeatureEnrichableField[] = [
+  'preconditions',
+  'postconditions',
+  'dataImpact',
 ];
 
 // ---------------------------------------------------------------------------
@@ -773,6 +798,749 @@ function validateTargetedRefinement(params: {
   }
 
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Semantic repair: targeted JSON patches for verifier blocking issues
+// ---------------------------------------------------------------------------
+
+type SemanticRepairTarget =
+  | {
+      kind: 'section';
+      sectionKey: PatchableSectionKey;
+      issueCodes: string[];
+      messages: string[];
+      evidence: SemanticRepairEvidence[];
+    }
+  | {
+      kind: 'feature';
+      sectionKey: string;
+      featureId: string;
+      featureName: string;
+      issueCodes: string[];
+      messages: string[];
+      targetFields: FeatureEnrichableField[];
+      evidence: SemanticRepairEvidence[];
+    };
+
+interface NormalizedSemanticPatch {
+  sections: Partial<Record<PatchableSectionKey, string>>;
+  features: Array<{
+    id: string;
+    fields: Partial<Record<FeatureEnrichableField, string | string[]>>;
+  }>;
+}
+
+interface SemanticRepairEvidence {
+  code: string;
+  message: string;
+  evidencePath?: string;
+  evidenceSnippet?: string;
+}
+
+const SEMANTIC_CLUSTER_SECTION_ORDER: PatchableSectionKey[] = [
+  'systemVision',
+  'domainModel',
+  'globalBusinessRules',
+  'systemBoundaries',
+  'outOfScope',
+];
+
+const SCHEMA_EVIDENCE_CODES = new Set([
+  'schema_field_reference_mismatch',
+  'schema_field_reference_missing',
+  'schema_field_identifier_mismatch',
+]);
+
+function summarizeSemanticContext(value: unknown, maxLength = 320): string {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  return normalized.slice(0, maxLength) || '(missing)';
+}
+
+function deterministicIssueSupportsVerifierCode(
+  verifierCode: string,
+  deterministicCode: string
+): boolean {
+  switch (verifierCode) {
+    case 'schema_field_mismatch':
+      return SCHEMA_EVIDENCE_CODES.has(deterministicCode) || deterministicCode === 'rule_schema_property_coverage_missing';
+    case 'business_rule_contradiction':
+      return deterministicCode === 'business_rule_constraint_conflict' || deterministicCode === 'rule_schema_property_coverage_missing';
+    case 'scope_meta_leakage':
+      return deterministicCode === 'out_of_scope_reintroduced' || deterministicCode === 'out_of_scope_future_leakage';
+    default:
+      return false;
+  }
+}
+
+function targetMatchesDeterministicIssue(
+  target: SemanticRepairTarget,
+  issue: DeterministicSemanticIssue
+): boolean {
+  const evidencePath = String(issue.evidencePath || '').trim();
+  if (evidencePath) {
+    if (evidencePath === target.sectionKey || evidencePath.startsWith(`${target.sectionKey}.`)) {
+      return true;
+    }
+  }
+
+  if (target.kind === 'section') {
+    if (target.sectionKey === 'systemVision' && issue.code === 'feature_core_semantic_gap') {
+      return true;
+    }
+    if (target.sectionKey === 'domainModel' && SCHEMA_EVIDENCE_CODES.has(issue.code)) {
+      return true;
+    }
+    if (target.sectionKey === 'domainModel' && issue.code === 'rule_schema_property_coverage_missing') {
+      return true;
+    }
+    if (target.sectionKey === 'globalBusinessRules' && issue.code === 'business_rule_constraint_conflict') {
+      return true;
+    }
+    if (target.sectionKey === 'globalBusinessRules' && issue.code === 'rule_schema_property_coverage_missing') {
+      return true;
+    }
+    if (target.sectionKey === 'outOfScope' && issue.code === 'out_of_scope_reintroduced') {
+      return true;
+    }
+    if (target.sectionKey === 'outOfScope' && issue.code === 'out_of_scope_future_leakage') {
+      return true;
+    }
+
+    return target.issueCodes.some(code => deterministicIssueSupportsVerifierCode(code, issue.code));
+  }
+
+  return target.issueCodes.some(code => deterministicIssueSupportsVerifierCode(code, issue.code))
+    && Boolean(evidencePath && (evidencePath === target.sectionKey || evidencePath.startsWith(`${target.sectionKey}.`)));
+}
+
+function attachSemanticRepairEvidence(params: {
+  structure: PRDStructure;
+  targets: SemanticRepairTarget[];
+  language: SupportedLanguage;
+}): SemanticRepairTarget[] {
+  const deterministicIssues = collectDeterministicSemanticIssues(params.structure, {
+    language: params.language,
+  });
+
+  return params.targets.map(target => {
+    const evidence = Array.from(new Map(
+      deterministicIssues
+        .filter(issue => targetMatchesDeterministicIssue(target, issue))
+        .map(issue => {
+          const normalizedEvidence: SemanticRepairEvidence = {
+            code: issue.code,
+            message: issue.message,
+            ...(issue.evidencePath ? { evidencePath: issue.evidencePath } : {}),
+            ...(issue.evidenceSnippet ? { evidenceSnippet: summarizeSemanticContext(issue.evidenceSnippet, 220) } : {}),
+          };
+          return [
+            [
+              normalizedEvidence.code,
+              normalizedEvidence.evidencePath || '',
+              normalizedEvidence.message,
+            ].join('|'),
+            normalizedEvidence,
+          ] as const;
+        })
+    ).values()).slice(0, 4);
+
+    return {
+      ...target,
+      evidence,
+    };
+  });
+}
+
+function buildSemanticRepairBatches(targets: SemanticRepairTarget[]): SemanticRepairTarget[][] {
+  const features = targets
+    .filter((target): target is Extract<SemanticRepairTarget, { kind: 'feature' }> => target.kind === 'feature')
+    .sort((left, right) => left.featureId.localeCompare(right.featureId));
+  const sectionsByKey = new Map(
+    targets
+      .filter((target): target is Extract<SemanticRepairTarget, { kind: 'section' }> => target.kind === 'section')
+      .map(target => [target.sectionKey, target] as const)
+  );
+  const batches: SemanticRepairTarget[][] = [];
+
+  const takeSection = (sectionKey: PatchableSectionKey) => {
+    const target = sectionsByKey.get(sectionKey);
+    if (target) sectionsByKey.delete(sectionKey);
+    return target;
+  };
+
+  const pushBatch = (entries: Array<SemanticRepairTarget | undefined>) => {
+    const batch = entries.filter((entry): entry is SemanticRepairTarget => Boolean(entry));
+    if (batch.length > 0) batches.push(batch);
+  };
+
+  const firstFeature = features.shift();
+  if (firstFeature) {
+    pushBatch([firstFeature, takeSection('systemVision') || takeSection('domainModel')]);
+  }
+
+  if (sectionsByKey.has('domainModel') && sectionsByKey.has('globalBusinessRules')) {
+    pushBatch([takeSection('domainModel'), takeSection('globalBusinessRules')]);
+  } else if (sectionsByKey.has('globalBusinessRules')) {
+    pushBatch([takeSection('globalBusinessRules')]);
+  } else if (sectionsByKey.has('domainModel')) {
+    pushBatch([takeSection('domainModel')]);
+  }
+
+  if (sectionsByKey.has('systemBoundaries') && sectionsByKey.has('outOfScope')) {
+    pushBatch([takeSection('systemBoundaries'), takeSection('outOfScope')]);
+  }
+
+  while (features.length > 0) {
+    pushBatch(features.splice(0, 2));
+  }
+
+  const remainingSections = [
+    ...SEMANTIC_CLUSTER_SECTION_ORDER
+      .map(sectionKey => sectionsByKey.get(sectionKey))
+      .filter((target): target is Extract<SemanticRepairTarget, { kind: 'section' }> => Boolean(target)),
+    ...TARGETABLE_SECTION_KEYS
+      .filter(sectionKey => !SEMANTIC_CLUSTER_SECTION_ORDER.includes(sectionKey))
+      .map(sectionKey => sectionsByKey.get(sectionKey))
+      .filter((target): target is Extract<SemanticRepairTarget, { kind: 'section' }> => Boolean(target)),
+  ];
+
+  for (let index = 0; index < remainingSections.length; index += 2) {
+    pushBatch(remainingSections.slice(index, index + 2));
+  }
+
+  return batches;
+}
+
+function buildSemanticConsistencyClusterContext(
+  structure: PRDStructure,
+  targets: SemanticRepairTarget[]
+): string {
+  const includesConsistencyCluster = targets.some(target =>
+    target.kind === 'feature' || SEMANTIC_CLUSTER_SECTION_ORDER.includes(target.sectionKey as PatchableSectionKey)
+  );
+  if (!includesConsistencyCluster) return '';
+
+  const targetedFeatures = targets
+    .filter((target): target is Extract<SemanticRepairTarget, { kind: 'feature' }> => target.kind === 'feature')
+    .map(target => {
+      const feature = (structure.features || []).find(entry =>
+        String(entry.id || '').trim().toUpperCase() === target.featureId
+      );
+      return [
+        `- ${target.featureId}: ${target.featureName}`,
+        `  Purpose: ${summarizeSemanticContext(feature?.purpose, 180)}`,
+        `  Preconditions: ${summarizeSemanticContext(feature?.preconditions, 180)}`,
+        `  Postconditions: ${summarizeSemanticContext(feature?.postconditions, 180)}`,
+        `  Data Impact: ${summarizeSemanticContext(feature?.dataImpact, 180)}`,
+        `  UI Impact: ${summarizeSemanticContext(feature?.uiImpact, 180)}`,
+      ].join('\n');
+    });
+
+  const lines = [
+    'CONSISTENCY CLUSTER SNAPSHOT',
+    `- System Vision: ${summarizeSemanticContext(structure.systemVision, 280)}`,
+    `- System Boundaries: ${summarizeSemanticContext(structure.systemBoundaries, 280)}`,
+    `- Domain Model: ${summarizeSemanticContext(structure.domainModel, 280)}`,
+    `- Global Business Rules: ${summarizeSemanticContext(structure.globalBusinessRules, 280)}`,
+    `- Out of Scope: ${summarizeSemanticContext(structure.outOfScope, 280)}`,
+  ];
+
+  if (targetedFeatures.length > 0) {
+    lines.push('- Targeted Features:');
+    lines.push(...targetedFeatures);
+  }
+
+  return lines.join('\n');
+}
+
+function buildSemanticRepairTargets(
+  issues: ContentIssue[],
+  structure: PRDStructure
+): SemanticRepairTarget[] {
+  const targets = new Map<string, SemanticRepairTarget>();
+
+  for (const issue of issues) {
+    const sectionKey = String(issue.sectionKey || '').trim();
+    if (!sectionKey) continue;
+
+    if (sectionKey.startsWith('feature:')) {
+      const featureId = sectionKey.replace(/^feature:/i, '').trim().toUpperCase();
+      const feature = (structure.features || []).find(entry => String(entry.id || '').trim().toUpperCase() === featureId);
+      if (!feature) continue;
+
+      const existing = targets.get(sectionKey);
+      if (existing && existing.kind === 'feature') {
+        existing.issueCodes = Array.from(new Set([...existing.issueCodes, issue.code].filter(Boolean)));
+        existing.messages = Array.from(new Set([...existing.messages, issue.message].filter(Boolean)));
+        existing.targetFields = Array.from(new Set([
+          ...existing.targetFields,
+          ...resolveFeatureTargetFields(issue),
+        ]));
+        continue;
+      }
+
+      targets.set(sectionKey, {
+        kind: 'feature',
+        sectionKey,
+        featureId,
+        featureName: feature.name,
+        issueCodes: issue.code ? [issue.code] : [],
+        messages: issue.message ? [issue.message] : [],
+        targetFields: resolveFeatureTargetFields(issue),
+        evidence: [],
+      });
+      continue;
+    }
+
+    if (!PATCHABLE_SECTION_KEY_SET.has(sectionKey)) continue;
+    const normalizedSectionKey = sectionKey as PatchableSectionKey;
+    const existing = targets.get(normalizedSectionKey);
+    if (existing && existing.kind === 'section') {
+      existing.issueCodes = Array.from(new Set([...existing.issueCodes, issue.code].filter(Boolean)));
+      existing.messages = Array.from(new Set([...existing.messages, issue.message].filter(Boolean)));
+      continue;
+    }
+
+    targets.set(normalizedSectionKey, {
+      kind: 'section',
+      sectionKey: normalizedSectionKey,
+      issueCodes: issue.code ? [issue.code] : [],
+      messages: issue.message ? [issue.message] : [],
+      evidence: [],
+    });
+  }
+
+  if (targets.has('systemVision') || targets.has('globalBusinessRules')) {
+    for (const target of targets.values()) {
+      if (target.kind !== 'feature') continue;
+      target.targetFields = Array.from(new Set([
+        ...target.targetFields,
+        ...FEATURE_SEMANTIC_CLUSTER_FIELDS,
+      ]));
+    }
+  }
+
+  return Array.from(targets.values());
+}
+
+function summarizeFeatureField(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value
+      .map(entry => String(entry || '').trim())
+      .filter(Boolean)
+      .map((entry, index) => `${index + 1}. ${entry}`)
+      .join(' | ');
+  }
+  return String(value || '').trim();
+}
+
+function buildSemanticRepairPrompt(params: {
+  structure: PRDStructure;
+  targets: SemanticRepairTarget[];
+  language: SupportedLanguage;
+  templateCategory?: string;
+  originalRequest?: string;
+}): string {
+  const { structure, targets, language, templateCategory, originalRequest } = params;
+  const templateInstruction = buildTemplateInstruction(templateCategory, language);
+  const langNote = language === 'de'
+    ? 'Schreibe alle erklaerenden Inhalte auf Deutsch. Technische Bezeichner, Entity-Namen und Feldnamen duerfen in ihrer kanonischen Schreibweise bleiben.'
+    : 'Write all explanatory prose in English. Keep technical identifiers, entity names, and field names in their canonical form where needed.';
+  const consistencyClusterContext = buildSemanticConsistencyClusterContext(structure, targets);
+
+  const targetBlocks = targets.map(target => {
+    const deterministicEvidence = target.evidence.length > 0
+      ? [
+          'Deterministic Evidence:',
+          ...target.evidence.map(issue => {
+            const source = [
+              issue.evidencePath ? `path=${issue.evidencePath}` : '',
+              issue.evidenceSnippet ? `snippet=${issue.evidenceSnippet}` : '',
+            ].filter(Boolean).join(' | ');
+            return source
+              ? `- [${issue.code}] ${issue.message} (${source})`
+              : `- [${issue.code}] ${issue.message}`;
+          }),
+        ]
+      : ['Deterministic Evidence: none'];
+
+    if (target.kind === 'section') {
+      return [
+        `## Target Section: ${target.sectionKey}`,
+        `Issue Codes: ${target.issueCodes.join(', ') || 'unknown'}`,
+        'Blocking Issues:',
+        ...target.messages.map(message => `- ${message}`),
+        ...deterministicEvidence,
+        'Current Section Content:',
+        String((structure as any)[target.sectionKey] || '(missing)').trim() || '(missing)',
+      ].join('\n');
+    }
+
+    const feature = (structure.features || []).find(entry => String(entry.id || '').trim().toUpperCase() === target.featureId);
+    const fieldLines = target.targetFields.map(field => `- ${field}: ${summarizeFeatureField((feature as any)?.[field]) || '(missing)'}`);
+    return [
+      `## Target Feature: ${target.featureId} - ${target.featureName}`,
+      `Issue Codes: ${target.issueCodes.join(', ') || 'unknown'}`,
+      `Target Fields: ${target.targetFields.join(', ')}`,
+      'Blocking Issues:',
+      ...target.messages.map(message => `- ${message}`),
+      ...deterministicEvidence,
+      'Current Target Field Content:',
+      ...fieldLines,
+      'Current Raw Feature Context:',
+      String(feature?.rawContent || '(missing)').trim() || '(missing)',
+    ].join('\n');
+  }).join('\n\n');
+
+  const featureIndex = (structure.features || [])
+    .slice(0, 20)
+    .map(feature => `- ${feature.id}: ${feature.name}`)
+    .join('\n') || '- (none)';
+
+  return `You are repairing specific blocking semantic issues in a compiled PRD.
+
+TASK
+- Repair ONLY the targeted sections and feature fields listed below.
+- Do NOT rewrite the whole PRD.
+- Keep untouched content unchanged.
+- ${langNote}
+
+PROJECT CONTEXT
+- Original request: ${String(originalRequest || '(missing)').slice(0, 600)}
+- Template guidance: ${templateInstruction}
+- System Vision: ${String(structure.systemVision || '(missing)').slice(0, 500)}
+- System Boundaries: ${String(structure.systemBoundaries || '(missing)').slice(0, 500)}
+- Domain Model: ${String(structure.domainModel || '(missing)').slice(0, 500)}
+- Global Business Rules: ${String(structure.globalBusinessRules || '(missing)').slice(0, 500)}
+- Out of Scope: ${String(structure.outOfScope || '(missing)').slice(0, 500)}
+- Feature Index:
+${featureIndex}
+${consistencyClusterContext ? `\n${consistencyClusterContext}` : ''}
+
+TARGETS
+${targetBlocks}
+
+OUTPUT FORMAT
+Return JSON only with this shape:
+{
+  "sections": {
+    "definitionOfDone": "replacement markdown for the full section body"
+  },
+  "features": [
+    {
+      "id": "F-03",
+      "fields": {
+        "purpose": "replacement text",
+        "mainFlow": ["step 1", "step 2"]
+      }
+    }
+  ]
+}
+
+STRICT RULES
+- Include ONLY targeted sections and targeted feature IDs from this prompt.
+- Omit any target that does not need a change.
+- For section patches, provide the full replacement body for that section only.
+- For feature patches, provide ONLY the requested fields.
+- Use strings for scalar fields and arrays of strings for list fields.
+- Do not wrap JSON in markdown fences.
+- Do not include commentary, explanations, or extra keys.
+- Keep Features, Domain Model, Global Business Rules, System Boundaries, and Out of Scope mutually consistent.
+- If System Vision or Global Business Rules define a mechanic, state transition, or progression concept, affected feature Preconditions, Postconditions, and Data Impact must encode it explicitly.
+- Do not reintroduce anything excluded by Out of Scope.
+- Domain Model entities and field identifiers must match every referenced schema identifier exactly.
+- For Domain Model patches, describe entity fields in plain prose (for example: "GameSession stores sessionId, activePowerUpId, and score.") instead of pseudo-signature syntax like "GameSession(sessionId, activePowerUpId, score)".
+- Global Business Rules are hard constraints; do not contradict them in features, milestones, success criteria, or scope text.
+- Remove scope/meta leakage: only product facts belong in these sections, never planning instructions or reviewer commentary.
+- Out of Scope must contain strict exclusions only; remove future options, roadmap language, or implied later expansions.`;
+}
+
+function extractJsonObjectFromText(text: string): string {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return '';
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const source = fencedMatch?.[1]?.trim() || trimmed;
+  const firstBrace = source.indexOf('{');
+  if (firstBrace === -1) return '';
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = firstBrace; index < source.length; index++) {
+    const char = source[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === '{') depth++;
+    if (char === '}') {
+      depth--;
+      if (depth === 0) {
+        return source.slice(firstBrace, index + 1);
+      }
+    }
+  }
+
+  return source.slice(firstBrace);
+}
+
+function normalizePatchedArrayField(value: unknown): string[] | null {
+  if (Array.isArray(value)) {
+    const items = value
+      .map(entry => String(entry || '').trim())
+      .filter(entry => entry.length > 0);
+    return items.length > 0 ? items : null;
+  }
+
+  if (typeof value === 'string') {
+    const items = value
+      .split(/\n+/)
+      .map(entry => entry.replace(/^\d+\.\s*/, '').replace(/^-\s*\[.\]\s*/, '').replace(/^-\s*/, '').trim())
+      .filter(entry => entry.length > 0);
+    return items.length > 0 ? items : null;
+  }
+
+  return null;
+}
+
+function normalizePatchedScalarField(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const next = value.trim();
+  return next.length > 0 ? next : null;
+}
+
+function parseSemanticPatchResponse(
+  response: string,
+  targets: SemanticRepairTarget[]
+): NormalizedSemanticPatch | null {
+  const rawJson = extractJsonObjectFromText(response);
+  if (!rawJson) return null;
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(rawJson) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+
+  const allowedSectionKeys = new Set(
+    targets
+      .filter((target): target is Extract<SemanticRepairTarget, { kind: 'section' }> => target.kind === 'section')
+      .map(target => String(target.sectionKey))
+  );
+  const allowedFeatureFields = new Map<string, Set<FeatureEnrichableField>>();
+  for (const target of targets) {
+    if (target.kind !== 'feature') continue;
+    allowedFeatureFields.set(target.featureId, new Set(target.targetFields));
+  }
+
+  const sections: Partial<Record<PatchableSectionKey, string>> = {};
+  if (parsed.sections && typeof parsed.sections === 'object' && parsed.sections !== null) {
+    for (const [sectionKey, value] of Object.entries(parsed.sections as Record<string, unknown>)) {
+      if (!allowedSectionKeys.has(sectionKey)) continue;
+      const normalizedValue = normalizePatchedScalarField(value);
+      if (!normalizedValue) continue;
+      sections[sectionKey as PatchableSectionKey] = normalizedValue;
+    }
+  }
+
+  const features: Array<{ id: string; fields: Partial<Record<FeatureEnrichableField, string | string[]>> }> = [];
+  if (Array.isArray(parsed.features)) {
+    for (const entry of parsed.features) {
+      if (!entry || typeof entry !== 'object') continue;
+      const featureId = String((entry as any).id || '').trim().toUpperCase();
+      const allowedFields = allowedFeatureFields.get(featureId);
+      if (!featureId || !allowedFields) continue;
+
+      const rawFields = (entry as any).fields;
+      if (!rawFields || typeof rawFields !== 'object') continue;
+
+      const fields: Partial<Record<FeatureEnrichableField, string | string[]>> = {};
+      for (const field of FEATURE_ENRICHABLE_FIELDS) {
+        if (!allowedFields.has(field)) continue;
+        const nextValue = (rawFields as Record<string, unknown>)[field];
+        if (nextValue === undefined) continue;
+        if (field === 'mainFlow' || field === 'alternateFlows' || field === 'acceptanceCriteria') {
+          const normalizedArray = normalizePatchedArrayField(nextValue);
+          if (normalizedArray) fields[field] = normalizedArray;
+          continue;
+        }
+        const normalizedScalar = normalizePatchedScalarField(nextValue);
+        if (normalizedScalar) fields[field] = normalizedScalar;
+      }
+
+      if (Object.keys(fields).length > 0) {
+        features.push({ id: featureId, fields });
+      }
+    }
+  }
+
+  if (Object.keys(sections).length === 0 && features.length === 0) {
+    return null;
+  }
+
+  return { sections, features };
+}
+
+function applySemanticPatchToStructure(params: {
+  structure: PRDStructure;
+  patch: NormalizedSemanticPatch;
+}): { structure: PRDStructure; changed: boolean } {
+  let changed = false;
+  let nextStructure: PRDStructure = params.structure;
+
+  if (Object.keys(params.patch.sections).length > 0) {
+    const updatedSections = { ...nextStructure } as PRDStructure;
+    for (const [sectionKey, value] of Object.entries(params.patch.sections)) {
+      const typedKey = sectionKey as PatchableSectionKey;
+      const currentValue = String((nextStructure as any)[typedKey] || '').trim();
+      if (normalizeForMatch(currentValue) === normalizeForMatch(value)) continue;
+      (updatedSections as any)[typedKey] = value;
+      changed = true;
+    }
+    nextStructure = updatedSections;
+  }
+
+  if (params.patch.features.length > 0) {
+    const patchByFeatureId = new Map(
+      params.patch.features.map(feature => [feature.id.toUpperCase(), feature.fields] as const)
+    );
+    const updatedFeatures = (nextStructure.features || []).map(feature => {
+      const fields = patchByFeatureId.get(String(feature.id || '').trim().toUpperCase());
+      if (!fields) return feature;
+
+      let featureChanged = false;
+      const updatedFeature = { ...feature };
+      for (const field of FEATURE_ENRICHABLE_FIELDS) {
+        const nextValue = fields[field];
+        if (nextValue === undefined) continue;
+
+        if (field === 'mainFlow' || field === 'alternateFlows' || field === 'acceptanceCriteria') {
+          if (!Array.isArray(nextValue)) continue;
+          const normalizedCurrent = normalizeFeatureFieldValue(feature, field);
+          const normalizedNext = nextValue.map(entry => normalizeForMatch(entry)).join('|');
+          if (!normalizedNext || normalizedCurrent === normalizedNext) continue;
+          (updatedFeature as any)[field] = nextValue;
+          featureChanged = true;
+          continue;
+        }
+
+        if (typeof nextValue !== 'string') continue;
+        const normalizedCurrent = normalizeFeatureFieldValue(feature, field);
+        const normalizedNext = normalizeForMatch(nextValue);
+        if (!normalizedNext || normalizedCurrent === normalizedNext) continue;
+        (updatedFeature as any)[field] = nextValue;
+        featureChanged = true;
+      }
+
+      if (featureChanged) {
+        changed = true;
+        return updatedFeature;
+      }
+
+      return feature;
+    });
+
+    if (changed) {
+      nextStructure = {
+        ...nextStructure,
+        features: updatedFeatures,
+      };
+    }
+  }
+
+  return { structure: nextStructure, changed };
+}
+
+export async function applySemanticPatchRefinement(options: {
+  content: string;
+  structure: PRDStructure;
+  issues: ContentIssue[];
+  language: SupportedLanguage;
+  templateCategory?: string;
+  originalRequest?: string;
+  reviewer?: ReviewerContentGenerator;
+}): Promise<SemanticPatchRefineResult> {
+  const { issues, language, templateCategory, originalRequest, reviewer } = options;
+  let { content, structure } = options;
+  const reviewerAttempts: ReviewerRefineResult[] = [];
+  const targets = buildSemanticRepairTargets(issues, structure);
+  const batches = buildSemanticRepairBatches(targets);
+
+  if (!reviewer || targets.length === 0) {
+    return { content, structure, refined: false, reviewerAttempts, truncated: false };
+  }
+
+  let refined = false;
+  let truncated = false;
+
+  const processBatch = async (
+    batch: SemanticRepairTarget[],
+    allowSplit: boolean
+  ): Promise<boolean> => {
+    const batchWithEvidence = attachSemanticRepairEvidence({
+      structure,
+      targets: batch,
+      language,
+    });
+    const prompt = buildSemanticRepairPrompt({
+      structure,
+      targets: batchWithEvidence,
+      language,
+      templateCategory,
+      originalRequest,
+    });
+    const result = await reviewer(prompt);
+    reviewerAttempts.push(result);
+
+    if (result.finishReason === 'length') {
+      truncated = true;
+      if (allowSplit && batch.length > 1) {
+        let changed = false;
+        for (const target of batch) {
+          changed = (await processBatch([target], false)) || changed;
+        }
+        return changed;
+      }
+      return false;
+    }
+
+    const patch = parseSemanticPatchResponse(result.content, batchWithEvidence);
+    if (!patch) return false;
+
+    const applied = applySemanticPatchToStructure({ structure, patch });
+    if (!applied.changed) return false;
+
+    structure = applied.structure;
+    content = assembleStructureToMarkdown(structure);
+    return true;
+  };
+
+  for (const batch of batches) {
+    refined = (await processBatch(batch, true)) || refined;
+  }
+
+  return {
+    content,
+    structure,
+    refined,
+    reviewerAttempts,
+    truncated,
+  };
 }
 
 // ---------------------------------------------------------------------------
