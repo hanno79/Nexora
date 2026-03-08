@@ -40,7 +40,6 @@ import { requirePrdAccess, requireEditablePrdId } from "./prdAccess";
 import { buildPrdVersionSnapshot, getNextPrdVersionNumber } from "./prdVersioningUtils";
 import { canUserAccessTemplate } from "./templateAccess";
 import { collectCollaboratorIds, mapCollaboratorUsers } from "./collaborators";
-import { validateApprovalReviewers } from "./approvalReviewers";
 import {
   assessCompilerOutcome,
   persistCompilerRunArtifactBestEffort,
@@ -55,6 +54,7 @@ import { logger } from "./logger";
 import { isIterativeClientDisconnected } from "./iterativeRequestGuard";
 import { registerIntegrationRoutes } from "./integrationRoutes";
 import { registerModelProviderRoutes } from "./modelProviderRoutes";
+import { registerPrdApprovalRoutes } from "./prdApprovalRoutes";
 import { registerPrdCommentRoutes } from "./prdCommentRoutes";
 import { registerPrdMaintenanceRoutes } from "./prdMaintenanceRoutes";
 import { registerPrdShareRoutes } from "./prdShareRoutes";
@@ -82,8 +82,6 @@ import {
   updateUserSchema,
   createTemplateSchema,
   updatePrdSchema,
-  requestApprovalSchema,
-  respondApprovalSchema,
 } from "./schemas";
 
 /**
@@ -699,144 +697,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     broadcastPrdUpdate,
   });
 
-  // Approval routes
-  app.get('/api/prds/:id/approval', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { id } = req.params;
-    const prd = await requirePrdAccess(storage, req, res, id, 'view');
-    if (!prd) return;
+  // ÄNDERUNG 08.03.2026: Approval-Routen in eigenes kleines Registrierungsmodul ausgelagert.
+  registerPrdApprovalRoutes(app, isAuthenticated, {
+    storage,
+    requirePrdAccess,
+    loadUsersByIds: async (userIds) => {
+      if (userIds.length === 0) {
+        return [];
+      }
 
-    const approval = await storage.getApproval(id);
-
-    if (!approval) {
-      return res.json(null);
-    }
-
-    // Batch-fetch requester + completer in one query (avoids N+1)
-    const relatedUserIds = [approval.requestedBy, approval.completedBy].filter(Boolean) as string[];
-    type UserRow = { id: string; firstName: string | null; lastName: string | null; email: string | null };
-    const relatedUsers: UserRow[] = relatedUserIds.length > 0
-      ? await db.select().from(users).where(inArray(users.id, relatedUserIds))
-      : [];
-    const userMap = new Map(relatedUsers.map(u => [u.id, u]));
-
-    const requester = userMap.get(approval.requestedBy);
-    const completer = approval.completedBy ? userMap.get(approval.completedBy) : null;
-
-    res.json({
-      ...approval,
-      requester: requester ? {
-        id: requester.id,
-        firstName: requester.firstName,
-        lastName: requester.lastName,
-        email: requester.email,
-      } : null,
-      completer: completer ? {
-        id: completer.id,
-        firstName: completer.firstName,
-        lastName: completer.lastName,
-        email: completer.email,
-      } : null,
-    });
-  }));
-
-  app.post('/api/prds/:id/approval/request', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { id } = req.params;
-    const prd = await requirePrdAccess(storage, req, res, id, 'edit');
-    if (!prd) return;
-
-    const userId = req.user.claims.sub;
-    const { reviewers } = requestApprovalSchema.parse(req.body);
-
-    // Check if there's already a pending approval
-    const existingApproval = await storage.getApproval(id);
-    if (existingApproval && existingApproval.status === 'pending') {
-      return res.status(400).json({ message: "There is already a pending approval request" });
-    }
-
-    const shares = await storage.getPrdShares(id);
-    const { normalizedReviewerIds, unauthorizedReviewerIds } = validateApprovalReviewers(
-      reviewers,
-      prd.userId,
-      shares,
-    );
-
-    if (normalizedReviewerIds.length === 0) {
-      return res.status(400).json({ message: "At least one valid reviewer is required" });
-    }
-
-    if (unauthorizedReviewerIds.length > 0) {
-      return res.status(400).json({ message: "All reviewers must already have access to this PRD" });
-    }
-
-    const approval = await storage.createApproval({
-      prdId: id,
-      requestedBy: userId,
-      reviewers: normalizedReviewerIds,
-      status: 'pending',
-    });
-
-    // Update PRD status to pending-approval
-    await storage.updatePrd(id, { status: 'pending-approval' });
-
-    // Return approval with requester info
-    const requester = await storage.getUser(userId);
-    res.json({
-      ...approval,
-      requester: requester ? {
-        id: requester.id,
-        firstName: requester.firstName,
-        lastName: requester.lastName,
-        email: requester.email,
-      } : null,
-    });
-  }));
-
-  app.post('/api/prds/:id/approval/respond', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { id } = req.params;
-    const userId = req.user.claims.sub;
-    const { approved } = respondApprovalSchema.parse(req.body);
-
-    const prd = await requirePrdAccess(storage, req, res, id, 'view');
-    if (!prd) return;
-
-    const approval = await storage.getApproval(id);
-    if (!approval) {
-      return res.status(404).json({ message: "No approval request found" });
-    }
-
-    if (approval.status !== 'pending') {
-      return res.status(400).json({ message: "Approval request is no longer pending" });
-    }
-
-    // Check if user is a reviewer
-    if (!approval.reviewers.includes(userId)) {
-      return res.status(403).json({ message: "You are not a reviewer for this PRD" });
-    }
-
-    const newStatus = approved ? 'approved' : 'rejected';
-    const updatedApproval = await storage.updateApproval(approval.id, {
-      status: newStatus,
-      completedBy: userId,
-      completedAt: new Date(),
-    });
-
-    // Update PRD status
-    const prdStatus = approved ? 'approved' : 'review';
-    await storage.updatePrd(id, { status: prdStatus });
-
-    // Return approval with completer info
-    const completer = await storage.getUser(userId);
-    res.json({
-      ...updatedApproval,
-      completer: completer ? {
-        id: completer.id,
-        firstName: completer.firstName,
-        lastName: completer.lastName,
-        email: completer.email,
-      } : null,
-    });
-    broadcastPrdUpdate(id, 'approval:updated');
-  }));
+      return await db
+        .select({
+          id: users.id,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          email: users.email,
+        })
+        .from(users)
+        .where(inArray(users.id, userIds));
+    },
+    broadcastPrdUpdate,
+  });
 
   // AI generation route (legacy - DISABLED: bypassed tier system, always used paid Anthropic model)
   app.post('/api/ai/generate', isAuthenticated, aiRateLimiter, asyncHandler(async (_req: AuthenticatedRequest, res) => {

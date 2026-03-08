@@ -1,7 +1,7 @@
 <!--
 Author: rahn
  Datum: 08.03.2026
- Version: 2.7
+ Version: 2.9
 Beschreibung: Arbeitsplan zur Stabilisierung des Compiler-Verhaltens, zum vollstaendigen Codebase-Review gegen die Projektregeln und zur priorisierten Refactoring-Roadmap
 -->
 
@@ -43,6 +43,8 @@ Beschreibung: Arbeitsplan zur Stabilisierung des Compiler-Verhaltens, zum vollst
 <!-- ÄNDERUNG 08.03.2026: Sechzehnter Phase-2-Minimalsplit validiert - PRD-Export-, Restore- und Structure-Routen aus `server/routes.ts` nach `server/prdMaintenanceRoutes.ts` extrahiert; gezielte Regressionen (`5/5`), IDE-Diagnostik und `npm run check` sind ueber Logdateien im Container gruen bestaetigt -->
 <!-- ÄNDERUNG 08.03.2026: Siebzehnter Phase-2-Minimalsplit validiert - Versionsrouten aus `server/routes.ts` nach `server/prdVersionRoutes.ts` extrahiert; IDE-Diagnostik, gezielte Regressionen (`6/6`) und `npm run check` sind ueber Workspace-Logdateien gruen bestaetigt -->
 <!-- ÄNDERUNG 08.03.2026: Achtzehnter Phase-2-Minimalsplit validiert - Share-Routen aus `server/routes.ts` nach `server/prdShareRoutes.ts` extrahiert; IDE-Diagnostik, gezielte Regressionen (`8/8`) und `npm run check` sind ueber Workspace-Logdateien gruen bestaetigt -->
+<!-- ÄNDERUNG 08.03.2026: Neunzehnter Phase-2-Minimalsplit validiert - Comments-Routen aus `server/routes.ts` nach `server/prdCommentRoutes.ts` extrahiert; IDE-Diagnostik, gezielte Regressionen (`4/4`) und `npm run check` sind ueber Workspace-Logdateien gruen bestaetigt -->
+<!-- ÄNDERUNG 08.03.2026: Zwanzigster Phase-2-Minimalsplit validiert - Approval-Routen aus `server/routes.ts` nach `server/prdApprovalRoutes.ts` extrahiert; IDE-Diagnostik, gezielte Regressionen (`7/7`) und `npm run check` sind ueber Workspace-Logdateien gruen bestaetigt -->
 
 ## Problemanalyse
 
@@ -60,7 +62,7 @@ Beschreibung: Arbeitsplan zur Stabilisierung des Compiler-Verhaltens, zum vollst
 - [x] Template-Semantik mit `featureNameSignals` darf nicht nur an Feature-Titeln haengen; klar template-spezifischer Feature-Inhalt muss fuer die Signal-Ratio mitzaehlen.
 - [x] Smoke-Resultate und Laufmetriken der Einzel- und Vollruns brauchen einen dauerhaften, versionierbaren Projektpfad statt temporärer `.tmp_*`-Artefakte.
 - [x] Die gesamte aktive Codebasis muss gegen alle geltenden Projektregeln vollstaendig geprüft und strukturiert bewertet werden.
-- [x] Die groessten Regelverstoesse sind priorisiert; als verbleibende Phase-2-Groessenblocker stehen aktuell `server/routes.ts` (1763) und `server/dualAiService.ts` (3576) im Fokus, waehrend `server/guidedAiService.ts` (488) und `server/openrouter.ts` (481) nicht mehr ueber dem Limit liegen.
+- [x] Die groessten Regelverstoesse sind priorisiert; als verbleibende Phase-2-Groessenblocker stehen aktuell `server/routes.ts` (1602) und `server/dualAiService.ts` (3576) im Fokus, waehrend `server/guidedAiService.ts` (488) und `server/openrouter.ts` (481) nicht mehr ueber dem Limit liegen.
 - [x] Das kritischste inhaltliche Risiko ist nicht nur Groesse, sondern generische PRD-Fallback-Inhalte im Compiler, die gegen das Fail-Fast-Prinzip arbeiten.
 - [x] Fuer sichere Refactorings ist eine risikoarme Reihenfolge aus Quick Wins, kleineren Backend-Splits und erst danach den verbleibenden Grossmodulen festgelegt.
 
@@ -102,6 +104,8 @@ Beschreibung: Arbeitsplan zur Stabilisierung des Compiler-Verhaltens, zum vollst
     - Zwischenstand 08.03.2026: sechzehnter risikoarmer Split in `server/routes.ts` umgesetzt; PRD-Export-, Restore- und Structure-Routen leben jetzt in `server/prdMaintenanceRoutes.ts`, gezielte Regressionen in `tests/prdMaintenanceRoutes.test.ts` sind gruen und `server/routes.ts` liegt aktuell bei 1851 Zeilen.
     - Zwischenstand 08.03.2026: siebzehnter risikoarmer Split in `server/routes.ts` umgesetzt; Versionsrouten leben jetzt in `server/prdVersionRoutes.ts`, gezielte Regressionen in `tests/prdVersionRoutes.test.ts` sind gruen und `server/routes.ts` liegt aktuell bei 1811 Zeilen.
   - Zwischenstand 08.03.2026: achtzehnter risikoarmer Split in `server/routes.ts` umgesetzt; Share-Routen leben jetzt in `server/prdShareRoutes.ts`, gezielte Regressionen in `tests/prdShareRoutes.test.ts` sind gruen und `server/routes.ts` liegt aktuell bei 1763 Zeilen.
+  - Zwischenstand 08.03.2026: neunzehnter risikoarmer Split in `server/routes.ts` umgesetzt; Comments-Routen leben jetzt in `server/prdCommentRoutes.ts`, gezielte Regressionen in `tests/prdCommentRoutes.test.ts` sind gruen und `server/routes.ts` liegt aktuell bei 1565 Zeilen.
+  - Zwischenstand 08.03.2026: zwanzigster risikoarmer Split in `server/routes.ts` umgesetzt; Approval-Routen leben jetzt in `server/prdApprovalRoutes.ts`, gezielte Regressionen in `tests/prdApprovalRoutes.test.ts` sind gruen und `server/routes.ts` liegt aktuell bei 1602 Zeilen.
 
 ## Überprüfung
 
@@ -173,6 +177,12 @@ Beschreibung: Arbeitsplan zur Stabilisierung des Compiler-Verhaltens, zum vollst
 - [x] IDE-Diagnostik fuer `server/routes.ts`, `server/prdShareRoutes.ts` und `tests/prdShareRoutes.test.ts` ohne Befunde pruefen.
 - [x] `tests/prdShareRoutes.test.ts` nach dem Share-Split im Container gruen (`8/8`) ueber Workspace-Logdatei bestaetigen.
 - [x] Containerbasierten TypeScript-Check (`npm run check`) nach dem Share-Split ueber Workspace-Logdatei bestaetigen.
+- [x] IDE-Diagnostik fuer `server/routes.ts`, `server/prdCommentRoutes.ts` und `tests/prdCommentRoutes.test.ts` ohne Befunde pruefen.
+- [x] `tests/prdCommentRoutes.test.ts` nach dem Comments-Split im Container gruen (`4/4`) ueber Workspace-Logdatei bestaetigen.
+- [x] Containerbasierten TypeScript-Check (`npm run check`) nach dem Comments-Split ueber Workspace-Logdatei bestaetigen.
+- [x] IDE-Diagnostik fuer `server/routes.ts`, `server/prdApprovalRoutes.ts` und `tests/prdApprovalRoutes.test.ts` ohne Befunde pruefen.
+- [x] `tests/prdApprovalRoutes.test.ts` nach dem Approval-Split im Container gruen (`7/7`) ueber Workspace-Logdatei bestaetigen.
+- [x] Containerbasierten TypeScript-Check (`npm run check`) nach dem Approval-Split ueber Workspace-Logdatei bestaetigen.
 
 ## Stabilitaetsauswertung 07.03.2026
 
@@ -225,6 +235,8 @@ Beschreibung: Arbeitsplan zur Stabilisierung des Compiler-Verhaltens, zum vollst
   - Status sechzehnter Minimal-Split: PRD-Export-, Restore- und Structure-Routen aus `server/routes.ts` nach `server/prdMaintenanceRoutes.ts` extrahiert; `tests/prdMaintenanceRoutes.test.ts`, IDE-Diagnostik und `npm run check` sind gruen, `server/routes.ts` liegt danach bei 1851 Zeilen und `server/dualAiService.ts` bleibt der groesste Restblocker.
   - Status siebzehnter Minimal-Split: Versionsrouten aus `server/routes.ts` nach `server/prdVersionRoutes.ts` extrahiert; `tests/prdVersionRoutes.test.ts`, IDE-Diagnostik und `npm run check` sind gruen, `server/routes.ts` liegt danach bei 1811 Zeilen und `server/dualAiService.ts` bleibt der groesste Restblocker.
   - Status achtzehnter Minimal-Split: Share-Routen aus `server/routes.ts` nach `server/prdShareRoutes.ts` extrahiert; `tests/prdShareRoutes.test.ts`, IDE-Diagnostik und `npm run check` sind gruen, `server/routes.ts` liegt danach bei 1763 Zeilen und `server/dualAiService.ts` bleibt der groesste Restblocker.
+  - Status neunzehnter Minimal-Split: Comments-Routen aus `server/routes.ts` nach `server/prdCommentRoutes.ts` extrahiert; `tests/prdCommentRoutes.test.ts`, IDE-Diagnostik und `npm run check` sind gruen, `server/routes.ts` liegt danach bei 1565 Zeilen und `server/dualAiService.ts` bleibt der groesste Restblocker.
+  - Status zwanzigster Minimal-Split: Approval-Routen aus `server/routes.ts` nach `server/prdApprovalRoutes.ts` extrahiert; `tests/prdApprovalRoutes.test.ts`, IDE-Diagnostik und `npm run check` sind gruen, `server/routes.ts` liegt aktuell bei 1602 Zeilen und `server/dualAiService.ts` bleibt der groesste Restblocker.
 - Phase 3 / Frontend-God-Files zerlegen:
   - `client/src/pages/Editor.tsx` in Container, Toolbar/Header, Editor-State, Save/Delete-Aktionen, Sidebars und AI-Integration zerlegen.
   - `DualAiDialog.tsx` und `GuidedAiDialog.tsx` in State-Hooks, API-/SSE-Logik und Presentational-Komponenten trennen.

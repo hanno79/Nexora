@@ -1,0 +1,137 @@
+Chat-Zusammenfassung vom 08.03.2026
+
+Projekt: c:\Temp\Nexora
+Sprache/Regelbasis: Deutsch, verbindliche Projektregeln aktiv
+Validierungsprinzip: bevorzugt containerbasiert im Docker-Container, bei Bedarf mit gezieltem docker cp nach /app
+
+1. Ausgangslage und ausdrückliche Nutzerwünsche
+- Der Nutzer hat mich beauftragt, die Codebasis streng nach den verbindlichen Projektregeln zu prüfen.
+- Danach sollte ich konservative, minimale Refactorings umsetzen.
+- Der Nutzer hat mir dafür wiederholt ausdrücklich freie Hand gegeben, u. a. mit „ja mache weiter“ und später mit „ja mache weiter und gehe durch alle Phase 2 Schritte bis du fertig bist“.
+- Wichtige Dauerregeln während der Arbeit: Skriptdateien max. 500 Zeilen, keine Duplikatdateien wie *_fixed, deutsche Kommunikation, minimale Änderungen, kein Commit ohne explizite Anweisung.
+
+2. Grundsätzliche Arbeitsweise im Verlauf
+- Ich habe die Arbeit in Phasen organisiert: Regelprüfung/Architekturreview, Pflege von projectplan.md, Phase 0 Quick Wins, Phase 1 Fail-Fast-/Qualitätsfixes und Phase 2 konservative Zerlegung übergroßer Backend-Dateien.
+- projectplan.md wurde als zentrale Roadmap, Fortschritts- und Review-Datei benutzt.
+- Zusätzlich wurden Tasklisten gepflegt, um laufende Phase-2-Schritte nachvollziehbar abzubilden.
+- Für Validierungen wurden vorzugsweise Docker-Container-Läufe verwendet, da Änderungen im Workspace nicht immer automatisch im Container sichtbar waren.
+
+3. Bereits erledigte größere Phase-2-Ergebnisse vor dem aktuellen Abschnitt
+- server/prdCompilerFinalizer.ts verkleinert.
+- server/prdCompiler.ts schrittweise in Hilfsmodule zerlegt und unter 500 Zeilen gebracht.
+- server/openrouter.ts schrittweise weiter zerlegt und reduziert.
+- server/guidedAiService.ts auf unter 500 Zeilen gebracht.
+- server/routes.ts mehrfach konservativ entlastet durch Extraktion kleiner, fachlich sauberer Route-Module.
+- Bereits ausgelagerte Routenmodule aus server/routes.ts umfassten u. a.:
+  modelProviderRoutes.ts, guidedRoutes.ts, guidedRouteRegistrySupport.ts, guidedFinalizeRoutes.ts, guidedFinalizeStreamRoute.ts, integrationRoutes.ts, prdMaintenanceRoutes.ts, prdVersionRoutes.ts, prdShareRoutes.ts und prdCommentRoutes.ts.
+
+4. Früherer Verlauf im aktuellen Gesprächsausschnitt
+- Ein früherer konservativer Split lagerte die PRD-Validierungslogik aus prdCompiler.ts in server/prdCompilerValidation.ts aus.
+- Danach wurde in openrouter.ts ein weiterer Minimal-Split durchgeführt, bei dem Cooldown-/Circuit-Breaker-Logik nach server/openrouterCooldowns.ts ausgelagert wurde.
+- Dabei wurde ein Test minimal stabilisiert, ohne Produktionslogik zu verändern.
+- Nach jedem Split wurden Diagnostics, gezielte Tests und npm run check ausgeführt und in projectplan.md dokumentiert.
+
+5. Aktueller inhaltlicher Fokus unmittelbar vor der Zusammenfassungsanfrage
+- Der Schwerpunkt lag zuletzt auf einem weiteren kleinen, klar isolierbaren Split in server/routes.ts.
+- Konkret sollte der Approval-Block ausgelagert werden.
+- Betroffene Endpunkte:
+  GET /api/prds/:id/approval
+  POST /api/prds/:id/approval/request
+  POST /api/prds/:id/approval/respond
+- Ziel war erneut ein behavior-preserving Refactoring mit minimaler Reichweite.
+
+6. Vorbereitung des Approval-Splits
+- Vor der Umsetzung habe ich die relevanten Muster- und Fachdateien gelesen:
+  server/prdCommentRoutes.ts
+  tests/prdCommentRoutes.test.ts
+  server/prdShareRoutes.ts
+  server/prdVersionRoutes.ts
+  server/routes.ts
+  server/approvalReviewers.ts
+- Zusätzlich wurden neue Tasklisten-Einträge für den Approval-Split und dessen Validierung angelegt.
+
+7. Technische Umsetzung des Approval-Splits
+- Neu erstellt: server/prdApprovalRoutes.ts
+- Neu erstellt: tests/prdApprovalRoutes.test.ts
+- Geändert: server/routes.ts
+- Das neue Modul server/prdApprovalRoutes.ts folgt dem etablierten Muster der bereits extrahierten PRD-Routenmodule:
+  deutscher Header, Änderungsdokumentation, lokaler AuthenticatedRequest-Typ, RouteRegistrar, minimale Storage-Abhängigkeit per Pick<IStorage, ...> und Dependency Injection.
+- Injizierte Abhängigkeiten im neuen Modul:
+  storage, requirePrdAccess, loadUsersByIds, broadcastPrdUpdate.
+
+8. Inhalt des neuen Moduls server/prdApprovalRoutes.ts
+- GET /api/prds/:id/approval:
+  prüft View-Zugriff, lädt Approval, liefert null falls nichts vorhanden, lädt requestedBy/completedBy gesammelt und reichert die Antwort um requester/completer an.
+- POST /api/prds/:id/approval/request:
+  prüft Edit-Zugriff, validiert Body, verhindert doppelte offene Approval-Anfragen, lädt Shares, validiert Reviewer, lehnt leere oder unautorisierte Reviewer ab, erstellt Approval, setzt PRD-Status auf pending-approval und reichert die Antwort um requester an.
+- POST /api/prds/:id/approval/respond:
+  validiert Body, prüft Zugriff, liefert 404 wenn keine Approval existiert, 400 wenn nicht pending, 403 für Nicht-Reviewer, aktualisiert Approval, setzt PRD-Status auf approved oder review, reichert um completer an und broadcastet approval:updated.
+
+9. Inhalt des neuen Testmoduls tests/prdApprovalRoutes.test.ts
+- Fake-App mit get/post-Registrierung.
+- buildDependencies(...) mit vi.fn()-Mocks.
+- invokeRoute(...) als kleiner Route-Runner.
+- PASS_THROUGH_AUTH als einfache Auth-Middleware.
+- Abgedeckte Fälle:
+  1) GET liefert null ohne Approval
+  2) GET liefert angereicherte requester-/completer-Daten
+  3) Request liefert 400 bei bereits pending Approval
+  4) Request liefert 400 ohne gültige Reviewer
+  5) Request erstellt Approval und setzt PRD-Status
+  6) Respond liefert 403 für Nicht-Reviewer
+  7) Respond aktualisiert Approval, PRD-Status und Broadcast
+
+10. Anpassungen in server/routes.ts
+- registerPrdApprovalRoutes wurde importiert.
+- Der bisherige Inline-Approval-Block wurde entfernt.
+- Stattdessen wird das neue Modul mit DI registriert.
+- loadUsersByIds wird über db.select(...).from(users).where(inArray(...)) injiziert.
+- Direkte Inline-Nutzung von validateApprovalReviewers, requestApprovalSchema und respondApprovalSchema wurde aus routes.ts entfernt.
+
+11. Probleme während der Umsetzung und Lösung
+- Ein erster größerer Sammel-Patch scheiterte wegen ungültigem Kontext.
+- Lösung: Änderung in kleinere, robustere Teilschritte aufteilen.
+- Später war Terminalausgabe bei Validierung mehrfach leer oder mit älteren Docker-Ausgaben vermischt.
+- Lösung: Validierung zusätzlich über dedizierte Logdateien im Workspace absichern.
+
+12. Validierung des Approval-Splits
+- Diagnostics für server/prdApprovalRoutes.ts, tests/prdApprovalRoutes.test.ts, server/routes.ts und projectplan.md: keine Befunde.
+- Direkt geprüft:
+  server/prdApprovalRoutes.ts hat 166 Zeilen.
+  tests/prdApprovalRoutes.test.ts hat 295 Zeilen.
+  server/routes.ts delegiert korrekt an registerPrdApprovalRoutes(...).
+  server/routes.ts lag zuletzt bei 1602 Zeilen und bleibt damit ein Phase-2-Blocker.
+- Containerbasierte Tests:
+  tests/prdApprovalRoutes.test.ts erfolgreich, 7/7 Tests grün, Exit Code 0.
+- Containerbasierter TypeScript-Check:
+  npm run check erfolgreich, tsc grün, Exit Code 0.
+- Nachweisdateien:
+  documentation/validation_logs/prd_approval_routes_test_2026-03-08.log
+  documentation/validation_logs/prd_approval_routes_check_2026-03-08.log
+
+13. Stand direkt vor dieser Zusammenfassung
+- Der Approval-Split ist technisch fertig.
+- Codeänderungen sind erstellt und erfolgreich validiert.
+- Noch offen sind die saubere Nachpflege von projectplan.md und die Synchronisierung der Taskliste für diesen Split.
+
+14. Noch offene konkrete nächste Schritte
+- projectplan.md aktualisieren, voraussichtlich von 2.8 auf 2.9, inklusive Approval-Split, Prüfstatus und aktuellem Zwischenstand.
+- Taskliste aktualisieren:
+  Approval-Routen aus server/routes.ts extrahieren -> COMPLETE
+  Approval-Split validieren und dokumentieren -> COMPLETE
+  ggf. übergeordnete Phase-2-Tasks auf neuen Stand bringen.
+- Danach den nächsten konservativen Phase-2-Kandidaten wählen.
+- Wahrscheinlichster Restfokus: weiterer kleiner Block in server/routes.ts; alternativ Neubewertung von server/dualAiService.ts.
+
+15. Wichtigste aktuelle Restblocker
+- server/routes.ts ist trotz mehrerer Auslagerungen weiterhin deutlich über 500 Zeilen.
+- server/dualAiService.ts bleibt ebenfalls als großer Kandidat relevant.
+
+16. Wichtige Festhaltungen für die Fortsetzung
+- Standardsprache bleibt Deutsch.
+- Projektpfad bleibt c:\Temp\Nexora.
+- Validierung bevorzugt weiterhin containerbasiert.
+- Bei Container-Validierung kann gezieltes docker cp nach /app erforderlich sein.
+- Kein Commit ohne explizite Nutzerfreigabe.
+- Weiterhin nur minimale, konservative, fachlich gut isolierte Änderungen vornehmen.
+
