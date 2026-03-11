@@ -37,54 +37,54 @@ const EN_FEATURE_SPECS: Array<{
 }> = [
   {
     id: 'F-01',
-    name: 'User Authentication',
-    purpose: 'Allow users to securely log in and establish an authenticated session for accessing protected resources within the application.',
-    actors: 'Primary: registered end user. Secondary: identity provider, session management service.',
-    trigger: 'User navigates to the login page and submits valid credentials via the login form.',
-    preconditions: 'User account exists in the identity store and the authentication service is operational.',
+    name: 'PRD Document Authoring',
+    purpose: 'Enable product teams to author and iteratively refine structured product requirements documents through guided workflows that ensure completeness and testability.',
+    actors: 'Primary: product owner creating requirements. Secondary: requirements compiler service.',
+    trigger: 'Product owner opens the authoring workspace and starts a new requirements document or selects an existing draft for refinement.',
+    preconditions: 'The product owner has an active project and the requirements compiler service is operational.',
     mainFlow: [
-      'User opens the login page and enters email and password.',
-      'Client sends credentials to the authentication endpoint over HTTPS.',
-      'Server validates credentials against the identity store and issues a session token.',
-      'Client stores the session token and redirects the user to the dashboard.',
+      'Product owner opens the authoring workspace and selects a project for requirements creation.',
+      'The guided workflow prompts the owner to fill in vision, boundaries, and feature specifications.',
+      'The compiler validates each section against deterministic quality rules and highlights gaps.',
+      'Once all sections pass validation the document is marked as implementation-ready.',
     ],
     alternateFlows: [
-      'Invalid credentials: server returns a 401 response and the UI displays an error message without revealing which field was wrong.',
-      'Account locked: after five consecutive failures the account is temporarily locked for fifteen minutes.',
+      'Incomplete section: the compiler highlights missing fields and prevents promotion until they are resolved.',
+      'Concurrent edit: optimistic locking detects a version conflict and prompts the user to merge changes.',
     ],
-    postconditions: 'An authenticated session is established and the user can access protected routes until the session expires.',
-    dataImpact: 'A new session record is created in the sessions table with a TTL of sixty minutes.',
-    uiImpact: 'The login form transitions to a loading state during validation and redirects on success or shows inline error feedback on failure.',
+    postconditions: 'A validated requirements document is persisted with a new immutable version record in the project history.',
+    dataImpact: 'A new version record is created in the document history table and the current draft is promoted to the latest revision.',
+    uiImpact: 'The authoring form shows inline validation feedback and a progress indicator for section completeness.',
     acceptanceCriteria: [
-      'A registered user can log in with correct credentials and reach the dashboard within three seconds.',
-      'An incorrect password attempt increments the failure counter and shows a non-specific error.',
-      'After five failed attempts the account is locked and a lockout message is displayed.',
+      'A product owner can create a requirements document with all mandatory sections filled within ten minutes.',
+      'The compiler rejects documents with missing mandatory sections and provides actionable guidance.',
+      'Each saved revision is immutable and accessible through the version history view.',
     ],
   },
   {
     id: 'F-02',
-    name: 'Dashboard Overview',
-    purpose: 'Provide users with a consolidated summary view of recent activity, key metrics, and quick-action shortcuts after logging in.',
-    actors: 'Primary: authenticated end user. Secondary: analytics aggregation service.',
-    trigger: 'User completes authentication and is redirected to the dashboard route.',
-    preconditions: 'User has an active authenticated session and at least read-level permissions.',
+    name: 'Quality Gate Evaluation',
+    purpose: 'Run deterministic quality checks on compiled requirements output to validate section completeness, feature specification depth, and cross-section semantic consistency.',
+    actors: 'Primary: product owner reviewing quality results. Secondary: quality evaluation engine.',
+    trigger: 'The product owner submits a requirements document for quality evaluation after authoring or refinement.',
+    preconditions: 'The requirements document has at least one feature specification and all mandatory sections are present.',
     mainFlow: [
-      'Client requests aggregated dashboard data from the API.',
-      'Server compiles recent activity entries, metric summaries, and notification counts.',
-      'Client renders the dashboard layout with widgets for activity, metrics, and shortcuts.',
-      'Each widget loads independently so partial data does not block the overall view.',
+      'The quality engine parses the compiled document and evaluates each section against deterministic rules.',
+      'Validation results are aggregated into a quality report with issue codes, severity levels, and evidence paths.',
+      'The product owner reviews the report and decides whether to refine or accept the current version.',
+      'Accepted documents are promoted to implementation-ready status with the quality report attached.',
     ],
     alternateFlows: [
-      'Empty state: if the user has no activity yet, the dashboard shows an onboarding guide instead of empty widgets.',
-      'Slow aggregation: if the metrics service takes longer than two seconds, the widget shows a skeleton loader.',
+      'Critical issues found: the system blocks promotion and highlights the specific sections requiring attention.',
+      'Intermittent engine failure: the system retries evaluation once and surfaces the error if it persists.',
     ],
-    postconditions: 'The user sees an up-to-date dashboard reflecting their current activity and system status.',
-    dataImpact: 'Read-only access to activity logs, metric snapshots, and notification counters.',
-    uiImpact: 'Dashboard renders as a responsive grid of independent widgets with skeleton loaders for each async data source.',
+    postconditions: 'A quality report is persisted alongside the document version and the promotion status is updated.',
+    dataImpact: 'A quality report record is created and linked to the document version. Promotion status is updated in the project record.',
+    uiImpact: 'The quality report renders as a sortable issue list with severity badges and inline evidence snippets.',
     acceptanceCriteria: [
-      'Dashboard loads within two seconds for a user with up to one thousand activity entries.',
-      'Empty-state onboarding guide appears when the user has zero prior activity.',
-      'Each widget degrades independently without crashing the overall page.',
+      'Quality evaluation completes within five seconds for a document with up to twenty feature specifications.',
+      'Critical issues prevent document promotion and display clear remediation guidance.',
+      'The quality report is accessible from the version history for any previously evaluated document.',
     ],
   },
   {
@@ -261,54 +261,54 @@ const DE_FEATURE_SPECS: Array<{
 }> = [
   {
     id: 'F-01',
-    name: 'Benutzer-Authentifizierung',
-    purpose: 'Ermoeglicht es Nutzern, sich sicher anzumelden und eine authentifizierte Sitzung fuer den Zugriff auf geschuetzte Ressourcen herzustellen.',
-    actors: 'Primaer: registrierter Endnutzer. Sekundaer: Identitaetsprovider, Sitzungsverwaltungsdienst.',
-    trigger: 'Der Nutzer navigiert zur Anmeldeseite und gibt gueltige Anmeldedaten ein.',
-    preconditions: 'Ein Benutzerkonto existiert im Identitaetsspeicher und der Authentifizierungsdienst ist betriebsbereit.',
+    name: 'PRD-Dokument-Erstellung',
+    purpose: 'Ermoeglicht es Produktteams, strukturierte Anforderungsdokumente durch gefuehrte Workflows iterativ zu erstellen und zu verfeinern, um Vollstaendigkeit und Testbarkeit sicherzustellen.',
+    actors: 'Primaer: Product Owner bei der Anforderungserstellung. Sekundaer: Anforderungs-Compiler-Dienst.',
+    trigger: 'Der Product Owner oeffnet den Erstellungsbereich und beginnt ein neues Anforderungsdokument oder waehlt einen bestehenden Entwurf zur Verfeinerung.',
+    preconditions: 'Der Product Owner hat ein aktives Projekt und der Anforderungs-Compiler-Dienst ist betriebsbereit.',
     mainFlow: [
-      'Der Nutzer oeffnet die Anmeldeseite und gibt E-Mail-Adresse und Passwort ein.',
-      'Der Client sendet die Anmeldedaten ueber HTTPS an den Authentifizierungsendpunkt.',
-      'Der Server validiert die Anmeldedaten gegen den Identitaetsspeicher und stellt ein Sitzungstoken aus.',
-      'Der Client speichert das Sitzungstoken und leitet den Nutzer zum Dashboard weiter.',
+      'Der Product Owner oeffnet den Erstellungsbereich und waehlt ein Projekt fuer die Anforderungserstellung.',
+      'Der gefuehrte Workflow fordert den Owner auf, Vision, Systemgrenzen und Feature-Spezifikationen auszufuellen.',
+      'Der Compiler validiert jeden Abschnitt anhand deterministischer Qualitaetsregeln und hebt Luecken hervor.',
+      'Sobald alle Abschnitte die Validierung bestehen, wird das Dokument als implementierungsbereit markiert.',
     ],
     alternateFlows: [
-      'Ungueltige Anmeldedaten: Der Server gibt eine 401-Antwort zurueck und die Oberflaeche zeigt eine allgemeine Fehlermeldung an.',
-      'Konto gesperrt: Nach fuenf aufeinanderfolgenden Fehlversuchen wird das Konto fuer fuenfzehn Minuten temporaer gesperrt.',
+      'Unvollstaendiger Abschnitt: Der Compiler hebt fehlende Felder hervor und verhindert die Promotion, bis sie behoben sind.',
+      'Gleichzeitige Bearbeitung: Optimistisches Locking erkennt einen Versionskonflikt und fordert den Nutzer zum Zusammenfuehren auf.',
     ],
-    postconditions: 'Eine authentifizierte Sitzung ist hergestellt und der Nutzer kann auf geschuetzte Bereiche zugreifen bis die Sitzung ablaeuft.',
-    dataImpact: 'Ein neuer Sitzungsdatensatz wird in der Sitzungstabelle mit einer Lebensdauer von sechzig Minuten erstellt.',
-    uiImpact: 'Das Anmeldeformular wechselt waehrend der Validierung in einen Ladezustand und leitet bei Erfolg weiter oder zeigt bei Fehler eine Inline-Fehlermeldung an.',
+    postconditions: 'Ein validiertes Anforderungsdokument wird mit einem neuen unveraenderlichen Versionsdatensatz in der Projekthistorie persistiert.',
+    dataImpact: 'Ein neuer Versionsdatensatz wird in der Dokumenthistorie-Tabelle erstellt und der aktuelle Entwurf zur neuesten Revision befördert.',
+    uiImpact: 'Das Erstellungsformular zeigt Inline-Validierungsfeedback und einen Fortschrittsindikator fuer die Abschnittsvollstaendigkeit.',
     acceptanceCriteria: [
-      'Ein registrierter Nutzer kann sich mit korrekten Anmeldedaten anmelden und das Dashboard innerhalb von drei Sekunden erreichen.',
-      'Ein falsches Passwort erhoeht den Fehlerzaehler und zeigt eine unspezifische Fehlermeldung an.',
-      'Nach fuenf Fehlversuchen wird das Konto gesperrt und eine Sperrmeldung angezeigt.',
+      'Ein Product Owner kann ein Anforderungsdokument mit allen Pflichtabschnitten innerhalb von zehn Minuten erstellen.',
+      'Der Compiler lehnt Dokumente mit fehlenden Pflichtabschnitten ab und gibt umsetzbare Hinweise.',
+      'Jede gespeicherte Revision ist unveraenderlich und ueber die Versionshistorie zugaenglich.',
     ],
   },
   {
     id: 'F-02',
-    name: 'Dashboard-Uebersicht',
-    purpose: 'Bietet dem Nutzer nach der Anmeldung eine konsolidierte Zusammenfassung der letzten Aktivitaeten, wichtiger Kennzahlen und Schnellzugriffe.',
-    actors: 'Primaer: authentifizierter Endnutzer. Sekundaer: Analytik-Aggregationsdienst.',
-    trigger: 'Der Nutzer schliesst die Authentifizierung ab und wird zur Dashboard-Route weitergeleitet.',
-    preconditions: 'Der Nutzer hat eine aktive authentifizierte Sitzung und mindestens Leseberechtigungen.',
+    name: 'Qualitaets-Gate-Evaluierung',
+    purpose: 'Fuehrt deterministische Qualitaetspruefungen am kompilierten Anforderungsergebnis durch, um Abschnittsvollstaendigkeit, Feature-Spezifikationstiefe und sektionsuebergreifende semantische Konsistenz zu validieren.',
+    actors: 'Primaer: Product Owner bei der Pruefung der Qualitaetsergebnisse. Sekundaer: Qualitaets-Evaluierungs-Engine.',
+    trigger: 'Der Product Owner reicht ein Anforderungsdokument zur Qualitaetsevaluierung ein, nachdem es erstellt oder verfeinert wurde.',
+    preconditions: 'Das Anforderungsdokument hat mindestens eine Feature-Spezifikation und alle Pflichtabschnitte sind vorhanden.',
     mainFlow: [
-      'Der Client fordert aggregierte Dashboard-Daten von der API an.',
-      'Der Server stellt aktuelle Aktivitaetseintraege, Kennzahlenzusammenfassungen und Benachrichtigungszaehler zusammen.',
-      'Der Client rendert das Dashboard-Layout mit Widgets fuer Aktivitaeten, Kennzahlen und Schnellzugriffe.',
-      'Jedes Widget laedt unabhaengig, damit partielle Daten die Gesamtansicht nicht blockieren.',
+      'Die Qualitaets-Engine parst das kompilierte Dokument und evaluiert jeden Abschnitt anhand deterministischer Regeln.',
+      'Validierungsergebnisse werden in einem Qualitaetsbericht mit Fehlercodes, Schweregrad und Evidenzpfaden aggregiert.',
+      'Der Product Owner prueft den Bericht und entscheidet, ob die aktuelle Version verfeinert oder akzeptiert wird.',
+      'Akzeptierte Dokumente werden mit dem angehaengten Qualitaetsbericht in den implementierungsbereiten Status befördert.',
     ],
     alternateFlows: [
-      'Leerer Zustand: Hat der Nutzer noch keine Aktivitaeten, zeigt das Dashboard stattdessen einen Onboarding-Leitfaden an.',
-      'Langsame Aggregation: Dauert der Kennzahlen-Dienst laenger als zwei Sekunden, zeigt das Widget einen Skeleton-Loader an.',
+      'Kritische Probleme gefunden: Das System blockiert die Promotion und hebt die spezifischen Abschnitte hervor, die Aufmerksamkeit erfordern.',
+      'Intermittierender Engine-Fehler: Das System versucht die Evaluierung einmal erneut und zeigt den Fehler an, wenn er bestehen bleibt.',
     ],
-    postconditions: 'Der Nutzer sieht ein aktuelles Dashboard, das seinen derzeitigen Aktivitaets- und Systemstatus widerspiegelt.',
-    dataImpact: 'Nur-Lese-Zugriff auf Aktivitaetsprotokolle, Kennzahlen-Snapshots und Benachrichtigungszaehler.',
-    uiImpact: 'Das Dashboard wird als responsives Raster unabhaengiger Widgets mit Skeleton-Loadern fuer jede asynchrone Datenquelle dargestellt.',
+    postconditions: 'Ein Qualitaetsbericht wird neben der Dokumentversion persistiert und der Promotionsstatus wird aktualisiert.',
+    dataImpact: 'Ein Qualitaetsbericht-Datensatz wird erstellt und mit der Dokumentversion verknuepft. Der Promotionsstatus wird im Projektdatensatz aktualisiert.',
+    uiImpact: 'Der Qualitaetsbericht wird als sortierbare Problemliste mit Schweregrad-Badges und Inline-Evidenz-Snippets dargestellt.',
     acceptanceCriteria: [
-      'Das Dashboard laedt innerhalb von zwei Sekunden fuer einen Nutzer mit bis zu eintausend Aktivitaetseintraegen.',
-      'Der Onboarding-Leitfaden fuer den leeren Zustand erscheint, wenn der Nutzer keine bisherigen Aktivitaeten hat.',
-      'Jedes Widget degradiert unabhaengig, ohne die gesamte Seite zum Absturz zu bringen.',
+      'Die Qualitaetsevaluierung wird innerhalb von fuenf Sekunden fuer ein Dokument mit bis zu zwanzig Feature-Spezifikationen abgeschlossen.',
+      'Kritische Probleme verhindern die Dokumentpromotion und zeigen klare Behebungshinweise an.',
+      'Der Qualitaetsbericht ist ueber die Versionshistorie fuer jedes zuvor evaluierte Dokument zugaenglich.',
     ],
   },
   {
@@ -429,7 +429,7 @@ function buildTestPrd(options?: BuildTestPrdOptions): string {
         'System Vision':
           'Nexora ist eine kollaborative Produktplanungsplattform, die es Teams ermoeglicht, deterministische und qualitaetsgesicherte Produktanforderungsdokumente zu erstellen. Die Plattform unterstuetzt strukturierte Workflows fuer die iterative Verfeinerung von Anforderungen und stellt sicher, dass alle Ergebnisse implementierungsbereit und testbar sind.',
         'System Boundaries':
-          'Das System umfasst die Webanwendung und die zugehoerige REST-API. Authentifizierte Benutzer interagieren ueber den Browser. Externe Integrationen beschraenken sich auf den Identitaetsprovider und den Dateispeicherdienst. Native mobile Anwendungen und Offline-Funktionalitaet sind fuer diese Version nicht vorgesehen.',
+          'Das System umfasst die Webanwendung und die zugehoerige REST-API. Authentifizierte Benutzer interagieren ueber den Browser. Externe Integrationen beschraenken sich auf den Identitaetsprovider und den Dateispeicherdienst.',
         'Domain Model':
           'Die Kernentitaeten sind Benutzer, Projekt, PRD-Dokument, Version, Feature-Spezifikation und Reviewer-Kommentar. Jedes PRD-Dokument gehoert zu genau einem Projekt und enthaelt eine geordnete Liste von Feature-Spezifikationen. Versionen bilden eine unveraenderliche Historie ab.',
         'Global Business Rules':
@@ -453,7 +453,7 @@ function buildTestPrd(options?: BuildTestPrdOptions): string {
         'System Vision':
           'Nexora is a collaborative product planning platform that enables teams to create deterministic, quality-gated product requirements documents. The platform supports structured workflows for iterative requirements refinement and ensures all outputs are implementation-ready and testable.',
         'System Boundaries':
-          'The system encompasses the web application and associated REST API. Authenticated users interact via the browser. External integrations are limited to the identity provider and file storage service. Native mobile applications and offline functionality are out of scope for this version.',
+          'The system encompasses the web application and associated REST API. Authenticated users interact via the browser. External integrations are limited to the identity provider and file storage service.',
         'Domain Model':
           'Core entities include User, Project, PRD Document, Version, Feature Specification, and Reviewer Comment. Each PRD Document belongs to exactly one Project and contains an ordered list of Feature Specifications. Versions form an immutable history.',
         'Global Business Rules':
@@ -584,12 +584,12 @@ describe('generate mode - happy path', () => {
     // Feature purpose from EN_FEATURE_SPECS should be preserved, not replaced by generic template
     const f01 = result.structure.features.find(f => f.id === 'F-01');
     expect(f01).toBeDefined();
-    // Original purpose mentions "securely log in" — NOT the generic "delivers a clearly scoped user capability"
-    expect(f01!.purpose).toMatch(/log\s*in|authenticat/i);
+    // Original purpose mentions "requirements documents" — NOT the generic "delivers a clearly scoped user capability"
+    expect(f01!.purpose).toMatch(/requirements?\s*documents?|author/i);
     expect(f01!.purpose).not.toMatch(/delivers a clearly scoped user capability/i);
     // Acceptance criteria should reference domain terms, not generic "verifiable by end users"
     expect(f01!.acceptanceCriteria?.length).toBeGreaterThanOrEqual(1);
-    expect(f01!.acceptanceCriteria![0]).toMatch(/credential|dashboard|password|login/i);
+    expect(f01!.acceptanceCriteria![0]).toMatch(/requirements?\s*document|mandatory\s*section|product\s*owner/i);
   });
 
   it('features retain structured fields from input spec rather than template defaults', () => {

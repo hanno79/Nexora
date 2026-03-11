@@ -7,6 +7,7 @@
  * Run: npx playwright test e2e/smoke-12-combos.e2e.spec.ts
  */
 import { test, expect, request } from '@playwright/test';
+import { SMOKE_FREE_ONLY_HEADER } from '../server/aiRouteSupport';
 import { compilePrdDocument } from '../server/prdCompiler';
 import { qualityScore } from '../server/prdCompilerFinalizer';
 import { getAuthHeader } from './helpers/clerk-auth';
@@ -84,7 +85,11 @@ const EXPECTED_RESULT_COUNT = SELECTED_TEMPLATES.length * SELECTED_METHODS.lengt
 
 async function authHeaders(): Promise<Record<string, string>> {
   const auth = await getAuthHeader();
-  return { ...auth, 'Content-Type': 'application/json' };
+  return {
+    ...auth,
+    'Content-Type': 'application/json',
+    [SMOKE_FREE_ONLY_HEADER]: 'true',
+  };
 }
 
 function delay(ms: number): Promise<void> {

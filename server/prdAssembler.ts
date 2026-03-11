@@ -61,6 +61,14 @@ function renderFeatureFromStructure(feature: FeatureSpec): string {
 
   lines.push(`### ${feature.id}: ${feature.name}`);
   lines.push('');
+  lines.push(`Feature ID: ${feature.id}`);
+  if (isNonEmptyString(feature.parentTaskName)) {
+    lines.push(`Parent Task: ${feature.parentTaskName.trim()}`);
+  }
+  if (isNonEmptyString(feature.parentTaskDescription)) {
+    lines.push(`Parent Task Description: ${feature.parentTaskDescription.trim()}`);
+  }
+  lines.push('');
 
   for (const sub of STRUCTURED_SUBSECTIONS) {
     const val = feature[sub.field];
@@ -97,7 +105,7 @@ function stripFeaturePreamble(raw: string): string {
     if (skipping) {
       const isPreamble =
         /^#{1,6}\s*feature\s+specification\b/i.test(trimmed) ||
-        /^#{1,6}\s*f-\d{2,}\b/i.test(trimmed) ||
+        /^#{1,6}\s*f[- ]?\d+\b/i.test(trimmed) ||
         /^\*{0,2}feature\s+id\*{0,2}\s*:/i.test(trimmed) ||
         /^\*{0,2}feature\s+name\*{0,2}\s*:/i.test(trimmed) ||
         /^feature\s+id\s*:/i.test(trimmed) ||
@@ -117,6 +125,14 @@ function stripFeaturePreamble(raw: string): string {
 function renderFeatureRawCanonical(feature: FeatureSpec): string {
   const lines: string[] = [];
   lines.push(`### ${feature.id}: ${feature.name}`);
+  lines.push('');
+  lines.push(`Feature ID: ${feature.id}`);
+  if (isNonEmptyString(feature.parentTaskName)) {
+    lines.push(`Parent Task: ${feature.parentTaskName.trim()}`);
+  }
+  if (isNonEmptyString(feature.parentTaskDescription)) {
+    lines.push(`Parent Task Description: ${feature.parentTaskDescription.trim()}`);
+  }
   lines.push('');
   const cleaned = stripFeaturePreamble(feature.rawContent || '');
   lines.push(cleaned || 'No additional details provided.');

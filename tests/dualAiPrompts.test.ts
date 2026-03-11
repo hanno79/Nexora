@@ -78,6 +78,12 @@ describe('FEATURE_SPEC_TEMPLATE', () => {
     }
   });
 
+  it('enforces canonical feature heading and ID syntax', () => {
+    expect(FEATURE_SPEC_TEMPLATE).toContain('### F-01:');
+    expect(FEATURE_SPEC_TEMPLATE).toContain('Feature ID: F-01');
+    expect(FEATURE_SPEC_TEMPLATE).toContain('NEVER output non-canonical IDs such as F001 or F01');
+  });
+
   it('is non-empty', () => {
     expect(FEATURE_SPEC_TEMPLATE.trim().length).toBeGreaterThan(0);
   });
@@ -170,6 +176,10 @@ describe('ITERATIVE_IMPROVE_GENERATOR_PROMPT', () => {
     expect(ITERATIVE_IMPROVE_GENERATOR_PROMPT).toContain('System Vision');
     expect(ITERATIVE_IMPROVE_GENERATOR_PROMPT).toContain('Out of Scope');
     expect(ITERATIVE_IMPROVE_GENERATOR_PROMPT).toContain('baseline feature catalogue');
+  });
+
+  it('requires canonical feature IDs to remain stable in improve mode', () => {
+    expect(ITERATIVE_IMPROVE_GENERATOR_PROMPT).toContain('canonical form F-01');
   });
 });
 

@@ -14,7 +14,7 @@ import {
   collectUnknownSectionHeadings,
   detectLanguage,
   normalizeStructureForCompiler,
-  safeParseStructure,
+  parseStructureWithFeatureRecovery,
 } from './prdCompilerNormalization';
 import {
   validatePrdStructureInternal,
@@ -233,7 +233,8 @@ export function compilePrdDocument(
   const strictLanguageConsistency = options.strictLanguageConsistency !== false;
   const enableFeatureAggregation = options.enableFeatureAggregation !== false;
   const language = detectLanguage(options.language, rawContent);
-  const candidate = sanitizeMetaLeaksInStructure(safeParseStructure(rawContent)).structure;
+  const candidateParse = parseStructureWithFeatureRecovery(rawContent);
+  const candidate = sanitizeMetaLeaksInStructure(candidateParse.structure).structure;
   const candidateUnknownSections = collectUnknownSectionHeadings(candidate);
 
   // Determine improve baseline: only merge structures when existing content
@@ -241,14 +242,17 @@ export function compilePrdDocument(
   // (baselinePartial), use it as contextHint so the AI considers it without
   // a structural merge that would produce empty results.
   let improveBaseStructure: PRDStructure | null = null;
+  let resolvedContextHint = options.contextHint;
   if (options.mode === 'improve' && hasText(options.existingContent)) {
-    const parsed = sanitizeMetaLeaksInStructure(safeParseStructure(String(options.existingContent || '')));
+    const parsed = sanitizeMetaLeaksInStructure(
+      parseStructureWithFeatureRecovery(String(options.existingContent || '')).structure
+    );
     const parsedFeatureCount = Array.isArray(parsed.structure.features) ? parsed.structure.features.length : 0;
     if (parsedFeatureCount > 0) {
       improveBaseStructure = parsed.structure;
-    } else if (!options.contextHint) {
+    } else if (!resolvedContextHint) {
       // baselinePartial: content exists but no features parsed — use as context
-      options = { ...options, contextHint: String(options.existingContent || '') };
+      resolvedContextHint = String(options.existingContent || '');
     }
   }
   const merged = improveBaseStructure
@@ -284,11 +288,11 @@ export function compilePrdDocument(
 
   const withRequiredContext = ensurePrdRequiredSections(maybeAggregated, language, {
     templateCategory: options.templateCategory,
-    contextHint: options.contextHint || rawContent,
+    contextHint: resolvedContextHint || rawContent,
   });
   const withDepth = ensurePrdSectionDepth(withRequiredContext.structure, language, {
     templateCategory: options.templateCategory,
-    contextHint: options.contextHint || rawContent,
+    contextHint: resolvedContextHint || rawContent,
   });
   const withFeatureDepth = ensurePrdFeatureDepth(withDepth.structure, language);
   const content = assembleStructureToMarkdown(withFeatureDepth.structure);
@@ -303,6 +307,12 @@ export function compilePrdDocument(
     aggregationAppliedCount: aggregatedFeatureCount,
     aggregationNearDuplicateCount: aggregationAnalysis.nearDuplicates.length,
     fallbackSections: [...withRequiredContext.addedSections, ...withDepth.expandedSections],
+    structuralParseReason: candidateParse.structuralParseReason,
+    rawFeatureHeadingSamples: candidateParse.rawFeatureHeadingSamples,
+    normalizationApplied: candidateParse.normalizationApplied,
+    normalizedFeatureCountRecovered: candidateParse.normalizedFeatureCountRecovered,
+    contextHint: resolvedContextHint,
+    baselineStructure: improveBaseStructure || undefined,
   });
 
   // Feature count regression guard (improve mode)

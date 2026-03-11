@@ -106,6 +106,9 @@ export const en = {
     failedQualityResultTitle: "Quality gate rejected final result",
     failedQualityResultDesc: "The generated content was loaded locally for review and was not auto-saved.",
     failedQualityDiagnosticsOnly: "The run failed final verification. Diagnostics were loaded for review.",
+    failedRuntimeResultTitle: "Runtime/provider failure during finalization",
+    failedRuntimeResultDesc: "The best available draft was loaded locally for review because finalizer models were temporarily unavailable. Nothing was auto-saved.",
+    failedRuntimeDiagnosticsOnly: "The run failed during finalization because the configured models were temporarily unavailable. Diagnostics were loaded for review.",
     exportFormats: {
       pdf: "PDF",
       word: "Word (.docx)",

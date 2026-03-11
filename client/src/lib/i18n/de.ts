@@ -108,6 +108,9 @@ export const de: Translations = {
     failedQualityResultTitle: "Quality Gate hat das finale Ergebnis abgelehnt",
     failedQualityResultDesc: "Der generierte Inhalt wurde lokal zur Prüfung geladen und nicht automatisch gespeichert.",
     failedQualityDiagnosticsOnly: "Der Lauf ist an der finalen Verifikation gescheitert. Die Diagnose wurde zur Prüfung geladen.",
+    failedRuntimeResultTitle: "Laufzeit-/Provider-Fehler bei der Finalisierung",
+    failedRuntimeResultDesc: "Der beste verfügbare Entwurf wurde lokal zur Prüfung geladen, weil die Finalizer-Modelle vorübergehend nicht verfügbar waren. Es wurde nichts automatisch gespeichert.",
+    failedRuntimeDiagnosticsOnly: "Der Lauf ist während der Finalisierung gescheitert, weil die konfigurierten Modelle vorübergehend nicht verfügbar waren. Die Diagnose wurde zur Prüfung geladen.",
     exportFormats: {
       pdf: "PDF",
       word: "Word (.docx)",

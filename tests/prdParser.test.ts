@@ -27,6 +27,11 @@ describe('normalizeFeatureId', () => {
     expect(normalizeFeatureId('F-001')).toBe('F-01');
   });
 
+  it('normalizes compact feature IDs to canonical "F-01"', () => {
+    expect(normalizeFeatureId('F001')).toBe('F-01');
+    expect(normalizeFeatureId('F01')).toBe('F-01');
+  });
+
   it('returns empty string for invalid input', () => {
     expect(normalizeFeatureId('')).toBe('');
     expect(normalizeFeatureId('invalid')).toBe('');
@@ -176,9 +181,57 @@ describe('parsePRDToStructure', () => {
     expect(result.features[0].name).toBe('Password Reset Request');
   });
 
+  it('parses compact feature IDs in headings and body lines and normalizes them to canonical IDs', () => {
+    const markdown = [
+      '## Functional Feature Catalogue',
+      '',
+      '### F001 – Turbo Drop',
+      '',
+      'Feature ID: F001',
+      'Feature Name: Turbo Drop',
+      '',
+      '1. Purpose',
+      'Accelerates falling tetrominoes for a short burst.',
+      '10. Acceptance Criteria',
+      '- Speed is doubled for 10 seconds.',
+    ].join('\n');
+
+    const result = parsePRDToStructure(markdown);
+
+    expect(result.features).toHaveLength(1);
+    expect(result.features[0].id).toBe('F-01');
+    expect(result.features[0].name).toBe('Turbo Drop');
+  });
+
   it('handles empty markdown', () => {
     const result = parsePRDToStructure('');
     expect(result.features).toEqual([]);
+  });
+
+  it('parses and reassembles parent task metadata on feature blocks', () => {
+    const markdown = [
+      '## Functional Feature Catalogue',
+      '',
+      '### F-01: Aufgabe erstellen',
+      '',
+      'Feature ID: F-01',
+      'Parent Task: Aufgabenverwaltung',
+      'Parent Task Description: Erfasst, aendert und verfolgt Aufgaben im Board.',
+      '',
+      '1. Purpose',
+      'Erstellt eine neue Aufgabe im aktuellen Board.',
+      '10. Acceptance Criteria',
+      '- Eine Aufgabe wird sichtbar angelegt.',
+    ].join('\n');
+
+    const parsed = parsePRDToStructure(markdown);
+    expect(parsed.features).toHaveLength(1);
+    expect(parsed.features[0].parentTaskName).toBe('Aufgabenverwaltung');
+    expect(parsed.features[0].parentTaskDescription).toContain('verfolgt Aufgaben');
+
+    const assembled = assembleStructureToMarkdown(parsed);
+    expect(assembled).toContain('Parent Task: Aufgabenverwaltung');
+    expect(assembled).toContain('Parent Task Description: Erfasst, aendert und verfolgt Aufgaben im Board.');
   });
 
   it('keeps planning sections separate and preserves Out of Scope', () => {
@@ -435,5 +488,84 @@ describe('parsePRDToStructure', () => {
 
     expect(reparsed.features.length).toBeLessThanOrEqual(3);
     expect(new Set(reparsed.features.map(feature => feature.id)).size).toBe(reparsed.features.length);
+  });
+
+  it('compiles compact feature IDs into canonical headings and avoids feature-catalogue parse failures', () => {
+    const markdown = [
+      '## System Vision',
+      'A neon Tetris experience with deterministic feature specs.',
+      '',
+      '## System Boundaries',
+      'Browser-only release with authenticated profiles.',
+      '',
+      '## Domain Model',
+      '- PlayerProfile (playerId, xp, level)\n- GameSession (sessionId, activePowerUpId, score)\n- PowerUp (powerUpId, cooldown, effectType)',
+      '',
+      '## Global Business Rules',
+      '- Only one active power-up may be enabled per session and cooldown must be tracked before another use.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      '### F001 – Turbo Drop',
+      '',
+      'Feature ID: F001',
+      'Feature Name: Turbo Drop',
+      '',
+      '1. Purpose',
+      'Accelerates falling tetrominoes for a short burst.',
+      '2. Actors',
+      'Player.',
+      '3. Trigger',
+      'The player activates the turbo drop icon.',
+      '4. Preconditions',
+      'A power-up charge is available and cooldown has elapsed.',
+      '5. Main Flow',
+      '1. The player activates Turbo Drop.',
+      '2. The session doubles tetromino fall speed for 10 seconds.',
+      '6. Alternate Flows',
+      '1. Cooldown is still active and the action is rejected.',
+      '7. Postconditions',
+      'The board speed returns to normal after the timer ends.',
+      '8. Data Impact',
+      'Updates GameSession.activePowerUpId and PowerUp.cooldown after activation.',
+      '9. UI Impact',
+      'Shows an active timer badge and highlighted icon.',
+      '10. Acceptance Criteria',
+      '- Fall speed doubles for exactly 10 seconds.',
+      '',
+      '## Non-Functional Requirements',
+      '- Rendering remains below 16 ms per frame.',
+      '',
+      '## Error Handling & Recovery',
+      '- Invalid activation attempts show a visible cooldown error state.',
+      '',
+      '## Deployment & Infrastructure',
+      '- Node.js API with PostgreSQL and websocket gameplay sync.',
+      '',
+      '## Definition of Done',
+      '- Compiler output uses canonical headings and stable feature IDs.',
+      '',
+      '## Out of Scope',
+      '- Multiplayer ranked tournaments are not part of this release.',
+      '',
+      '## Timeline & Milestones',
+      '- Phase 1 implements the core loop and power-up handling.',
+      '',
+      '## Success Criteria & Acceptance Testing',
+      '- Turbo Drop remains deterministic and passes compiler validation.',
+    ].join('\n');
+
+    const compiled = compilePrdDocument(markdown, {
+      mode: 'generate',
+      language: 'en',
+      templateCategory: 'feature',
+    });
+
+    expect(compiled.quality.issues.some(issue => issue.code === 'missing_feature_catalogue')).toBe(false);
+    expect(compiled.quality.issues.some(issue => issue.code === 'feature_catalogue_format_mismatch')).toBe(false);
+    expect(compiled.structure.features).toHaveLength(1);
+    expect(compiled.structure.features[0].id).toBe('F-01');
+    expect(compiled.content).toContain('### F-01: Turbo Drop');
+    expect(compiled.content).toContain('Feature ID: F-01');
   });
 });

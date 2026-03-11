@@ -1,0 +1,114 @@
+
+[1m[46m RUN [49m[22m [36mv4.0.18 [39m[90mc:/Temp/Nexora[39m
+
+ [31m❯[39m tests/prdGoldSetRegression.test.ts [2m([22m[2m0 test[22m[2m)[22m
+ [31m❯[39m tests/prdCompilerPipeline.integration.test.ts [2m([22m[2m0 test[22m[2m)[22m
+ [31m❯[39m tests/prdCompilerFinalizer_contentReviewFallback.test.ts [2m([22m[2m0 test[22m[2m)[22m
+ [31m❯[39m tests/dualAiWorkflow.integration.test.ts [2m([22m[2m0 test[22m[2m)[22m
+ [31m❯[39m tests/guidedPrdCompiler.test.ts [2m([22m[2m20 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[32m 135[2mms[22m[39m
+     [32m✓[39m detects likely truncated output tails[32m 2[2mms[22m[39m
+     [32m✓[39m preserves baseline structure in improve mode when candidate is incomplete[32m 46[2mms[22m[39m
+     [32m✓[39m adds required planning sections in generate mode[32m 5[2mms[22m[39m
+     [32m✓[39m keeps output stable across compile-parse-compile cycles[32m 16[2mms[22m[39m
+     [32m✓[39m preserves baseline section context in improve mode[32m 4[2mms[22m[39m
+[31m     [31m×[31m does not enforce a hard improve-mode feature cap[39m[32m 18[2mms[22m[39m
+     [32m✓[39m enforces strict canonical heading gate and rejects unknown top-level sections[32m 4[2mms[22m[39m
+     [32m✓[39m accepts common template headings by canonicalizing them before quality gate[32m 3[2mms[22m[39m
+     [32m✓[39m accepts guided legacy numbered headings by canonicalizing them before quality gate[32m 4[2mms[22m[39m
+     [32m✓[39m accepts Part A/C/D wrapper headings by canonicalizing them before quality gate[32m 10[2mms[22m[39m
+     [32m✓[39m deterministically scaffolds unstructured feature prose into full feature specs[32m 4[2mms[22m[39m
+[31m     [31m×[31m improve mode ignores noisy regenerated feature catalogue intro and keeps baseline-first patching[39m[32m 3[2mms[22m[39m
+     [32m✓[39m deterministically expands short required sections instead of only warning[32m 3[2mms[22m[39m
+     [32m✓[39m removes too_short_globalBusinessRules warning in improve mode baseline patching[32m 4[2mms[22m[39m
+     [32m✓[39m keeps candidate feature catalogue when improve baseline has no parseable features[32m 4[2mms[22m[39m
+     [32m✓[39m warns about structural incompleteness when catalogue heading present but no features[32m 1[2mms[22m[39m
+     [32m✓[39m rejects empty input with empty_input error[32m 0[2mms[22m[39m
+     [32m✓[39m rejects whitespace-only input[32m 0[2mms[22m[39m
+     [32m✓[39m accepts German PRD with English canonical headings without language mismatch[32m 2[2mms[22m[39m
+     [32m✓[39m rejects input shorter than 20 characters[32m 0[2mms[22m[39m
+ [31m❯[39m tests/guidedAiWorkflow.integration.test.ts [2m([22m[2m0 test[22m[2m)[22m
+ [31m❯[39m tests/integrationRoutes.test.ts [2m([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Suites 6 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/dualAiWorkflow.integration.test.ts[2m [ tests/dualAiWorkflow.integration.test.ts ][22m
+[31m[1mError[22m: No test suite found in file c:/Temp/Nexora/tests/dualAiWorkflow.integration.test.ts[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/8]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/guidedAiWorkflow.integration.test.ts[2m [ tests/guidedAiWorkflow.integration.test.ts ][22m
+[31m[1mError[22m: No test suite found in file c:/Temp/Nexora/tests/guidedAiWorkflow.integration.test.ts[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/8]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/integrationRoutes.test.ts[2m [ tests/integrationRoutes.test.ts ][22m
+[31m[1mError[22m: DATABASE_URL must be set. Did you forget to provision a database?[39m
+[36m [2m❯[22m server/db.ts:[2m13:9[22m[39m
+    [90m 11| [39m
+    [90m 12| [39m[35mif[39m ([33m![39mprocess[33m.[39menv[33m.[39m[33mDATABASE_URL[39m) {
+    [90m 13| [39m  [35mthrow[39m [35mnew[39m [33mError[39m(
+    [90m   | [39m        [31m^[39m
+    [90m 14| [39m    "DATABASE_URL must be set. Did you forget to provision a database?…
+    [90m 15| [39m  )[33m;[39m
+[90m [2m❯[22m server/storage.ts:[2m25:1[22m[39m
+[90m [2m❯[22m server/integrationRoutes.ts:[2m17:1[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/8]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/prdCompilerFinalizer_contentReviewFallback.test.ts[2m [ tests/prdCompilerFinalizer_contentReviewFallback.test.ts ][22m
+[31m[1mError[22m: No test suite found in file c:/Temp/Nexora/tests/prdCompilerFinalizer_contentReviewFallback.test.ts[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/8]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/prdCompilerPipeline.integration.test.ts[2m [ tests/prdCompilerPipeline.integration.test.ts ][22m
+[31m[1mError[22m: No test suite found in file c:/Temp/Nexora/tests/prdCompilerPipeline.integration.test.ts[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/8]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/prdGoldSetRegression.test.ts[2m [ tests/prdGoldSetRegression.test.ts ][22m
+[31m[1mError[22m: No test suite found in file c:/Temp/Nexora/tests/prdGoldSetRegression.test.ts[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/8]⎯[22m[39m
+
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/guidedPrdCompiler.test.ts[2m > [22mprdCompiler[2m > [22mdoes not enforce a hard improve-mode feature cap
+[31m[1mAssertionError[22m: expected false to be true // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- true[39m
+[31m+ false[39m
+
+[36m [2m❯[22m tests/guidedPrdCompiler.test.ts:[2m246:36[22m[39m
+    [90m244| [39m    })[33m;[39m
+    [90m245| [39m
+    [90m246| [39m    [34mexpect[39m(compiled[33m.[39mquality[33m.[39mvalid)[33m.[39m[34mtoBe[39m([35mtrue[39m)[33m;[39m
+    [90m   | [39m                                   [31m^[39m
+    [90m247| [39m    [34mexpect[39m(compiled[33m.[39mstructure[33m.[39mfeatures[33m.[39mlength)[33m.[39m[34mtoBe[39m([34m7[39m)[33m;[39m
+    [90m248| [39m    [34mexpect[39m(compiled[33m.[39mcontent)[33m.[39m[34mtoContain[39m([32m'### F-07:'[39m)[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/8]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/guidedPrdCompiler.test.ts[2m > [22mprdCompiler[2m > [22mimprove mode ignores noisy regenerated feature catalogue intro and keeps baseline-first patching
+[31m[1mAssertionError[22m: expected false to be true // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- true[39m
+[31m+ false[39m
+
+[36m [2m❯[22m tests/guidedPrdCompiler.test.ts:[2m509:36[22m[39m
+    [90m507| [39m    })[33m;[39m
+    [90m508| [39m
+    [90m509| [39m    [34mexpect[39m(compiled[33m.[39mquality[33m.[39mvalid)[33m.[39m[34mtoBe[39m([35mtrue[39m)[33m;[39m
+    [90m   | [39m                                   [31m^[39m
+    [90m510| [39m    [34mexpect[39m(compiled[33m.[39mcontent)[33m.[39mnot[33m.[39m[34mtoContain[39m([32m'### 7. User Stories'[39m)[33m;[39m
+    [90m511| [39m    [34mexpect[39m(compiled[33m.[39mcontent)[33m.[39m[34mtoContain[39m([32m'### F-01: Existing Feature'[39m)[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/8]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m7 failed[39m[22m[90m (7)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m18 passed[39m[22m[90m (20)[39m
+[2m   Start at [22m 09:59:24
+[2m   Duration [22m 1.50s[2m (transform 2.14s, setup 0ms, import 4.56s, tests 135ms, environment 1ms)[22m
+

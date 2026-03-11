@@ -4,6 +4,7 @@ import {
   extractAiRunRecord,
   extractLatestCompilerRunRecord,
   hasUsableAiRunContent,
+  isFailedRuntimeRun,
   isFailedQualityRun,
 } from "@/lib/aiRunDiagnostics";
 
@@ -11,7 +12,7 @@ describe("aiRunDiagnostics", () => {
   it("extracts the latest compiler-run marker from the iteration log", () => {
     const iterationLog = [
       "# Iteration Protocol",
-      '<!-- compiler-run:{"qualityStatus":"failed_quality","finalizationStage":"final","failureStage":"semantic_verifier","primaryGateReason":"Semantic verifier blocked finalization: Feature F-01 contradicts the global business rules.","semanticBlockingCodes":["cross_section_inconsistency"],"semanticBlockingIssues":[{"code":"cross_section_inconsistency","sectionKey":"feature:F-01","message":"Feature F-01 contradicts the global business rules."}],"initialSemanticBlockingIssues":[{"code":"cross_section_inconsistency","sectionKey":"feature:F-01","message":"Feature F-01 contradicts the global business rules."}],"postRepairSemanticBlockingIssues":[{"code":"schema_field_mismatch","sectionKey":"domainModel","message":"Domain Model still lacks cooldown."}],"finalSemanticBlockingIssues":[{"code":"schema_field_mismatch","sectionKey":"domainModel","message":"Domain Model still lacks cooldown."}],"repairGapReason":"emergent_issue_after_repair","repairCycleCount":2,"reviewerModelIds":["anthropic/claude-sonnet-4"],"verifierModelIds":["mistralai/mistral-small-3.1-24b-instruct"],"at":"2026-03-08T12:34:56.000Z"} -->',
+      '<!-- compiler-run:{"qualityStatus":"failed_quality","finalizationStage":"final","failureStage":"semantic_verifier","primaryGateReason":"Semantic verifier blocked finalization: Feature F-01 contradicts the global business rules.","structuralParseReason":"feature_catalogue_format_mismatch","rawFeatureHeadingSamples":["### F001 – Turbo Drop"],"normalizationApplied":true,"normalizedFeatureCountRecovered":0,"primaryCapabilityAnchors":["task","completion"],"featurePriorityWindow":["F-01","F-02","F-03"],"coreFeatureIds":["F-03"],"supportFeatureIds":["F-01","F-02"],"canonicalFeatureIds":["F-01","F-02","F-03"],"timelineMismatchedFeatureIds":["F-01"],"timelineRewrittenFromFeatureMap":true,"timelineRewriteAppliedLines":2,"semanticRepairChangedSections":["timelineMilestones","feature:F-01"],"semanticRepairStructuralChange":true,"compilerRepairTruncationCount":2,"compilerRepairFinishReasons":["length","length"],"semanticBlockingCodes":["cross_section_inconsistency"],"semanticBlockingIssues":[{"code":"cross_section_inconsistency","sectionKey":"feature:F-01","message":"Feature F-01 contradicts the global business rules."}],"initialSemanticBlockingIssues":[{"code":"cross_section_inconsistency","sectionKey":"feature:F-01","message":"Feature F-01 contradicts the global business rules."}],"postRepairSemanticBlockingIssues":[{"code":"schema_field_mismatch","sectionKey":"domainModel","message":"Domain Model still lacks cooldown."}],"finalSemanticBlockingIssues":[{"code":"schema_field_mismatch","sectionKey":"domainModel","message":"Domain Model still lacks cooldown."}],"repairGapReason":"emergent_issue_after_repair","repairCycleCount":2,"displayedCandidateSource":"post_targeted_repair","diagnosticsAlignedWithDisplayedCandidate":true,"featureQualityFloorFailedFeatureIds":["F-01","F-02"],"reviewerModelIds":["anthropic/claude-sonnet-4"],"verifierModelIds":["mistralai/mistral-small-3.1-24b-instruct"],"at":"2026-03-08T12:34:56.000Z"} -->',
     ].join("\n\n");
 
     const record = extractLatestCompilerRunRecord(iterationLog);
@@ -22,6 +23,22 @@ describe("aiRunDiagnostics", () => {
       compilerDiagnostics: {
         failureStage: "semantic_verifier",
         primaryGateReason: "Semantic verifier blocked finalization: Feature F-01 contradicts the global business rules.",
+        structuralParseReason: "feature_catalogue_format_mismatch",
+        rawFeatureHeadingSamples: ["### F001 – Turbo Drop"],
+        normalizationApplied: true,
+        normalizedFeatureCountRecovered: 0,
+        primaryCapabilityAnchors: ["task", "completion"],
+        featurePriorityWindow: ["F-01", "F-02", "F-03"],
+        coreFeatureIds: ["F-03"],
+        supportFeatureIds: ["F-01", "F-02"],
+        canonicalFeatureIds: ["F-01", "F-02", "F-03"],
+        timelineMismatchedFeatureIds: ["F-01"],
+        timelineRewrittenFromFeatureMap: true,
+        timelineRewriteAppliedLines: 2,
+        semanticRepairChangedSections: ["timelineMilestones", "feature:F-01"],
+        semanticRepairStructuralChange: true,
+        compilerRepairTruncationCount: 2,
+        compilerRepairFinishReasons: ["length", "length"],
         semanticBlockingCodes: ["cross_section_inconsistency"],
         semanticBlockingIssues: [
           {
@@ -46,6 +63,9 @@ describe("aiRunDiagnostics", () => {
         ],
         repairGapReason: "emergent_issue_after_repair",
         repairCycleCount: 2,
+        displayedCandidateSource: "post_targeted_repair",
+        diagnosticsAlignedWithDisplayedCandidate: true,
+        featureQualityFloorFailedFeatureIds: ["F-01", "F-02"],
         reviewerModelIds: ["anthropic/claude-sonnet-4"],
         verifierModelIds: ["mistralai/mistral-small-3.1-24b-instruct"],
       },
@@ -68,6 +88,17 @@ describe("aiRunDiagnostics", () => {
         failureStage: "content_review",
         topRootCauseCodes: ["compiler_fallback_filler"],
         primaryGateReason: "Quality gate failed in content_review: compiler fallback filler.",
+        structuralParseReason: "feature_catalogue_format_mismatch",
+        rawFeatureHeadingSamples: ["### F001 – Turbo Drop"],
+        normalizationApplied: true,
+        normalizedFeatureCountRecovered: 0,
+        primaryCapabilityAnchors: ["task", "completion"],
+        featurePriorityWindow: ["F-01", "F-02", "F-03"],
+        coreFeatureIds: ["F-03"],
+        supportFeatureIds: ["F-01", "F-02"],
+        canonicalFeatureIds: ["F-01", "F-02", "F-03"],
+        timelineMismatchedFeatureIds: ["F-01"],
+        timelineRewrittenFromFeatureMap: true,
         semanticBlockingIssues: [
           {
             code: "cross_section_inconsistency",
@@ -102,6 +133,28 @@ describe("aiRunDiagnostics", () => {
         semanticRepairTruncated: true,
         repairGapReason: "emergent_issue_after_repair",
         repairCycleCount: 2,
+        displayedCandidateSource: "pre_repair_best",
+        diagnosticsAlignedWithDisplayedCandidate: true,
+        compilerRepairTruncationCount: 2,
+        compilerRepairFinishReasons: ["length", "stop"],
+        repairRejected: true,
+        repairRejectedReason: "Rejected compiler repair because required feature fields were replaced by placeholders.",
+        repairDegradationSignals: ["placeholder_required_fields"],
+        degradedCandidateAvailable: true,
+        degradedCandidateSource: "pre_repair_best",
+        collapsedFeatureNameIds: ["F-01"],
+        placeholderFeatureIds: ["F-01", "F-02"],
+        acceptanceBoilerplateFeatureIds: ["F-02"],
+        featureQualityFloorFeatureIds: ["F-01", "F-02"],
+        featureQualityFloorPassed: false,
+        primaryFeatureQualityReason: "leading features use placeholder purpose text and empty main flows.",
+        emptyMainFlowFeatureIds: ["F-01", "F-02"],
+        placeholderPurposeFeatureIds: ["F-01"],
+        placeholderAlternateFlowFeatureIds: ["F-02"],
+        thinAcceptanceCriteriaFeatureIds: ["F-01"],
+        featureQualityFloorFailedFeatureIds: ["F-01", "F-02"],
+        semanticRepairChangedSections: ["timelineMilestones", "feature:F-01"],
+        semanticRepairStructuralChange: true,
         earlySemanticLintCodes: ["rule_schema_property_coverage_missing"],
         lastModelAttempt: {
           model: "mock/reviewer:free",
@@ -127,6 +180,17 @@ describe("aiRunDiagnostics", () => {
         failureStage: "content_review",
         topRootCauseCodes: ["compiler_fallback_filler"],
         primaryGateReason: "Quality gate failed in content_review: compiler fallback filler.",
+        structuralParseReason: "feature_catalogue_format_mismatch",
+        rawFeatureHeadingSamples: ["### F001 – Turbo Drop"],
+        normalizationApplied: true,
+        normalizedFeatureCountRecovered: 0,
+        primaryCapabilityAnchors: ["task", "completion"],
+        featurePriorityWindow: ["F-01", "F-02", "F-03"],
+        coreFeatureIds: ["F-03"],
+        supportFeatureIds: ["F-01", "F-02"],
+        canonicalFeatureIds: ["F-01", "F-02", "F-03"],
+        timelineMismatchedFeatureIds: ["F-01"],
+        timelineRewrittenFromFeatureMap: true,
         semanticBlockingIssues: [
           {
             code: "cross_section_inconsistency",
@@ -154,6 +218,28 @@ describe("aiRunDiagnostics", () => {
         semanticRepairTruncated: true,
         repairGapReason: "emergent_issue_after_repair",
         repairCycleCount: 2,
+        displayedCandidateSource: "pre_repair_best",
+        diagnosticsAlignedWithDisplayedCandidate: true,
+        compilerRepairTruncationCount: 2,
+        compilerRepairFinishReasons: ["length", "stop"],
+        repairRejected: true,
+        repairRejectedReason: "Rejected compiler repair because required feature fields were replaced by placeholders.",
+        repairDegradationSignals: ["placeholder_required_fields"],
+        degradedCandidateAvailable: true,
+        degradedCandidateSource: "pre_repair_best",
+        collapsedFeatureNameIds: ["F-01"],
+        placeholderFeatureIds: ["F-01", "F-02"],
+        acceptanceBoilerplateFeatureIds: ["F-02"],
+        featureQualityFloorFeatureIds: ["F-01", "F-02"],
+        featureQualityFloorPassed: false,
+        primaryFeatureQualityReason: "leading features use placeholder purpose text and empty main flows.",
+        emptyMainFlowFeatureIds: ["F-01", "F-02"],
+        placeholderPurposeFeatureIds: ["F-01"],
+        placeholderAlternateFlowFeatureIds: ["F-02"],
+        thinAcceptanceCriteriaFeatureIds: ["F-01"],
+        featureQualityFloorFailedFeatureIds: ["F-01", "F-02"],
+        semanticRepairChangedSections: ["timelineMilestones", "feature:F-01"],
+        semanticRepairStructuralChange: true,
         earlySemanticLintCodes: ["rule_schema_property_coverage_missing"],
         lastModelAttempt: {
           finishReason: "length",
@@ -181,5 +267,42 @@ describe("aiRunDiagnostics", () => {
     expect(isFailedQualityRun(response)).toBe(true);
     expect(hasUsableAiRunContent(response)).toBe(true);
     expect(extractAiRunFinalContent(response)).toBe("Recovered draft");
+  });
+
+  it("extracts runtime provider diagnostics and degraded content", () => {
+    const record = extractAiRunRecord({
+      qualityStatus: "failed_runtime",
+      message: "All configured AI models are temporarily unavailable.",
+      finalContent: "Recovered draft",
+      compilerDiagnostics: {
+        failureStage: "compiler_repair",
+        runtimeFailureCode: "provider_exhaustion",
+        providerFailureSummary: "5 rate-limited, 2 timed out.",
+        providerFailureCounts: {
+          rateLimited: 5,
+          timedOut: 2,
+          provider4xx: 0,
+          emptyResponse: 0,
+        },
+        providerFailedModels: ["gpt-oss-120b", "qwen/qwen3-coder:free"],
+        providerFailureStage: "compiler_repair",
+        degradedCandidateAvailable: true,
+        degradedCandidateSource: "pre_repair_best",
+      },
+    });
+
+    expect(record.qualityStatus).toBe("failed_runtime");
+    expect(record.finalContent).toBe("Recovered draft");
+    expect(record.compilerDiagnostics?.runtimeFailureCode).toBe("provider_exhaustion");
+    expect(record.compilerDiagnostics?.providerFailureSummary).toBe("5 rate-limited, 2 timed out.");
+    expect(record.compilerDiagnostics?.providerFailedModels).toEqual([
+      "gpt-oss-120b",
+      "qwen/qwen3-coder:free",
+    ]);
+    expect(record.compilerDiagnostics?.degradedCandidateAvailable).toBe(true);
+    expect(isFailedRuntimeRun({
+      qualityStatus: "failed_runtime",
+      finalContent: "Recovered draft",
+    })).toBe(true);
   });
 });

@@ -11,6 +11,25 @@ function usage(total: number) {
 }
 
 describe('prdCompilerFinalizer excessive fallback review guard', () => {
+  const featureRawContent = [
+    '### F-01: Sprint Board',
+    '**Purpose:** Enable delivery teams to visualise and coordinate sprint work by dragging tasks across workflow columns on a shared board.',
+    '**Actors:** Primary: scrum master, team members. Secondary: product owner reviewing progress.',
+    '**Trigger:** User opens the sprint board view from the navigation menu.',
+    '**Preconditions:** An active sprint exists with at least one task assigned to the team.',
+    '**Main Flow:**',
+    '1. Scrum master opens the board and reviews the current task assignments across columns.',
+    '2. Team members drag tasks between To Do, In Progress, and Done columns to reflect status changes.',
+    '3. Board broadcasts updates in real time so all participants see the latest state.',
+    '**Alternate Flows:**',
+    '1. Concurrent move conflict: when two users drag the same task simultaneously the board shows a merge prompt and the later move is queued.',
+    '**Postconditions:** Task statuses are persisted and reflected consistently across all team views.',
+    '**Data Impact:** Task status records are updated in the sprint table with an audit trail entry per move.',
+    '**UI Impact:** Board columns reflect updated task positions with smooth drag-and-drop animations.',
+    '**Acceptance Criteria:**',
+    '- Teams can move tasks between workflow columns and see updates within one second.',
+  ].join('\n');
+
   it('blocks fallback-heavy improve output at content review after targeted refinement attempts', async () => {
     const content = [
       '## System Vision',
@@ -28,10 +47,21 @@ describe('prdCompilerFinalizer excessive fallback review guard', () => {
       '## Functional Feature Catalogue',
       '',
       '### F-01: Sprint Board',
-      '1. Purpose',
-      'Coordinate sprint work on a shared board.',
-      '10. Acceptance Criteria',
-      '- Teams can move tasks between workflow columns.',
+      '**Purpose:** Enable delivery teams to visualise and coordinate sprint work by dragging tasks across workflow columns on a shared board.',
+      '**Actors:** Primary: scrum master, team members. Secondary: product owner reviewing progress.',
+      '**Trigger:** User opens the sprint board view from the navigation menu.',
+      '**Preconditions:** An active sprint exists with at least one task assigned to the team.',
+      '**Main Flow:**',
+      '1. Scrum master opens the board and reviews the current task assignments across columns.',
+      '2. Team members drag tasks between To Do, In Progress, and Done columns to reflect status changes.',
+      '3. Board broadcasts updates in real time so all participants see the latest state.',
+      '**Alternate Flows:**',
+      '1. Concurrent move conflict: when two users drag the same task simultaneously the board shows a merge prompt and the later move is queued.',
+      '**Postconditions:** Task statuses are persisted and reflected consistently across all team views.',
+      '**Data Impact:** Task status records are updated in the sprint table with an audit trail entry per move.',
+      '**UI Impact:** Board columns reflect updated task positions with smooth drag-and-drop animations.',
+      '**Acceptance Criteria:**',
+      '- Teams can move tasks between workflow columns and see updates within one second.',
       '',
       '## Non-Functional Requirements',
       '- Board updates render within one second.',
@@ -65,9 +95,23 @@ describe('prdCompilerFinalizer excessive fallback review guard', () => {
         features: [{
           id: 'F-01',
           name: 'Sprint Board',
-          rawContent: '### F-01: Sprint Board\n1. Purpose\nCoordinate sprint work on a shared board.\n10. Acceptance Criteria\n- Teams can move tasks between workflow columns.',
-          purpose: 'Coordinate sprint work on a shared board.',
-          acceptanceCriteria: ['Teams can move tasks between workflow columns.'],
+          rawContent: featureRawContent,
+          purpose: 'Enable delivery teams to visualise and coordinate sprint work by dragging tasks across workflow columns on a shared board.',
+          actors: 'Primary: scrum master, team members. Secondary: product owner reviewing progress.',
+          trigger: 'User opens the sprint board view from the navigation menu.',
+          preconditions: 'An active sprint exists with at least one task assigned to the team.',
+          mainFlow: [
+            'Scrum master opens the board and reviews the current task assignments across columns.',
+            'Team members drag tasks between To Do, In Progress, and Done columns to reflect status changes.',
+            'Board broadcasts updates in real time so all participants see the latest state.',
+          ],
+          alternateFlows: [
+            'Concurrent move conflict: when two users drag the same task simultaneously the board shows a merge prompt and the later move is queued.',
+          ],
+          postconditions: 'Task statuses are persisted and reflected consistently across all team views.',
+          dataImpact: 'Task status records are updated in the sprint table with an audit trail entry per move.',
+          uiImpact: 'Board columns reflect updated task positions with smooth drag-and-drop animations.',
+          acceptanceCriteria: ['Teams can move tasks between workflow columns and see updates within one second.'],
         }],
         nonFunctional: '- Board updates render within one second.',
         errorHandling: '- Conflicts show retry guidance.',
@@ -111,7 +155,7 @@ describe('prdCompilerFinalizer excessive fallback review guard', () => {
     expect(capturedError).toMatchObject({
       failureStage: 'content_review',
     });
-    expect(compileDocument).toHaveBeenCalledTimes(2);
+    expect(compileDocument).toHaveBeenCalledTimes(4);
   });
 
   it('blocks the same fallback-heavy output earlier in compiler repair for generate mode', async () => {
@@ -131,10 +175,21 @@ describe('prdCompilerFinalizer excessive fallback review guard', () => {
       '## Functional Feature Catalogue',
       '',
       '### F-01: Sprint Board',
-      '1. Purpose',
-      'Coordinate sprint work on a shared board.',
-      '10. Acceptance Criteria',
-      '- Teams can move tasks between workflow columns.',
+      '**Purpose:** Enable delivery teams to visualise and coordinate sprint work by dragging tasks across workflow columns on a shared board.',
+      '**Actors:** Primary: scrum master, team members. Secondary: product owner reviewing progress.',
+      '**Trigger:** User opens the sprint board view from the navigation menu.',
+      '**Preconditions:** An active sprint exists with at least one task assigned to the team.',
+      '**Main Flow:**',
+      '1. Scrum master opens the board and reviews the current task assignments across columns.',
+      '2. Team members drag tasks between To Do, In Progress, and Done columns to reflect status changes.',
+      '3. Board broadcasts updates in real time so all participants see the latest state.',
+      '**Alternate Flows:**',
+      '1. Concurrent move conflict: when two users drag the same task simultaneously the board shows a merge prompt and the later move is queued.',
+      '**Postconditions:** Task statuses are persisted and reflected consistently across all team views.',
+      '**Data Impact:** Task status records are updated in the sprint table with an audit trail entry per move.',
+      '**UI Impact:** Board columns reflect updated task positions with smooth drag-and-drop animations.',
+      '**Acceptance Criteria:**',
+      '- Teams can move tasks between workflow columns and see updates within one second.',
       '',
       '## Non-Functional Requirements',
       '- Board updates render within one second.',
@@ -168,9 +223,23 @@ describe('prdCompilerFinalizer excessive fallback review guard', () => {
         features: [{
           id: 'F-01',
           name: 'Sprint Board',
-          rawContent: '### F-01: Sprint Board\n1. Purpose\nCoordinate sprint work on a shared board.\n10. Acceptance Criteria\n- Teams can move tasks between workflow columns.',
-          purpose: 'Coordinate sprint work on a shared board.',
-          acceptanceCriteria: ['Teams can move tasks between workflow columns.'],
+          rawContent: featureRawContent,
+          purpose: 'Enable delivery teams to visualise and coordinate sprint work by dragging tasks across workflow columns on a shared board.',
+          actors: 'Primary: scrum master, team members. Secondary: product owner reviewing progress.',
+          trigger: 'User opens the sprint board view from the navigation menu.',
+          preconditions: 'An active sprint exists with at least one task assigned to the team.',
+          mainFlow: [
+            'Scrum master opens the board and reviews the current task assignments across columns.',
+            'Team members drag tasks between To Do, In Progress, and Done columns to reflect status changes.',
+            'Board broadcasts updates in real time so all participants see the latest state.',
+          ],
+          alternateFlows: [
+            'Concurrent move conflict: when two users drag the same task simultaneously the board shows a merge prompt and the later move is queued.',
+          ],
+          postconditions: 'Task statuses are persisted and reflected consistently across all team views.',
+          dataImpact: 'Task status records are updated in the sprint table with an audit trail entry per move.',
+          uiImpact: 'Board columns reflect updated task positions with smooth drag-and-drop animations.',
+          acceptanceCriteria: ['Teams can move tasks between workflow columns and see updates within one second.'],
         }],
         nonFunctional: '- Board updates render within one second.',
         errorHandling: '- Conflicts show retry guidance.',
@@ -215,6 +284,6 @@ describe('prdCompilerFinalizer excessive fallback review guard', () => {
       failureStage: 'compiler_repair',
     });
     expect(contentRefineReviewer).not.toHaveBeenCalled();
-    expect(compileDocument).toHaveBeenCalledTimes(3);
+    expect(compileDocument).toHaveBeenCalledTimes(5);
   });
 });

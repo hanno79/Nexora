@@ -41,6 +41,40 @@ export interface CompilerArtifactSummary {
   semanticVerifierBlockedFamilies: string[];
   contentReviewIssueCodes: string[];
   semanticBlockingIssues: CompilerDiagnosticIssue[];
+  structuralParseReason?: string;
+  rawFeatureHeadingSamples?: string[];
+  normalizationApplied?: boolean;
+  normalizedFeatureCountRecovered?: number;
+  primaryCapabilityAnchors?: string[];
+  featurePriorityWindow?: string[];
+  coreFeatureIds?: string[];
+  supportFeatureIds?: string[];
+  canonicalFeatureIds?: string[];
+  timelineMismatchedFeatureIds?: string[];
+  timelineRewrittenFromFeatureMap?: boolean;
+  timelineRewriteAppliedLines?: number;
+  compilerRepairTruncationCount?: number;
+  compilerRepairFinishReasons?: string[];
+  repairRejected?: boolean;
+  repairRejectedReason?: string;
+  repairDegradationSignals?: string[];
+  degradedCandidateAvailable?: boolean;
+  degradedCandidateSource?: FinalizeWithCompilerGatesResult['degradedCandidateSource'];
+  displayedCandidateSource?: FinalizeWithCompilerGatesResult['displayedCandidateSource'];
+  diagnosticsAlignedWithDisplayedCandidate?: boolean;
+  collapsedFeatureNameIds?: string[];
+  placeholderFeatureIds?: string[];
+  acceptanceBoilerplateFeatureIds?: string[];
+  featureQualityFloorFeatureIds?: string[];
+  featureQualityFloorFailedFeatureIds?: string[];
+  featureQualityFloorPassed?: boolean;
+  primaryFeatureQualityReason?: string;
+  emptyMainFlowFeatureIds?: string[];
+  placeholderPurposeFeatureIds?: string[];
+  placeholderAlternateFlowFeatureIds?: string[];
+  thinAcceptanceCriteriaFeatureIds?: string[];
+  semanticRepairChangedSections?: string[];
+  semanticRepairStructuralChange?: boolean;
 }
 
 function normalizeDiagnosticIssues(issues: Array<Record<string, any>> | undefined): CompilerDiagnosticIssue[] {
@@ -90,6 +124,40 @@ export function summarizeFinalizerResult(
       (result.contentReview?.issues || []).map(issue => issue.code).filter(Boolean)
     )),
     semanticBlockingIssues: normalizeDiagnosticIssues(result.semanticVerification?.blockingIssues as Array<Record<string, any>> | undefined),
+    structuralParseReason: result.quality.structuralParseReason,
+    rawFeatureHeadingSamples: result.quality.rawFeatureHeadingSamples,
+    normalizationApplied: result.quality.normalizationApplied,
+    normalizedFeatureCountRecovered: result.quality.normalizedFeatureCountRecovered,
+    primaryCapabilityAnchors: result.primaryCapabilityAnchors,
+    featurePriorityWindow: result.featurePriorityWindow,
+    coreFeatureIds: result.coreFeatureIds,
+    supportFeatureIds: result.supportFeatureIds,
+    canonicalFeatureIds: result.canonicalFeatureIds,
+    timelineMismatchedFeatureIds: result.timelineMismatchedFeatureIds,
+    timelineRewrittenFromFeatureMap: result.timelineRewrittenFromFeatureMap,
+    timelineRewriteAppliedLines: result.timelineRewriteAppliedLines,
+    compilerRepairTruncationCount: result.compilerRepairTruncationCount,
+    compilerRepairFinishReasons: result.compilerRepairFinishReasons,
+    repairRejected: result.repairRejected,
+    repairRejectedReason: result.repairRejectedReason,
+    repairDegradationSignals: result.repairDegradationSignals,
+    degradedCandidateAvailable: result.degradedCandidateAvailable,
+    degradedCandidateSource: result.degradedCandidateSource,
+    displayedCandidateSource: result.displayedCandidateSource,
+    diagnosticsAlignedWithDisplayedCandidate: result.diagnosticsAlignedWithDisplayedCandidate,
+    collapsedFeatureNameIds: result.collapsedFeatureNameIds,
+    placeholderFeatureIds: result.placeholderFeatureIds,
+    acceptanceBoilerplateFeatureIds: result.acceptanceBoilerplateFeatureIds,
+    featureQualityFloorFeatureIds: result.featureQualityFloorFeatureIds,
+    featureQualityFloorFailedFeatureIds: result.featureQualityFloorFailedFeatureIds,
+    featureQualityFloorPassed: result.featureQualityFloorPassed,
+    primaryFeatureQualityReason: result.primaryFeatureQualityReason,
+    emptyMainFlowFeatureIds: result.emptyMainFlowFeatureIds,
+    placeholderPurposeFeatureIds: result.placeholderPurposeFeatureIds,
+    placeholderAlternateFlowFeatureIds: result.placeholderAlternateFlowFeatureIds,
+    thinAcceptanceCriteriaFeatureIds: result.thinAcceptanceCriteriaFeatureIds,
+    semanticRepairChangedSections: result.semanticRepairChangedSections,
+    semanticRepairStructuralChange: result.semanticRepairStructuralChange,
   };
 }
 
@@ -108,6 +176,22 @@ export function buildCompilerArtifactDiagnostics(summary: CompilerArtifactSummar
     postRepairSemanticBlockingIssues: summary.postRepairSemanticBlockingIssues,
     finalSemanticBlockingIssues: summary.finalSemanticBlockingIssues,
     semanticVerifierVerdict: semanticVerification?.verdict,
+    structuralParseReason: summary.structuralParseReason || null,
+    rawFeatureHeadingSamples: summary.rawFeatureHeadingSamples || [],
+    normalizationApplied: typeof summary.normalizationApplied === 'boolean' ? summary.normalizationApplied : null,
+    normalizedFeatureCountRecovered: typeof summary.normalizedFeatureCountRecovered === 'number'
+      ? summary.normalizedFeatureCountRecovered
+      : null,
+    primaryCapabilityAnchors: summary.primaryCapabilityAnchors || [],
+    featurePriorityWindow: summary.featurePriorityWindow || [],
+    coreFeatureIds: summary.coreFeatureIds || [],
+    supportFeatureIds: summary.supportFeatureIds || [],
+    canonicalFeatureIds: summary.canonicalFeatureIds || [],
+    timelineMismatchedFeatureIds: summary.timelineMismatchedFeatureIds || [],
+    timelineRewrittenFromFeatureMap: !!summary.timelineRewrittenFromFeatureMap,
+    timelineRewriteAppliedLines: typeof summary.timelineRewriteAppliedLines === 'number'
+      ? summary.timelineRewriteAppliedLines
+      : null,
     semanticBlockingCodes: semanticVerification?.blockingIssues?.map(issue => issue.code) || [],
     semanticRepairApplied: !!summary.semanticRepairApplied,
     semanticRepairAttempted: !!summary.semanticRepairAttempted,
@@ -116,6 +200,31 @@ export function buildCompilerArtifactDiagnostics(summary: CompilerArtifactSummar
     semanticRepairTruncated: !!summary.semanticRepairTruncated,
     repairGapReason: summary.repairGapReason || null,
     repairCycleCount: summary.repairCycleCount || 0,
+    compilerRepairTruncationCount: summary.compilerRepairTruncationCount || 0,
+    compilerRepairFinishReasons: summary.compilerRepairFinishReasons || [],
+    repairRejected: !!summary.repairRejected,
+    repairRejectedReason: summary.repairRejectedReason || null,
+    repairDegradationSignals: summary.repairDegradationSignals || [],
+    degradedCandidateAvailable: !!summary.degradedCandidateAvailable,
+    degradedCandidateSource: summary.degradedCandidateSource || null,
+    displayedCandidateSource: summary.displayedCandidateSource || null,
+    diagnosticsAlignedWithDisplayedCandidate:
+      typeof summary.diagnosticsAlignedWithDisplayedCandidate === 'boolean'
+        ? summary.diagnosticsAlignedWithDisplayedCandidate
+        : null,
+    collapsedFeatureNameIds: summary.collapsedFeatureNameIds || [],
+    placeholderFeatureIds: summary.placeholderFeatureIds || [],
+    acceptanceBoilerplateFeatureIds: summary.acceptanceBoilerplateFeatureIds || [],
+    featureQualityFloorFeatureIds: summary.featureQualityFloorFeatureIds || [],
+    featureQualityFloorFailedFeatureIds: summary.featureQualityFloorFailedFeatureIds || [],
+    featureQualityFloorPassed: typeof summary.featureQualityFloorPassed === 'boolean' ? summary.featureQualityFloorPassed : null,
+    primaryFeatureQualityReason: summary.primaryFeatureQualityReason || null,
+    emptyMainFlowFeatureIds: summary.emptyMainFlowFeatureIds || [],
+    placeholderPurposeFeatureIds: summary.placeholderPurposeFeatureIds || [],
+    placeholderAlternateFlowFeatureIds: summary.placeholderAlternateFlowFeatureIds || [],
+    thinAcceptanceCriteriaFeatureIds: summary.thinAcceptanceCriteriaFeatureIds || [],
+    semanticRepairChangedSections: summary.semanticRepairChangedSections || [],
+    semanticRepairStructuralChange: !!summary.semanticRepairStructuralChange,
     earlySemanticLintCodes: summary.earlySemanticLintCodes,
     semanticVerifierSameFamilyFallback: summary.semanticVerifierSameFamilyFallback,
     semanticVerifierBlockedFamilies: summary.semanticVerifierBlockedFamilies,

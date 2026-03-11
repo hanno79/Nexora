@@ -86,8 +86,8 @@ export async function persistGuidedPrdFinalizationBestEffort(params: {
       userId: params.userId,
       qualityStatus: params.qualityStatus,
       finalizationStage: 'final',
-      content: params.qualityStatus === 'passed' ? params.content : undefined,
-      structuredContent: params.qualityStatus === 'passed'
+      content: params.qualityStatus !== 'cancelled' ? params.content : undefined,
+      structuredContent: params.qualityStatus !== 'cancelled'
         ? (params.structuredContent ?? null)
         : undefined,
       iterationLog,

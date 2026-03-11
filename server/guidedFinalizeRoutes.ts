@@ -15,6 +15,7 @@ import {
   persistCompilerRunArtifactBestEffort,
 } from './aiRouteCompilerSupport';
 import {
+  resolveAiPreferenceUserId,
   qualityStatusHttpCode,
   withArtifactMetrics,
 } from './aiRouteSupport';
@@ -47,6 +48,7 @@ export function registerGuidedFinalizeRoutes(
     const requestStartedAt = Date.now();
     const { sessionId, prdId } = req.body;
     const userId = req.user.claims.sub;
+    const aiPreferenceUserId = resolveAiPreferenceUserId(req, userId);
     const prdContext = await resolveGuidedPrdContext(req, res, prdId);
     if (prdContext.shouldReturn) {
       return;
@@ -58,6 +60,7 @@ export function registerGuidedFinalizeRoutes(
 
     try {
       const result = await getGuidedAiService().finalizePRD(sessionId, userId, {
+        aiPreferenceUserId,
         templateCategory: prdContext.templateCategory,
       });
       const assessed = assessCompilerOutcome({
@@ -124,11 +127,17 @@ export function registerGuidedFinalizeRoutes(
       });
     } catch (error: any) {
       const failure = classifyRunFailure(error);
+      // ÄNDERUNG 11.03.2026: Failure-Artefakte muessen degradierte Compiler-Struktur
+      // und Quality mitpersistieren, damit Feature-/Task-Metadaten erhalten bleiben.
       void persistCompilerRunArtifactBestEffort({
         workflow: 'guided',
         routeKey: 'guided-finalize',
         qualityStatus: failure.qualityStatus,
         finalizationStage: 'final',
+        finalContent: failure.finalContent || undefined,
+        compiledContent: failure.compiledContent || undefined,
+        compiledStructure: failure.compiledStructure || undefined,
+        quality: failure.quality || undefined,
         compilerDiagnostics: failure.diagnostics,
         requestContext: {
           prdId: prdContext.editablePrdId || null,
@@ -153,6 +162,7 @@ export function registerGuidedFinalizeRoutes(
 
       res.status(qualityStatusHttpCode(failure.qualityStatus)).json({
         message: failure.message,
+        finalContent: failure.finalContent || undefined,
         qualityStatus: failure.qualityStatus,
         compilerDiagnostics: failure.diagnostics,
         finalizationStage: 'final',
@@ -169,6 +179,7 @@ export function registerGuidedFinalizeRoutes(
     const requestStartedAt = Date.now();
     const { projectIdea, existingContent, mode, prdId } = req.body;
     const userId = req.user.claims.sub;
+    const aiPreferenceUserId = resolveAiPreferenceUserId(req, userId);
     const prdContext = await resolveGuidedPrdContext(req, res, prdId);
     if (prdContext.shouldReturn) {
       return;
@@ -182,6 +193,7 @@ export function registerGuidedFinalizeRoutes(
     try {
       const requestedMode: 'improve' | 'generate' = mode === 'improve' ? 'improve' : 'generate';
       const result = await getGuidedAiService().skipToFinalize(normalized.normalizedIdea, userId, {
+        aiPreferenceUserId,
         existingContent: normalized.hasExistingContent ? normalized.normalizedExistingContent : undefined,
         mode: requestedMode,
         templateCategory: prdContext.templateCategory,
@@ -255,6 +267,10 @@ export function registerGuidedFinalizeRoutes(
         routeKey: 'guided-skip',
         qualityStatus: failure.qualityStatus,
         finalizationStage: 'final',
+        finalContent: failure.finalContent || undefined,
+        compiledContent: failure.compiledContent || undefined,
+        compiledStructure: failure.compiledStructure || undefined,
+        quality: failure.quality || undefined,
         compilerDiagnostics: failure.diagnostics,
         requestContext: {
           prdId: prdContext.editablePrdId || null,
@@ -279,6 +295,7 @@ export function registerGuidedFinalizeRoutes(
 
       res.status(qualityStatusHttpCode(failure.qualityStatus)).json({
         message: failure.message,
+        finalContent: failure.finalContent || undefined,
         qualityStatus: failure.qualityStatus,
         compilerDiagnostics: failure.diagnostics,
         finalizationStage: 'final',

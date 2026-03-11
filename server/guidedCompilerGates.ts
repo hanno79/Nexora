@@ -104,7 +104,7 @@ export async function generateWithCompilerGates(params: {
     templateCategory,
     originalRequest: userPrompt,
     maxRepairPasses: 3,
-    repairReviewer: async (repairPrompt: string) => {
+    repairReviewer: async (repairPrompt: string, _pass: number) => {
       logger.warn('Guided compiler quality gate failed; starting repair pass');
       const repairResult = await client.callWithFallback('reviewer', systemPrompt, repairPrompt, REPAIR_PASS);
       return {

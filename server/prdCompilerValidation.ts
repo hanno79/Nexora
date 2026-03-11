@@ -10,6 +10,8 @@ Beschreibung: Validierungslogik und Qualitaetsreporting fuer den PRD-Compiler.
 import { assembleStructureToMarkdown } from './prdAssembler';
 import { looksLikeTruncatedOutput, type RequiredSectionDefinition } from './prdCompilerMerge';
 import { collectDeterministicSemanticIssues } from './prdDeterministicSemanticLints';
+import { collectVisionFirstCoverageDiagnostics } from './prdDeterministicSemanticLints';
+import { collectTimelineConsistencyDiagnostics } from './prdDeterministicSemanticLints';
 import { FEATURE_STRUCTURED_FIELDS } from './prdFeatureDepth';
 import type { PRDStructure } from './prdStructure';
 import {
@@ -35,6 +37,7 @@ export interface PrdQualityIssue {
   severity: 'error' | 'warning';
   evidencePath?: string;
   evidenceSnippet?: string;
+  relatedPaths?: string[];
 }
 
 export interface PrdQualityReport {
@@ -44,6 +47,16 @@ export interface PrdQualityReport {
   featureCount: number;
   issues: PrdQualityIssue[];
   fallbackSections?: string[];
+  structuralParseReason?: string;
+  rawFeatureHeadingSamples?: string[];
+  normalizationApplied?: boolean;
+  normalizedFeatureCountRecovered?: number;
+  primaryCapabilityAnchors?: string[];
+  featurePriorityWindow?: string[];
+  coreFeatureIds?: string[];
+  supportFeatureIds?: string[];
+  canonicalFeatureIds?: string[];
+  timelineMismatchedFeatureIds?: string[];
 }
 
 export interface ValidationOptions {
@@ -57,6 +70,12 @@ export interface ValidationOptions {
   aggregationAppliedCount?: number;
   aggregationNearDuplicateCount?: number;
   fallbackSections?: string[];
+  structuralParseReason?: string;
+  rawFeatureHeadingSamples?: string[];
+  normalizationApplied?: boolean;
+  normalizedFeatureCountRecovered?: number;
+  contextHint?: string;
+  baselineStructure?: PRDStructure;
 }
 
 function matchesCurrentSectionFallback(params: {
@@ -96,6 +115,14 @@ export function validatePrdStructureInternal(
   const missingSections: string[] = [];
   const strictCanonical = options?.strictCanonical !== false;
   const unknownSectionHeadings = options?.unknownSectionHeadings || [];
+  const structuralParseReason = String(options?.structuralParseReason || '').trim() || undefined;
+  const rawFeatureHeadingSamples = Array.from(new Set(
+    (options?.rawFeatureHeadingSamples || []).map(sample => String(sample || '').trim()).filter(Boolean)
+  )).slice(0, 5);
+  const normalizationApplied = options?.normalizationApplied;
+  const normalizedFeatureCountRecovered = typeof options?.normalizedFeatureCountRecovered === 'number'
+    ? options.normalizedFeatureCountRecovered
+    : undefined;
   const knownFallbackSections = new Set((options?.fallbackSections || []).map(section =>
     String(section || '').toLowerCase().replace(/[^a-z]/g, '')
   ));
@@ -147,8 +174,12 @@ export function validatePrdStructureInternal(
   const featureCount = Array.isArray(structure.features) ? structure.features.length : 0;
   if (featureCount === 0) {
     issues.push({
-      code: 'missing_feature_catalogue',
-      message: 'Functional Feature Catalogue is missing or empty.',
+      code: structuralParseReason === 'feature_catalogue_format_mismatch' || rawFeatureHeadingSamples.length > 0
+        ? 'feature_catalogue_format_mismatch'
+        : 'missing_feature_catalogue',
+      message: structuralParseReason === 'feature_catalogue_format_mismatch' || rawFeatureHeadingSamples.length > 0
+        ? `Functional Feature Catalogue exists in raw markdown but could not be parsed into canonical F-XX features.${rawFeatureHeadingSamples.length > 0 ? ` Examples: ${rawFeatureHeadingSamples.join(' | ')}` : ''}`
+        : 'Functional Feature Catalogue is missing or empty.',
       severity: 'error',
     });
   } else {
@@ -311,10 +342,20 @@ export function validatePrdStructureInternal(
   }));
   issues.push(...collectBoilerplateRepetitionIssues(structure));
   issues.push(...collectMetaLeakIssues(structure));
+  const visionFirstDiagnostics = collectVisionFirstCoverageDiagnostics(structure, {
+    mode: options?.mode,
+    language: options?.targetLanguage,
+    fallbackSections: options?.fallbackSections || [],
+    contextHint: options?.contextHint,
+    baselineStructure: options?.baselineStructure,
+  });
+  const timelineConsistencyDiagnostics = collectTimelineConsistencyDiagnostics(structure);
   issues.push(...collectDeterministicSemanticIssues(structure, {
     mode: options?.mode,
     language: options?.targetLanguage,
     fallbackSections: options?.fallbackSections || [],
+    contextHint: options?.contextHint,
+    baselineStructure: options?.baselineStructure,
   }));
   issues.push(...collectCrossSectionSimilarityIssues(structure));
 
@@ -367,5 +408,27 @@ export function validatePrdStructureInternal(
     featureCount,
     issues,
     fallbackSections: fallbackSections.length > 0 ? fallbackSections : undefined,
+    structuralParseReason,
+    rawFeatureHeadingSamples: rawFeatureHeadingSamples.length > 0 ? rawFeatureHeadingSamples : undefined,
+    normalizationApplied,
+    normalizedFeatureCountRecovered,
+    primaryCapabilityAnchors: visionFirstDiagnostics.primaryCapabilityAnchors.length > 0
+      ? visionFirstDiagnostics.primaryCapabilityAnchors
+      : undefined,
+    featurePriorityWindow: visionFirstDiagnostics.featurePriorityWindow.length > 0
+      ? visionFirstDiagnostics.featurePriorityWindow
+      : undefined,
+    coreFeatureIds: visionFirstDiagnostics.coreFeatureIds.length > 0
+      ? visionFirstDiagnostics.coreFeatureIds
+      : undefined,
+    supportFeatureIds: visionFirstDiagnostics.supportFeatureIds.length > 0
+      ? visionFirstDiagnostics.supportFeatureIds
+      : undefined,
+    canonicalFeatureIds: timelineConsistencyDiagnostics.canonicalFeatureIds.length > 0
+      ? timelineConsistencyDiagnostics.canonicalFeatureIds
+      : undefined,
+    timelineMismatchedFeatureIds: timelineConsistencyDiagnostics.timelineMismatchedFeatureIds.length > 0
+      ? timelineConsistencyDiagnostics.timelineMismatchedFeatureIds
+      : undefined,
   };
 }

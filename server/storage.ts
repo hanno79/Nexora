@@ -390,10 +390,12 @@ export class DatabaseStorage implements IStorage {
         updatedAt: new Date(),
       };
 
-      const isFinalPassed = input.qualityStatus === 'passed' &&
-        input.finalizationStage === 'final' &&
+      const hasPersistableFinalContent = input.finalizationStage === 'final' &&
+        input.qualityStatus !== 'cancelled' &&
         typeof input.content === 'string' &&
         input.content.trim().length > 0;
+
+      const isFinalPassed = input.qualityStatus === 'passed' && hasPersistableFinalContent;
 
       if (typeof input.iterationLog === 'string') {
         updateData.iterationLog = input.iterationLog;
@@ -407,7 +409,7 @@ export class DatabaseStorage implements IStorage {
         );
       }
 
-      if (isFinalPassed) {
+      if (hasPersistableFinalContent) {
         updateData.content = input.content!.trim();
         if (Object.prototype.hasOwnProperty.call(input, 'structuredContent')) {
           updateData.structuredContent = input.structuredContent as any;

@@ -140,7 +140,7 @@ export abstract class BaseAIProvider {
         if (timedOut) {
           throw new Error(`Provider request timed out after ${ms}ms`);
         }
-        throw new Error(`Provider request timed out after ${ms}ms`);
+        throw new Error('Provider request was aborted unexpectedly');
       }
       throw error;
     } finally {

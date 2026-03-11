@@ -46,12 +46,19 @@ import { detectTargetSection, regenerateSection } from './prdSectionRegenerator'
 import { regenerateSectionAsJson } from './prdSectionJsonRegenerator';
 import type { PRDStructure, FeatureSpec } from './prdStructure';
 import { mergeExpansionIntoStructure } from './prdStructureMerger';
-import { finalizeWithCompilerGates, PrdCompilerQualityError } from './prdCompilerFinalizer';
+import {
+  finalizeWithCompilerGates,
+  PrdCompilerQualityError,
+  PrdCompilerRuntimeError,
+} from './prdCompilerFinalizer';
 import { pickNextFallbackModel, pickBestDegradedResult } from './prdQualityFallback';
 import { compilePrdDocument, ensurePrdRequiredSections } from './prdCompiler';
 import { isHighConfidenceFeatureDuplicate } from './prdQualitySignals';
 import { applySemanticPatchRefinement, type ContentIssue } from './prdContentReviewer';
-import { collectDeterministicSemanticIssues } from './prdDeterministicSemanticLints';
+import {
+  collectDeterministicSemanticIssues,
+  type DeterministicSemanticIssue,
+} from './prdDeterministicSemanticLints';
 import { resolvePrdWorkflowMode } from './prdWorkflowMode';
 import { buildTemplateInstruction } from './prdTemplateIntent';
 import {
@@ -64,7 +71,7 @@ import {
   buildCompilerArtifactDiagnostics,
   summarizeFinalizerResult,
 } from './compilerArtifact';
-import fs from 'fs';
+import fs from 'fs'; // dev-only: used by writeIterativeArtifacts
 import path from 'path';
 import { logger } from './logger';
 
@@ -357,7 +364,7 @@ Create an improved version that incorporates the new requirements while keeping 
       templateCategory,
       originalRequest: userInput || reviewContent || cleanedFinalContent.slice(0, 400),
       maxRepairPasses: 3,
-      repairReviewer: async (repairPrompt: string) => {
+      repairReviewer: async (repairPrompt: string, _pass: number) => {
         const repairResult = await client.callWithFallback(
           'reviewer',
           repairSystemPrompt,
@@ -483,6 +490,9 @@ Create an improved version that incorporates the new requirements while keeping 
         });
         dualAiLog(`✅ Quality fallback succeeded with ${fallbackModel}`);
       } catch (fallbackError) {
+        if ((fallbackError as any)?.name === 'AbortError' || (fallbackError as any)?.code === 'ERR_CLIENT_DISCONNECT') {
+          throw fallbackError;
+        }
         if (fallbackError instanceof PrdCompilerQualityError && fallbackError.failureStage === 'semantic_verifier') {
           throw fallbackError;
         }
@@ -1353,6 +1363,7 @@ Your task:
         seedFeatures: opts.isImprovement
           ? (state.freezeBaselineStructure?.features || []).map(feature => ({ ...feature }))
           : undefined,
+        abortSignal: opts.abortSignal,
         log: dualAiLog,
         warn: dualAiWarn,
       });
@@ -1919,7 +1930,8 @@ Your task:
         templateCategory: opts.templateCategory,
         originalRequest: opts.workflowInputText || currentPRD.slice(0, 400),
         maxRepairPasses: 3,
-        repairReviewer: async (repairPrompt: string) => {
+        cancelCheck: opts.throwIfCancelled,
+        repairReviewer: async (repairPrompt: string, _pass: number) => {
           const repairResult = await this.callIterativeModel(opts, {
             role: 'reviewer',
             systemPrompt: repairSystemPrompt,
@@ -2046,6 +2058,9 @@ Your task:
           });
           dualAiLog(`✅ Iterative quality fallback succeeded with ${fallbackModel}`);
         } catch (fallbackError) {
+          if ((fallbackError as any)?.name === 'AbortError' || (fallbackError as any)?.code === 'ERR_CLIENT_DISCONNECT') {
+            throw fallbackError;
+          }
           if (fallbackError instanceof PrdCompilerQualityError && fallbackError.failureStage === 'semantic_verifier') {
             throw fallbackError;
           }
@@ -2110,6 +2125,35 @@ Your task:
             repairGapReason: compilerFinalizationError.repairGapReason,
             repairCycleCount: compilerFinalizationError.repairCycleCount,
             earlySemanticLintCodes: compilerFinalizationError.earlySemanticLintCodes,
+            primaryCapabilityAnchors: compilerFinalizationError.primaryCapabilityAnchors,
+            featurePriorityWindow: compilerFinalizationError.featurePriorityWindow,
+            coreFeatureIds: compilerFinalizationError.coreFeatureIds,
+            supportFeatureIds: compilerFinalizationError.supportFeatureIds,
+            canonicalFeatureIds: compilerFinalizationError.canonicalFeatureIds,
+            timelineMismatchedFeatureIds: compilerFinalizationError.timelineMismatchedFeatureIds,
+            timelineRewrittenFromFeatureMap: compilerFinalizationError.timelineRewrittenFromFeatureMap,
+            compilerRepairTruncationCount: compilerFinalizationError.compilerRepairTruncationCount,
+            compilerRepairFinishReasons: compilerFinalizationError.compilerRepairFinishReasons,
+            repairRejected: compilerFinalizationError.repairRejected,
+            repairRejectedReason: compilerFinalizationError.repairRejectedReason,
+            repairDegradationSignals: compilerFinalizationError.repairDegradationSignals,
+            degradedCandidateAvailable: compilerFinalizationError.degradedCandidateAvailable,
+            degradedCandidateSource: compilerFinalizationError.degradedCandidateSource,
+            displayedCandidateSource: compilerFinalizationError.displayedCandidateSource,
+            diagnosticsAlignedWithDisplayedCandidate: compilerFinalizationError.diagnosticsAlignedWithDisplayedCandidate,
+            collapsedFeatureNameIds: compilerFinalizationError.collapsedFeatureNameIds,
+            placeholderFeatureIds: compilerFinalizationError.placeholderFeatureIds,
+            acceptanceBoilerplateFeatureIds: compilerFinalizationError.acceptanceBoilerplateFeatureIds,
+            featureQualityFloorFeatureIds: compilerFinalizationError.featureQualityFloorFeatureIds,
+            featureQualityFloorFailedFeatureIds: compilerFinalizationError.featureQualityFloorFailedFeatureIds,
+            featureQualityFloorPassed: compilerFinalizationError.featureQualityFloorPassed,
+            primaryFeatureQualityReason: compilerFinalizationError.primaryFeatureQualityReason,
+            emptyMainFlowFeatureIds: compilerFinalizationError.emptyMainFlowFeatureIds,
+            placeholderPurposeFeatureIds: compilerFinalizationError.placeholderPurposeFeatureIds,
+            placeholderAlternateFlowFeatureIds: compilerFinalizationError.placeholderAlternateFlowFeatureIds,
+            thinAcceptanceCriteriaFeatureIds: compilerFinalizationError.thinAcceptanceCriteriaFeatureIds,
+            semanticRepairChangedSections: compilerFinalizationError.semanticRepairChangedSections,
+            semanticRepairStructuralChange: compilerFinalizationError.semanticRepairStructuralChange,
             earlyDriftDetected: compilerFinalizationError.earlyDriftDetected,
             earlyDriftCodes: compilerFinalizationError.earlyDriftCodes,
             earlyDriftSections: compilerFinalizationError.earlyDriftSections,
@@ -2121,6 +2165,35 @@ Your task:
         );
         wrappedQualityError.stack = compilerFinalizationError.stack;
         throw wrappedQualityError;
+      }
+      if (compilerFinalizationError instanceof PrdCompilerRuntimeError) {
+        const wrappedRuntimeError = new PrdCompilerRuntimeError({
+          message: `Unified compiler finalization failed: ${compilerFinalizationError.message}`,
+          failureStage: compilerFinalizationError.failureStage,
+          providerFailureStage: compilerFinalizationError.providerFailureStage,
+          runtimeFailureCode: compilerFinalizationError.runtimeFailureCode,
+          providerFailureSummary: compilerFinalizationError.providerFailureSummary,
+          providerFailureCounts: compilerFinalizationError.providerFailureCounts,
+          providerFailedModels: compilerFinalizationError.providerFailedModels,
+          compiledResult:
+            compilerFinalizationError.compiledContent && compilerFinalizationError.compiledStructure
+              ? {
+                  content: compilerFinalizationError.compiledContent,
+                  structure: compilerFinalizationError.compiledStructure,
+                }
+              : undefined,
+          repairAttempts: compilerFinalizationError.repairAttempts,
+          reviewerAttempts: compilerFinalizationError.reviewerAttempts,
+          compilerRepairTruncationCount: compilerFinalizationError.compilerRepairTruncationCount,
+          compilerRepairFinishReasons: compilerFinalizationError.compilerRepairFinishReasons,
+          degradedCandidateAvailable: compilerFinalizationError.degradedCandidateAvailable,
+          degradedCandidateSource: compilerFinalizationError.degradedCandidateSource,
+        });
+        wrappedRuntimeError.stack = compilerFinalizationError.stack;
+        throw wrappedRuntimeError;
+      }
+      if (compilerFinalizationError?.name === 'AbortError' || compilerFinalizationError?.code === 'ERR_CLIENT_DISCONNECT') {
+        throw compilerFinalizationError;
       }
       throw new Error(`Unified compiler finalization failed: ${compilerFinalizationError.message}`);
     }
@@ -2147,9 +2220,10 @@ Your task:
   }): Promise<{ ok: boolean; issues: string[]; files: string[] }> {
     const issues: string[] = [];
     const repoRoot = process.cwd();
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const targets = [
-      path.join(repoRoot, '.tmp_run_response.json'),
-      path.join(repoRoot, '.tmp_run_final_gate_verify.json'),
+      path.join(repoRoot, `.tmp_run_response_${suffix}.json`),
+      path.join(repoRoot, `.tmp_run_final_gate_verify_${suffix}.json`),
     ];
 
     const preStats = new Map<string, fs.Stats | null>();
@@ -2466,6 +2540,43 @@ Your task:
       issues.push(issue);
     };
 
+    const featureTargetFieldsFromEvidencePath = (evidencePath: string): ContentIssue['targetFields'] => {
+      const normalized = String(evidencePath || '').trim();
+      if (normalized.includes('.dataImpact')) {
+        return ['dataImpact'];
+      }
+      if (normalized.includes('.preconditions')) {
+        return ['preconditions', 'dataImpact'];
+      }
+      if (normalized.includes('.postconditions')) {
+        return ['postconditions', 'dataImpact'];
+      }
+      if (normalized.includes('.mainFlow')) {
+        return ['mainFlow', 'dataImpact'];
+      }
+      if (normalized.includes('.acceptanceCriteria')) {
+        return ['acceptanceCriteria', 'dataImpact'];
+      }
+      return ['mainFlow', 'preconditions', 'postconditions', 'dataImpact'];
+    };
+
+    const featureSectionsFromDeterministicIssue = (issue: DeterministicSemanticIssue): string[] => {
+      const candidates = new Set<string>();
+      const paths = [
+        issue.evidencePath,
+        ...(issue.relatedPaths || []),
+      ].filter((value): value is string => Boolean(String(value || '').trim()));
+
+      for (const pathValue of paths) {
+        const normalized = String(pathValue || '').trim();
+        if (normalized.startsWith('feature:')) {
+          candidates.add(normalized.split('.')[0]);
+        }
+      }
+
+      return Array.from(candidates);
+    };
+
     if (blockedAddedFeatures.length > 0) {
       pushIssue({
         code: 'improve_new_feature_blocked',
@@ -2559,12 +2670,40 @@ Your task:
     for (const issue of deterministicIssues) {
       if (issue.severity !== 'error') continue;
       semanticLintCodes.add(issue.code);
-      if (issue.code.startsWith('schema_field_') || issue.code === 'rule_schema_property_coverage_missing') {
+      if (issue.code.startsWith('schema_field_')) {
         pushIssue({
           code: issue.code,
           sectionKey: 'domainModel',
           message: issue.message,
           severity: 'error',
+          suggestedAction: 'rewrite',
+        });
+
+        for (const featureSectionKey of featureSectionsFromDeterministicIssue(issue)) {
+          pushIssue({
+            code: issue.code,
+            sectionKey: featureSectionKey,
+            message: issue.message,
+            severity: 'error',
+            suggestedAction: 'enrich',
+            targetFields: featureTargetFieldsFromEvidencePath(issue.evidencePath || ''),
+          });
+        }
+        continue;
+      }
+      if (issue.code === 'rule_schema_property_coverage_missing') {
+        pushIssue({
+          code: issue.code,
+          sectionKey: 'domainModel',
+          message: issue.message,
+          severity: 'warning',
+          suggestedAction: 'rewrite',
+        });
+        pushIssue({
+          code: issue.code,
+          sectionKey: 'globalBusinessRules',
+          message: issue.message,
+          severity: 'warning',
           suggestedAction: 'rewrite',
         });
         continue;
@@ -2573,6 +2712,17 @@ Your task:
         pushIssue({
           code: issue.code,
           sectionKey: 'globalBusinessRules',
+          message: issue.message,
+          severity: 'error',
+          suggestedAction: 'rewrite',
+        });
+        continue;
+      }
+      if (issue.code === 'deployment_runtime_contradiction') {
+        const evidencePath = String(issue.evidencePath || '').trim();
+        pushIssue({
+          code: issue.code,
+          sectionKey: evidencePath.split('.')[0] || 'deployment',
           message: issue.message,
           severity: 'error',
           suggestedAction: 'rewrite',
@@ -2591,6 +2741,27 @@ Your task:
           severity: 'error',
           suggestedAction: 'enrich',
           targetFields: ['preconditions', 'postconditions', 'dataImpact'] as ContentIssue['targetFields'],
+        });
+        continue;
+      }
+      if (issue.code === 'vision_capability_coverage_missing' || issue.code === 'support_features_overweight') {
+        const featureSections = featureSectionsFromDeterministicIssue(issue);
+        for (const sectionKey of featureSections) {
+          pushIssue({
+            code: issue.code,
+            sectionKey,
+            message: issue.message,
+            severity: 'error',
+            suggestedAction: 'enrich',
+            targetFields: ['purpose', 'trigger', 'mainFlow', 'preconditions', 'postconditions', 'dataImpact', 'acceptanceCriteria'] as ContentIssue['targetFields'],
+          });
+        }
+        pushIssue({
+          code: issue.code,
+          sectionKey: 'systemVision',
+          message: issue.message,
+          severity: 'error',
+          suggestedAction: 'rewrite',
         });
         continue;
       }

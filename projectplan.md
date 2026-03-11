@@ -1,10 +1,13 @@
 <!--
 Author: rahn
- Datum: 08.03.2026
- Version: 2.9
+ Datum: 10.03.2026
+ Version: 3.0
 Beschreibung: Arbeitsplan zur Stabilisierung des Compiler-Verhaltens, zum vollstaendigen Codebase-Review gegen die Projektregeln und zur priorisierten Refactoring-Roadmap
 -->
 
+<!-- ÄNDERUNG 10.03.2026: Zentralen Plan fuer eine zweistufige Feature-Compiler-Logik ergaenzt - Haupttask/Subtask/Akzeptanzkriterien sollen kuenftig zentral fuer alle Templates und alle Methoden vereinheitlicht werden -->
+<!-- ÄNDERUNG 10.03.2026: Erster Implementierungsschnitt fuer die zweistufige Feature-Compiler-Logik umgesetzt und per gezielten Container-Vitest-Regressionen validiert -->
+<!-- ÄNDERUNG 11.03.2026: Minimaler Persistenz-Fix fuer degradierte Final-Inhalte umgesetzt - `failed_quality`/`failed_runtime` speichern nicht-leere finale PRD-Inhalte jetzt kontrolliert in `prds`, ohne `prd_versions`-Snapshots vorzutaeuschen; gezielte Storage-Regression und `npm run check` sind im Container gruen -->
 <!-- ÄNDERUNG 06.03.2026: Containerbasierte Validierung dokumentiert, kostenarmen Testnutzer gesetzt, sequenziellen Einzel-Run-Ansatz ergänzt und semantische Feature-Prüfung ergänzt -->
 <!-- ÄNDERUNG 07.03.2026: Neuer Blocker dokumentiert - Development-Tier haengt noch direkte Last-Resort-Provider-Fallbacks an und muss vor dem Re-Run gesperrt werden -->
 <!-- ÄNDERUNG 07.03.2026: Guided-Blocker ergaenzt - globale Modell-Cooldowns duerfen die Fallback-Kette nicht auf einen kuenstlichen 0-/1-Modell-Lauf reduzieren -->
@@ -45,6 +48,12 @@ Beschreibung: Arbeitsplan zur Stabilisierung des Compiler-Verhaltens, zum vollst
 <!-- ÄNDERUNG 08.03.2026: Achtzehnter Phase-2-Minimalsplit validiert - Share-Routen aus `server/routes.ts` nach `server/prdShareRoutes.ts` extrahiert; IDE-Diagnostik, gezielte Regressionen (`8/8`) und `npm run check` sind ueber Workspace-Logdateien gruen bestaetigt -->
 <!-- ÄNDERUNG 08.03.2026: Neunzehnter Phase-2-Minimalsplit validiert - Comments-Routen aus `server/routes.ts` nach `server/prdCommentRoutes.ts` extrahiert; IDE-Diagnostik, gezielte Regressionen (`4/4`) und `npm run check` sind ueber Workspace-Logdateien gruen bestaetigt -->
 <!-- ÄNDERUNG 08.03.2026: Zwanzigster Phase-2-Minimalsplit validiert - Approval-Routen aus `server/routes.ts` nach `server/prdApprovalRoutes.ts` extrahiert; IDE-Diagnostik, gezielte Regressionen (`7/7`) und `npm run check` sind ueber Workspace-Logdateien gruen bestaetigt -->
+<!-- ÄNDERUNG 08.03.2026: DualAiDialog-Mikrofix umgesetzt - `getModeInfoText()` wird im JSX nur noch einmal ausgewertet; die Datei wurde anschliessend per IDE-Diagnostik geprueft -->
+<!-- ÄNDERUNG 09.03.2026: Minimalfix fuer Provider-Fehlerdiagnostik umgesetzt - generische `provider error`-Texte zaehlen nicht mehr als `provider4xx` und Modell-IDs mit Variantensuffixen wie `:free` bleiben in `providerFailedModels` erhalten; gezielter Container-Vitest-Run und `npm run check` sind gruen -->
+<!-- ÄNDERUNG 09.03.2026: Root-Cause-Massnahmenplan fuer degradierte iterative Feature-Ergebnisse ergaenzt - Fokus auf Expansion-/Fallback-Kontamination, substanzbasierten Merge, harte semantische Gates, degradierte Ergebnisblockade und bessere Artefakttransparenz -->
+<!-- ÄNDERUNG 09.03.2026: Drei gezielte Fixes fuer leere/unbrauchbare Features umgesetzt - (1) `vision_capability_coverage_missing` degradiert zu Warning wenn Core-Features global existieren aber nur falsch platziert sind; (2) Repair-Content in `buildRepairPrompt` auf max. 12.000 Zeichen begrenzt um Truncation durch Free-Tier-Modelle zu vermeiden; (3) Bug in `rewriteTimelineTableRow` behoben der alten Feature-Namen anhaengte statt ersetzte; alle 54 betroffenen Tests plus `npm run check` sind gruen -->
+<!-- ÄNDERUNG 10.03.2026: Konservative Entschaerfung der Feature-List-Heuristik umgesetzt - kleine/fokussierte Anforderungen akzeptieren jetzt 3-5 Features ohne kuenstlichen 8+-Retry; breitere Scopes zielen nur noch auf 5-10 Features und werden gezielt per Vitest abgesichert -->
+<!-- ÄNDERUNG 10.03.2026: Neuer Restblocker fuer `feature/simple` dokumentiert - Basis-Fallbacks fuer Timeline/Success Criteria kollidierten textlich mit der Boilerplate-Erkennung; naechster Minimalfix praezisiert diese Sektionen und wird gezielt per Template-Regressionen sowie Container-Smoke validiert -->
 
 ## Problemanalyse
 
@@ -65,6 +74,8 @@ Beschreibung: Arbeitsplan zur Stabilisierung des Compiler-Verhaltens, zum vollst
 - [x] Die groessten Regelverstoesse sind priorisiert; als verbleibende Phase-2-Groessenblocker stehen aktuell `server/routes.ts` (1602) und `server/dualAiService.ts` (3576) im Fokus, waehrend `server/guidedAiService.ts` (488) und `server/openrouter.ts` (481) nicht mehr ueber dem Limit liegen.
 - [x] Das kritischste inhaltliche Risiko ist nicht nur Groesse, sondern generische PRD-Fallback-Inhalte im Compiler, die gegen das Fail-Fast-Prinzip arbeiten.
 - [x] Fuer sichere Refactorings ist eine risikoarme Reihenfolge aus Quick Wins, kleineren Backend-Splits und erst danach den verbleibenden Grossmodulen festgelegt.
+- [x] Die Provider-Fehlerdiagnostik faltete generische `provider error`-Texte bisher faelschlich in `provider4xx` und kuerzte Modell-IDs an der ersten `:`.
+- [x] Die Feature-List-Heuristik drueckte kleine Iterative-Scopes bisher kuenstlich auf 8+ Features und verstaerkte damit Expansion sowie `iteration_answerer` unnoetig.
 
 ## Aufgaben
 
@@ -88,6 +99,8 @@ Beschreibung: Arbeitsplan zur Stabilisierung des Compiler-Verhaltens, zum vollst
 - [x] Phase 0 Quick-Win-Paket 1 umsetzen: leere Root-Artefakte nach `to_delete/` verschieben und kleine First-Party-Dateien mit Header/Aenderungsdoku ergaenzen.
 - [x] Weiteres Phase-0-Quick-Win-Paket mit weiteren kleinen First-Party-Dateien und transparenten Defaults vorbereiten.
 - [x] Phase 1 vorbereiten: inhaltliche Fail-Fast-/Fallback-Bereinigung im Compiler absichern.
+- [x] Provider-Fehlerdiagnostik fuer explizite 4xx-Erkennung und Modell-IDs mit Variantensuffixen minimal korrigieren.
+- [x] Feature-List-Zielwerte fuer kleine Scopes konservativ entschaerfen und gezielt per Vitest absichern.
 - [ ] Phase 2 vorbereiten: groesste God-Files schrittweise in Module/Hooks/Router-Segmente aufteilen.
   - Zwischenstand 08.03.2026: erster risikoarmer Split in `server/prdCompilerFinalizer.ts` umgesetzt; Repair-Prompt-Helfer leben jetzt in `server/prdCompilerRepairPrompt.ts`.
   - Zwischenstand 08.03.2026: zweiter risikoarmer Split in `server/prdCompiler.ts` umgesetzt; Feature-Depth-/Hint-Helfer leben jetzt in `server/prdFeatureDepth.ts`, `server/prdCompiler.ts` ist auf 906 Zeilen reduziert.
@@ -183,6 +196,9 @@ Beschreibung: Arbeitsplan zur Stabilisierung des Compiler-Verhaltens, zum vollst
 - [x] IDE-Diagnostik fuer `server/routes.ts`, `server/prdApprovalRoutes.ts` und `tests/prdApprovalRoutes.test.ts` ohne Befunde pruefen.
 - [x] `tests/prdApprovalRoutes.test.ts` nach dem Approval-Split im Container gruen (`7/7`) ueber Workspace-Logdatei bestaetigen.
 - [x] Containerbasierten TypeScript-Check (`npm run check`) nach dem Approval-Split ueber Workspace-Logdatei bestaetigen.
+- [x] Gezielten Container-Vitest-Run fuer `tests/providerFailureDiagnostics.test.ts` (`3/3`) und `npm run check` mit Exit-Code `0` validieren.
+- [x] `tests/storage.persistPrdRunFinalization.test.ts` und `tests/prdRunQuality.test.ts` nach dem Persistenz-Fix im Container gruen (`18/18`) bestaetigen.
+- [x] Containerbasierten TypeScript-Check (`npm run check`) nach dem Persistenz-Fix erfolgreich ausfuehren.
 
 ## Stabilitaetsauswertung 07.03.2026
 
@@ -244,3 +260,187 @@ Beschreibung: Arbeitsplan zur Stabilisierung des Compiler-Verhaltens, zum vollst
   - Sprachstandard fuer Logs, Kommentare, Testnamen und Benutzertexte vereinheitlichen.
   - Weitere grosse Testdateien entlang fachlicher Teilbereiche aufteilen.
   - Danach erneute Regelpruefung und gezielte Container-Validierung durchfuehren.
+
+## Root-Cause-Massnahmenplan 09.03.2026
+
+### Zielbild
+
+- Die Pipeline soll detailreiche Features erhalten statt sie spaeter mit generischem Scaffold zu ueberschreiben.
+- Formale Vollstaendigkeit darf nicht mehr als Ersatz fuer fachliche Substanz gelten.
+- Degradierte Endstaende duerfen nicht mehr als scheinbar erfolgreiche Ergebnisse ausgeliefert werden.
+- Jeder spaetere Fehlstand muss pro Feature auf Quelle, Fallback-Stufe und Merge-Entscheidung zurueckverfolgbar sein.
+
+### Gesicherte Root Causes
+
+- Root Cause 1: Expansion-/Fallback-Texte sind formal vollstaendig, aber semantisch generisch und kontaminieren die Feature-Struktur.
+- Root Cause 2: `mergeExpansionIntoStructure(...)` bevorzugt aktuell laengere Inhalte statt substanziellere Inhalte und kann damit bessere Featuretexte ueberlagern.
+- Root Cause 3: `validateIterationAcceptance(...)` und die finale Konsistenzpruefung lassen semantisch schwache, aber strukturell korrekte Features standardmaessig durch.
+- Root Cause 4: `pickBestDegradedResult(...)` kann bekannte Fehlstaende bewusst als Endergebnis ausliefern.
+- Root Cause 5: `freezeSeedSource = compiledExpansion` konserviert einen bereits degradierten Zwischenstand und erschwert spaetere Korrektur.
+- Root Cause 6: Artefakte und Diagnostik sind noch nicht fein genug, um die exakte Herkunft eines schlechten Featuretextes sofort sichtbar zu machen.
+
+### Umsetzungsprinzipien
+
+- Root-Cause-first statt kosmetischer Nachreparatur.
+- Fail-Fast vor stillen Generik-Fallbacks.
+- Substanz vor Laenge bei allen Merge- und Auswahlentscheidungen.
+- Fallback-Inhalte immer explizit markieren und diagnostisch sichtbar machen.
+- Jede Phase mit kleinem Scope, gezielten Regressionstests und containerbasierter Validierung abschliessen.
+
+### Phase A - Sofortige Schadensbegrenzung
+
+- Final-Validation fuer bekannte Schadensmuster hart machen: Template-Repetition, `1. 1.`-Nummerierung, placeholderartige Purpose-/Main-Flow-/Acceptance-Texte.
+- `ITERATIVE_FAST_FINALIZE` darf bei erkannten Finalfehlern nicht mehr still erfolgreich beenden.
+- `pickBestDegradedResult(...)` fuer placeholder-dominierte oder semantisch gebrochene Ergebnisse deaktivieren bzw. in harten Fehler umwandeln.
+- Erfolgskriterium: Ein degradierter Run endet sichtbar als Fehler/Warnfall statt als scheinbar gueltiger PRD.
+
+### Phase B - Kontaminationsquelle in Expansion und Delta-Compile neutralisieren
+
+- Deterministische Feature-Fallbacks in `expandFeature(...)` und `dualAiService.ts` nicht mehr wie normale hochwertige Feature-Ergebnisse behandeln.
+- Fallback-Features mit expliziter Herkunft markieren, z. B. Quelle `deterministic_fallback`, damit spaetere Merger und Gates diese Inhalte abwerten koennen.
+- Pruefen, ob der lokale Repair-Pfad statt generischer Volltexte zuerst nur Strukturfehler korrigieren darf; erst bei echtem Abbruch soll ein klar markierter Fehler entstehen.
+- Erfolgskriterium: Ein fehlgeschlagener Expansionsschritt erzeugt keinen unsichtbar akzeptierten Boilerplate-Ersatz mehr.
+
+### Phase C - Merge-Logik von Laenge auf Substanz umstellen
+
+- `mergeExpansionIntoStructure(...)` nicht mehr rein nach Feldlaenge entscheiden lassen.
+- Vor Merge je Feld und fuer `rawContent` Substanzsignale bewerten: Placeholder-Purpose, generischer Main Flow, duenne Acceptance Criteria, hohe Wiederholung, Fallback-Herkunft.
+- Bestehende detailreiche Inhalte muessen gegen generischere Expanded-/Fallback-Inhalte priorisiert werden, selbst wenn diese laenger sind.
+- Erfolgskriterium: Detaillierte Generator-/Bestandsfeatures bleiben erhalten, wenn Expanded-Inhalte nur formal reicher, aber semantisch schwaecher sind.
+
+### Phase D - Semantische Gates frueher und haerter ziehen
+
+- `validateIterationAcceptance(...)` um einen semantischen Mindestboden erweitern, nicht nur um Strukturchecks.
+- Fruehe Blocker aus `prdCompilerFinalizer.ts` fuer fuehrende Features in die Iterationsabnahme uebernehmen: placeholder purpose, fehlender substantiver Main Flow, duenne Acceptance Criteria, ueberschiessende Template-Wiederholung.
+- Freeze darf nur auf einem semantisch akzeptablen Stand aktiviert werden; `compiledExpansion` darf nicht blind Freeze-Seed werden.
+- Erfolgskriterium: Der Uebergang `iteration 2 generatorOutput -> iteration 2 mergedPRD` kann nicht mehr still in einen generischen Scaffold-Zustand kippen.
+
+### Phase E - Transparenz und Diagnostik pro Feature ausbauen
+
+- Pro Feature persistieren: Inhaltsquelle, letzter erfolgreicher Modell-Output, lokaler Repair, deterministischer Fallback, Merge-Gewinner, Finalizer-Entscheidung.
+- `compilerArtifact`, `finalValidationPassed`, `finalValidationErrors` und aehnliche Felder konsequent in den Run-Artefakten ablegen.
+- Fuer Root-Cause-Analyse eine kompakte Feature-Lifecycle-Spur schreiben: `generated -> expanded -> repaired -> merged -> frozen -> finalized`.
+- Erfolgskriterium: Beim naechsten Fehlrun ist innerhalb weniger Minuten sichtbar, an welcher Stufe welcher Featuretext ersetzt wurde.
+
+### Phase F - Nachhaltige Architekturhaertung
+
+- `server/dualAiService.ts` weiter entlang echter Verantwortungen zerlegen: Iterationssteuerung, Expansionsorchestrierung, Freeze-/Preservation-Logik, Finalize-/Gate-Steuerung, Artefaktpersistenz.
+- Semantische Qualitaetssignale, Placeholder-Erkennung und Merge-Praferenz in eigene, testbare Module auslagern.
+- Dadurch sinkt das Risiko, dass spaetere Fixes an einer Stelle unbemerkt andere Fallback-Pfade reaktivieren.
+- Erfolgskriterium: Kernregeln fuer Merge, Gate und Fallback liegen klein, isoliert und mit gezielten Tests abgesichert vor.
+
+### Test- und Abnahmeplan
+
+- Unit-Tests fuer substanzbasierten Merge, Fallback-Markierung, harte Final-Validation und Degraded-Result-Blockade.
+- Integrations-Tests fuer iterative Laeufe, insbesondere fuer den Uebergang von `generatorOutput` zu `mergedPRD` in Iteration 2.
+- Regressionen mit Artefakten, die die bekannten Schadensphrasen und doppelte Nummerierung enthalten.
+- Containerbasierte Validierung: gezielte Vitest-Suites plus `npm run check`; danach ein oder wenige kontrollierte iterative Realruns mit Artefaktvergleich.
+
+### Empfohlene Reihenfolge
+
+- Schritt 1: Phase A, weil kaputte Ergebnisse sofort sichtbar gestoppt werden muessen.
+- Schritt 2: Phase B, weil dort sehr wahrscheinlich die generische Textfamilie in den Datenstrom gelangt.
+- Schritt 3: Phase C, weil der Merge aktuell der staerkste Verstaerker fuer Inhaltsverlust ist.
+- Schritt 4: Phase D, damit schlechte Zustaende frueher blockiert statt erst spaet erkannt werden.
+- Schritt 5: Phase E, um kuenftige Analysen drastisch zu verkuerzen.
+- Schritt 6: Phase F als nachhaltige Absicherung gegen Rueckfaelle und weitere God-File-Risiken.
+
+## Zentraler Feature-Compiler-Plan 10.03.2026
+
+### Zielbild
+
+- Alle Methoden (`simple`, `guided`, `iterative`) muessen dieselbe zentrale Feature-Logik verwenden.
+- Alle PRD-Templates muessen denselben Feature-Kern verwenden; Templates unterscheiden nur noch die umgebenden Sektionen.
+- Features werden kuenftig immer zweistufig beschrieben: Haupttask -> Subtasks.
+- Unterhalb der Subtasks gibt es keine weitere Task-Hierarchie; feinere Details gehoeren in Akzeptanzkriterien.
+- Ein Haupttask ist abgeschlossen, wenn alle zugehoerigen Subtasks abgeschlossen und testbar erfuellt sind.
+
+### Verbindliche Invarianten fuer perfekte Features
+
+- Jeder Haupttask beschreibt genau eine fachliche Capability oder einen klaren Arbeitsbereich.
+- Jeder Subtask beschreibt genau ein kleines, eigenstaendig umsetzbares und separat testbares Ergebnis.
+- Akzeptanzkriterien muessen messbar, beobachtbar und fuer Tests verwendbar sein.
+- Technische Nebenpunkte wie Deployment, Setup, Logging, generische Validierung oder Error Handling werden nicht automatisch eigene Tasks.
+- Solche Punkte duerfen nur dann eigene Subtasks werden, wenn der Nutzer sie explizit fordert oder sie selbst eine eigenstaendige Capability bilden.
+- Keine dritte Hierarchieebene und keine flache ungruppierte Taskliste mehr als Zielausgabe.
+
+### Gesicherte Abweichungen vom Zielbild heute
+
+- `generateFeatureList(...)` denkt noch zu stark in einer flachen Top-Level-Feature-Liste.
+- Die Scope-Klassifikation wird im iterativen Live-Pfad durch aufgeweiteten Draft-Kontext verfaelscht.
+- Prompt-Vorgaben druecken weiterhin in Richtung technischer Ueberzerlegung statt fachlicher Haupttask-/Subtask-Struktur.
+- Expansion, Parser, Merge und Compiler-Gates sind aktuell nicht auf ein zweistufiges Modell mit Akzeptanzkriterien ausgerichtet.
+- Templates und Methoden beeinflussen den Feature-Kern noch zu stark, obwohl dieser zentral vereinheitlicht sein soll.
+
+### Phase 1 - Kanonisches Feature-Zielmodell definieren
+
+- Ein zentrales internes Datenmodell fuer Haupttask, Subtasks und Akzeptanzkriterien festlegen.
+- Fest definieren, welche Felder ein Haupttask und welche Felder ein Subtask minimal besitzen muessen.
+- Abschlusslogik dokumentieren: Subtask fertig bei erfuellten Akzeptanzkriterien; Haupttask fertig bei vollstaendigen Subtasks.
+- Erfolgskriterium: Es gibt genau ein verbindliches Schema, das fuer alle Methoden und Templates gilt.
+
+### Phase 2 - Zentrale Generierungslogik auf Haupttask/Subtask umbauen
+
+- `generateFeatureList(...)` von flacher Feature-Erzeugung auf fachliche Cluster plus testbare Subtasks umstellen.
+- Scope-Erkennung primaer am urspruenglichen Nutzerwunsch statt am generatorisch aufgeweiteten Draft-Kontext ausrichten.
+- Prompt-Regeln auf kleinste sinnvoll testbare Subtasks mit fachlicher Gruppierung umstellen.
+- Erfolgskriterium: Kleine Scopes erzeugen nicht mehr 12 technische Pseudo-Features, sondern wenige Haupttasks mit passenden Subtasks.
+
+### Phase 3 - Feature-Expansion, Parser und Compiler auf das neue Schema ausrichten
+
+- `prdFeatureExpansion` und nachgelagerte Parser muessen die zweistufige Struktur verlustfrei transportieren.
+- Merge- und Freeze-Logik muessen Haupttask-/Subtask-Grenzen respektieren und duerfen keine flachen Ersatzlisten erzeugen.
+- Akzeptanzkriterien muessen an Subtasks haengen bleiben und duerfen nicht in eigene Task-Ebenen kippen.
+- Erfolgskriterium: Der gesamte Compiler-Pfad kann Haupttask, Subtasks und Kriterien ohne Strukturverlust verarbeiten.
+
+### Phase 4 - Prompt- und Template-Entkopplung sauber ziehen
+
+- Den zentralen Feature-Kern von template-spezifischen Rahmensektionen trennen.
+- `dualAiPrompts.ts` und weitere Prompt-Quellen so anpassen, dass breite Sektionen wie Domain Model oder Deployment den Feature-Scope nicht mehr aufblasen.
+- Methoden duerfen im Feature-Kern nur noch die Erzeugungsstrategie beeinflussen, nicht die Zielstruktur.
+- Erfolgskriterium: Dasselbe Nutzerproblem fuehrt methodenuebergreifend zur gleichen Feature-Grundstruktur.
+
+### Phase 5 - Harte Compiler-Regeln und Qualitaetsgates ergaenzen
+
+- Neue Validierungen einfuehren: keine dritte Ebene, kein Haupttask ohne Subtasks, kein Subtask ohne pruefbare Akzeptanzkriterien.
+- Pseudo-Features fuer reine Technik-/Betriebsthemen ohne Nutzerwert aktiv markieren oder ablehnen.
+- Sicherstellen, dass Abschluss- und Testbarkeit schon in fruehen Gates geprueft werden.
+- Erfolgskriterium: Strukturell falsche oder fachlich unscharfe Features werden vor Persistenz bzw. Finalisierung blockiert.
+
+### Phase 6 - Tests, Regressionen und Realruns absichern
+
+- Unit-Tests fuer Gruppierung, Subtask-Erzeugung, Akzeptanzkriterien und Gate-Regeln ergaenzen.
+- Integrations-Tests fuer `simple`, `guided` und `iterative` mit identischem Input und erwartbar aehnlicher Feature-Struktur ergaenzen.
+- Containerbasierte Realruns fuer kleine, mittlere und groessere Scopes vergleichen.
+- Erfolgskriterium: Das Zielmodell ist nicht nur promptseitig beschrieben, sondern durch Tests und reale Artefakte abgesichert.
+
+### Empfohlene Umsetzungsreihenfolge
+
+- Schritt 1: Phase 1, damit zuerst das kanonische Zielmodell und die Invarianten feststehen.
+- Schritt 2: Phase 2, weil dort die heutige Root Cause der falschen Struktur unmittelbar entsteht.
+- Schritt 3: Phase 3, damit die neue Struktur nicht spaeter im Compiler wieder verloren geht.
+- Schritt 4: Phase 4, damit Templates und Methoden denselben zentralen Feature-Kern respektieren.
+- Schritt 5: Phase 5, damit falsche Strukturen hart blockiert werden.
+- Schritt 6: Phase 6 als abschliessende Absicherung gegen Rueckfaelle.
+
+### Abnahmekriterien fuer den Gesamtumbau
+
+- Ein kleiner To-do-App-Input erzeugt z. B. `Aufgabenverwaltung` als Haupttask mit passenden Subtasks statt einer flachen Technikliste.
+- Dieselbe Anforderung fuehrt in `simple`, `guided` und `iterative` zur gleichen fachlichen Haupttask-/Subtask-Struktur.
+- Akzeptanzkriterien werden an Subtasks formuliert und nicht als dritte Hierarchieebene ausgegeben.
+- Deployment, Setup oder generische Fehlerbehandlung erscheinen nur noch bei expliziter fachlicher Relevanz als eigener Task.
+- Die resultierenden Features sind fuer ein Coding-Tool bottom-up umsetzbar und fuer Tests klar pruefbar.
+
+### Umsetzungsstand 10.03.2026
+
+- Erster konservativer Implementierungsschnitt ist umgesetzt: `FeatureSpec`, Parser, Assembler, Merger und Expansion transportieren jetzt Parent-/Haupttask-Metadaten rueckwaertskompatibel an den operativen `F-XX`-Subtasks.
+- `generateFeatureList(...)` erzeugt jetzt zentral ein zweistufiges Format mit `Main Task` plus `F-XX`-Subtasks statt einer rein flachen Feature-Liste.
+- Die Small-Scope-Heuristik richtet sich jetzt primaer am urspruenglichen `userInput` statt am aufgeweiteten kombinierten Draft-Kontext aus.
+- `prdFeatureExpansion` kann bestehende Seed-Features im Improve-Mode gruppiert als Haupttask/Subtask-Liste wieder ausgeben.
+- `expandFeature(...)` erhaelt den Parent-Main-Task als zusaetzlichen Kontext, ohne die operative Subtask-Expansion aufzugeben.
+
+### Validierung 10.03.2026
+
+- IDE-Diagnostik fuer alle geaenderten Server- und Testdateien: ohne Befunde.
+- Containerbasierte Zieltests erfolgreich: `tests/generateFeatureList.test.ts`, `tests/expandFeature.test.ts`, `tests/prdFeatureExpansion.test.ts`, `tests/prdParser.test.ts`, `tests/prdStructureMerger.test.ts` (`47/47` Tests gruen).
+- `server/services/llm/expandFeature.ts` liegt nach dem Umbau bei 499 Zeilen und bleibt damit knapp innerhalb der Projektregel.

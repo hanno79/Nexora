@@ -15,6 +15,7 @@ import {
   persistCompilerRunArtifactBestEffort,
 } from './aiRouteCompilerSupport';
 import {
+  resolveAiPreferenceUserId,
   qualityStatusHttpCode,
   withArtifactMetrics,
 } from './aiRouteSupport';
@@ -84,6 +85,7 @@ export function registerGuidedFinalizeStreamRoute(
 
       const { sessionId, prdId } = req.body;
       userId = req.user.claims.sub;
+      const aiPreferenceUserId = resolveAiPreferenceUserId(req, userId);
       const prdContext = await resolveGuidedPrdContext(req, res, prdId);
       if (prdContext.shouldReturn) {
         return;
@@ -134,7 +136,7 @@ export function registerGuidedFinalizeStreamRoute(
       });
 
       const result = await Promise.race([
-        getGuidedAiService().finalizePRD(sessionId, userId, { templateCategory }),
+        getGuidedAiService().finalizePRD(sessionId, userId, { aiPreferenceUserId, templateCategory }),
         timeoutPromise,
       ]);
 
@@ -232,6 +234,7 @@ export function registerGuidedFinalizeStreamRoute(
           routeKey: 'guided-finalize-stream',
           qualityStatus: timeoutFailure.qualityStatus,
           finalizationStage: 'final',
+          finalContent: timeoutFailure.finalContent || undefined,
           compilerDiagnostics: timeoutFailure.diagnostics,
           requestContext: {
             prdId: editablePrdId || null,
@@ -261,11 +264,17 @@ export function registerGuidedFinalizeStreamRoute(
 
       logger.error('Guided finalize SSE error', { error });
       const failure = classifyRunFailure(error);
+      // ÄNDERUNG 11.03.2026: Failure-Artefakte muessen degradierte Compiler-Struktur
+      // und Quality mitpersistieren, damit Feature-/Task-Metadaten erhalten bleiben.
       void persistCompilerRunArtifactBestEffort({
         workflow: 'guided',
         routeKey: 'guided-finalize-stream',
         qualityStatus: failure.qualityStatus,
         finalizationStage: 'final',
+        finalContent: failure.finalContent || undefined,
+        compiledContent: failure.compiledContent || undefined,
+        compiledStructure: failure.compiledStructure || undefined,
+        quality: failure.quality || undefined,
         compilerDiagnostics: failure.diagnostics,
         requestContext: {
           prdId: editablePrdId || null,
@@ -284,6 +293,7 @@ export function registerGuidedFinalizeStreamRoute(
       if (res.headersSent && !res.writableEnded && !res.destroyed) {
         res.write(`event: error\ndata: ${JSON.stringify({
           message: failure.message,
+          finalContent: failure.finalContent || undefined,
           qualityStatus: failure.qualityStatus,
           compilerDiagnostics: failure.diagnostics,
           finalizationStage: 'final',
@@ -293,6 +303,7 @@ export function registerGuidedFinalizeStreamRoute(
       } else if (!res.headersSent) {
         res.status(qualityStatusHttpCode(failure.qualityStatus)).json({
           message: failure.message,
+          finalContent: failure.finalContent || undefined,
           qualityStatus: failure.qualityStatus,
           compilerDiagnostics: failure.diagnostics,
           finalizationStage: 'final',

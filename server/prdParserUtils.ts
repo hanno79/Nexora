@@ -9,11 +9,93 @@
 import type { FeatureSpec } from './prdStructure';
 
 export function normalizeFeatureId(value: string): string {
-  const match = String(value || '').toUpperCase().match(/F-(\d+)/);
+  const match = String(value || '').toUpperCase().match(/\bF[- ]?(\d+)\b/);
   if (!match) return '';
   const parsed = Number.parseInt(match[1], 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return '';
   return `F-${String(parsed).padStart(2, '0')}`;
+}
+
+function isFallbackFeatureName(name: string, featureId: string): boolean {
+  const normalizedName = normalizeFeatureId(String(name || '').trim());
+  const normalizedId = normalizeFeatureId(String(featureId || '').trim());
+  return !!normalizedId && normalizedName === normalizedId;
+}
+
+export function extractFeatureHeadingSamples(markdown: string, limit = 5): string[] {
+  const lines = String(markdown || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  const samples: string[] = [];
+  for (const line of lines) {
+    const isFeatureHeading = /^#{2,4}\s+.*\bF[- ]?\d+\b/i.test(line);
+    const isFeatureIdLine = /^\*{0,2}Feature\s+ID\*{0,2}\s*:?\s*F[- ]?\d+\b/i.test(line);
+    if (!isFeatureHeading && !isFeatureIdLine) continue;
+    samples.push(line);
+    if (samples.length >= limit) break;
+  }
+
+  return samples;
+}
+
+export function normalizeFeatureCatalogueSyntax(markdown: string): {
+  content: string;
+  applied: boolean;
+  rawFeatureHeadingSamples: string[];
+} {
+  const rawFeatureHeadingSamples: string[] = [];
+  const seenSamples = new Set<string>();
+  let applied = false;
+
+  const lines = String(markdown || '').split(/\r?\n/);
+  const normalizedLines = lines.map((line) => {
+    const trimmed = line.trim();
+    let nextLine = line;
+
+    const headingMatch = line.match(
+      /^(\s*#{2,4})\s+(?:\*{0,2})(?:Feature\s+)?(?:ID:\s*)?(F[- ]?\d+)(?:\*{0,2})\s*(?:[:—–-]\s*|\s+)(.+?)\s*$/i
+    );
+    if (headingMatch) {
+      const canonicalId = normalizeFeatureId(headingMatch[2]);
+      const normalizedName = String(headingMatch[3] || '')
+        .trim()
+        .replace(/\*+/g, '')
+        .replace(/^Feature\s+Name\s*:?\s*/i, '')
+        .trim();
+      if (canonicalId && normalizedName) {
+        nextLine = `${headingMatch[1]} ${canonicalId}: ${normalizedName}`;
+      }
+    }
+
+    const featureIdMatch = nextLine.match(
+      /^(\s*)(?:\*{0,2})Feature\s+ID(?:\*{0,2})?\s*:?\s*(?:\*{0,2})(F[- ]?\d+)(?:\*{0,2})(.*)$/i
+    );
+    if (featureIdMatch) {
+      const canonicalId = normalizeFeatureId(featureIdMatch[2]);
+      if (canonicalId) {
+        const suffix = String(featureIdMatch[3] || '').trimEnd();
+        nextLine = `${featureIdMatch[1]}Feature ID: ${canonicalId}${suffix ? suffix : ''}`;
+      }
+    }
+
+    if (nextLine !== line) {
+      applied = true;
+      if (trimmed && !seenSamples.has(trimmed)) {
+        seenSamples.add(trimmed);
+        rawFeatureHeadingSamples.push(trimmed);
+      }
+    }
+
+    return nextLine;
+  });
+
+  return {
+    content: normalizedLines.join('\n'),
+    applied,
+    rawFeatureHeadingSamples,
+  };
 }
 
 export function dedupeFeatures(features: FeatureSpec[]): FeatureSpec[] {
@@ -32,9 +114,18 @@ export function dedupeFeatures(features: FeatureSpec[]): FeatureSpec[] {
     // Prefer richer content when duplicate IDs appear.
     const currentLen = (normalized.rawContent || '').length;
     const existingLen = (existing.rawContent || '').length;
-    if (currentLen > existingLen) {
-      byId.set(id, normalized);
-    }
+    const preferred = currentLen > existingLen ? normalized : existing;
+    const fallback = preferred === normalized ? existing : normalized;
+    const preferredNameIsFallback = isFallbackFeatureName(preferred.name, id);
+    const fallbackNameIsFallback = isFallbackFeatureName(fallback.name, id);
+
+    byId.set(id, {
+      ...preferred,
+      name:
+        preferredNameIsFallback && !fallbackNameIsFallback
+          ? fallback.name
+          : preferred.name,
+    });
   }
 
   return Array.from(byId.values()).sort((a, b) =>

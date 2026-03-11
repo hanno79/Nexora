@@ -8,6 +8,12 @@ Beschreibung: Gezielte Regressionstests fuer die ausgelagerten Linear- und Dart-
 // ÄNDERUNG 08.03.2026: Regressionen fuer PRD-Update-Mapping und zentrale Fehlerpfade der Integrationsrouten ergänzt.
 
 import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('../server/db', () => ({
+  db: {},
+  pool: { end: vi.fn() },
+}));
+
 import {
   createFakeApp,
   findRoute,

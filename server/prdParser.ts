@@ -16,6 +16,7 @@ import {
   normalizeHeadingForAliasMatching,
 } from './prdParserUtils';
 import {
+  parseFeatureMetadata,
   parseFeatureSubsections,
   parseFeatureBlocks,
 } from './prdFeatureParser';
@@ -35,6 +36,7 @@ export {
 } from './prdParserUtils';
 
 export {
+  parseFeatureMetadata,
   parseFeatureSubsections,
   parseFeatureBlocks,
 } from './prdFeatureParser';
@@ -155,18 +157,19 @@ export function parsePRDToStructure(markdown: string): PRDStructure {
         }
       }
     } else {
-      const featureMatch = normalizedHeading.match(/^(?:feature\s+(?:id:\s*)?)?(?:feature\s+id:\s*)?(f-\d+)/);
+      const featureMatch = normalizedHeading.match(/^(?:feature\s+(?:id:\s*)?)?(?:feature\s+id:\s*)?(f[- ]?\d+)/);
       if (featureMatch) {
         const featureId = featureMatch[1].toUpperCase();
         const featureName = section.heading
           .replace(/^\d+[\.\)]\s*/, '')
-          .replace(/^(?:Feature\s+)?F-\d+[:\s]*/i, '')
+          .replace(/^(?:Feature\s+)?F[- ]?\d+[:\s—–-]*/i, '')
           .replace(/\*+/g, '')
           .trim();
         structure.features.push({
           id: normalizeFeatureId(featureId),
           name: featureName || featureId,
           rawContent: section.body,
+          ...parseFeatureMetadata(section.body),
           ...parseFeatureSubsections(section.body),
         });
       } else {

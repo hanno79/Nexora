@@ -74,6 +74,23 @@ function collectFeatureIds(structure: PRDStructure): string[] {
   return (structure.features || []).map(feature => feature.id).filter(Boolean);
 }
 
+// ÄNDERUNG 09.03.2026: Maximale Zeichenanzahl für den aktuellen PRD-Inhalt im Repair-Prompt.
+// Bei sehr langen Dokumenten (>20 Features) würden Free-Tier-Modelle truncaten, was zu
+// Placeholder-Feldern führt und den Repair ablehnt. Truncation verhindert dieses Kaskaden.
+const MAX_REPAIR_CURRENT_CONTENT_CHARS = 12000;
+
+function truncateRepairContent(content: string, maxChars: number): { text: string; truncated: boolean } {
+  if (content.length <= maxChars) return { text: content, truncated: false };
+  // Schneide an einer sauberen Feature-Grenze ab, nicht mitten in einem Feature
+  const truncated = content.slice(0, maxChars);
+  const lastFeatureBreak = truncated.lastIndexOf('\n### F-');
+  const cutPoint = lastFeatureBreak > maxChars * 0.7 ? lastFeatureBreak : maxChars;
+  return {
+    text: content.slice(0, cutPoint) + '\n\n[...more features present in original - all feature IDs and sections from ALLOWED CHANGE SCOPE retained...]',
+    truncated: true,
+  };
+}
+
 export function buildRepairPrompt(params: {
   mode: 'generate' | 'improve';
   issueSummary: string;
@@ -96,6 +113,10 @@ export function buildRepairPrompt(params: {
     language,
     repairHistory,
   } = params;
+  const { text: safeCurrentContent, truncated: contentTruncated } = truncateRepairContent(
+    currentContent,
+    MAX_REPAIR_CURRENT_CONTENT_CHARS
+  );
   const canonicalHeadings = CANONICAL_PRD_HEADINGS.map(heading => `- ## ${heading}`).join('\n');
   const templateInstruction = buildTemplateInstruction(templateCategory, language || 'en');
   const historyBlock = formatRepairHistory(repairHistory || []);
@@ -119,18 +140,22 @@ BASELINE PRD (must remain intact unless directly improved):
 ${existingContent || '(no baseline provided)'}
 
 CURRENT INCOMPLETE OUTPUT:
-${currentContent}
+${safeCurrentContent}
 
 ORIGINAL REQUEST:
 ${originalRequest}
 
-Return a COMPLETE corrected PRD in Markdown.
+Return a COMPLETE corrected PRD in Markdown.${contentTruncated ? '\nNOTE: The current output above was truncated for brevity. You MUST output ALL feature IDs listed in the scope block above — do not skip any.' : ''}
 
 STRICT OUTPUT RULES:
 - Use only this top-level heading set exactly once each (H2):
 ${canonicalHeadings}
 - Follow this template context:
 ${templateInstruction}
+- Feature headings MUST use canonical syntax: "### F-01: Feature Name"
+- Feature body ID lines MUST use canonical syntax: "Feature ID: F-01"
+- Never output non-canonical feature IDs such as F001 or F01.
+- Never use en-dash heading variants as the canonical feature heading form.
 - Do not add any extra top-level sections.
 - Only modify sections directly needed to resolve the listed issues.
 - Keep existing feature IDs stable and preserve baseline content unless directly improved.
@@ -150,18 +175,22 @@ ${historyBlock}
 ${allowedScopeBlock}
 
 CURRENT INCOMPLETE OUTPUT:
-${currentContent}
+${safeCurrentContent}
 
 ORIGINAL REQUEST:
 ${originalRequest}
 
-Return a COMPLETE corrected PRD in Markdown.
+Return a COMPLETE corrected PRD in Markdown.${contentTruncated ? '\nNOTE: The current output above was truncated for brevity. You MUST output ALL feature IDs listed in the scope block above — do not skip any.' : ''}
 
 STRICT OUTPUT RULES:
 - Use only this top-level heading set exactly once each (H2):
 ${canonicalHeadings}
 - Follow this template context:
 ${templateInstruction}
+- Feature headings MUST use canonical syntax: "### F-01: Feature Name"
+- Feature body ID lines MUST use canonical syntax: "Feature ID: F-01"
+- Never output non-canonical feature IDs such as F001 or F01.
+- Never use en-dash heading variants as the canonical feature heading form.
 - Do not add any extra top-level sections.
 - Only modify sections directly needed to resolve the listed issues.
 - Keep all existing feature IDs present and in the same order.

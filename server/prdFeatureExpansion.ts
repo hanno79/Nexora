@@ -59,23 +59,50 @@ export interface FeatureExpansionResult {
 }
 
 function buildFeatureListFromStructureFeatures(features: FeatureSpec[]): string {
-  return features
-    .map((feature) => {
-      const safeId = normalizeFeatureId(feature.id) || String(feature.id || '').trim().toUpperCase();
-      const safeName = String(feature.name || safeId || 'Feature').trim() || safeId || 'Feature';
-      const summarySource =
-        String(feature.purpose || '').trim()
-        || String(feature.trigger || '').trim()
-        || String(feature.rawContent || '').trim();
-      const shortDescription = summarySource
-        .replace(/\s+/g, ' ')
-        .replace(/^Feature ID:.*$/im, '')
-        .replace(/^Feature Name:.*$/im, '')
-        .trim()
-        .slice(0, 180) || safeName;
-      return `F-${safeId.replace(/^F-/i, '')}: ${safeName}\nShort description: ${shortDescription}`;
-    })
-    .join('\n\n');
+  const lines = ['Feature List:', ''];
+  let currentParentKey = '__NONE__';
+
+  for (const feature of features) {
+    const safeId = normalizeFeatureId(feature.id) || String(feature.id || '').trim().toUpperCase();
+    const safeName = String(feature.name || safeId || 'Feature').trim() || safeId || 'Feature';
+    const summarySource =
+      String(feature.purpose || '').trim()
+      || String(feature.trigger || '').trim()
+      || String(feature.rawContent || '').trim();
+    const shortDescription = summarySource
+      .replace(/\s+/g, ' ')
+      .replace(/^Feature ID:.*$/im, '')
+      .replace(/^Feature Name:.*$/im, '')
+      .replace(/^Parent Task:.*$/im, '')
+      .replace(/^Parent Task Description:.*$/im, '')
+      .trim()
+      .slice(0, 180) || safeName;
+    const parentTaskName = String(feature.parentTaskName || '').trim();
+    const parentTaskDescription = String(feature.parentTaskDescription || '').trim();
+    const parentKey = (parentTaskName || parentTaskDescription)
+      ? `${parentTaskName}::${parentTaskDescription}`
+      : '__NONE__';
+
+    if (parentTaskName && parentKey !== currentParentKey) {
+      if (lines[lines.length - 1] !== '') {
+        lines.push('');
+      }
+      lines.push(`Main Task: ${parentTaskName}`);
+      if (parentTaskDescription) {
+        lines.push(`Task Summary: ${parentTaskDescription}`);
+      }
+      lines.push('');
+      currentParentKey = parentKey;
+    } else if (parentKey !== currentParentKey) {
+      currentParentKey = parentKey;
+    }
+
+    lines.push(`${safeId}: ${safeName}`);
+    lines.push(`Short description: ${shortDescription}`);
+    lines.push('');
+  }
+
+  return lines.join('\n').trim();
 }
 
 /**
@@ -114,6 +141,7 @@ export async function runFeatureExpansionPipeline(params: {
   allowedFeatureIds?: string[];
   allowFeatureDiscovery?: boolean;
   seedFeatures?: FeatureSpec[];
+  abortSignal?: AbortSignal;
   log?: (msg: string) => void;
   warn?: (msg: string) => void;
 }): Promise<FeatureExpansionResult> {
@@ -183,15 +211,20 @@ export async function runFeatureExpansionPipeline(params: {
         retried: false,
       };
     } else {
-      featureResult = await generateFeatureList(inputText, vision, client, featureContext);
+      featureResult = await generateFeatureList(inputText, vision, client, featureContext, params.abortSignal);
     }
-    const topLevelFeatureLines = featureResult.featureList
+    if (params.abortSignal?.aborted) return { ...empty, blockedFeatureIds };
+    const mainTaskCount = featureResult.featureList
       .split('\n')
-      .filter((line) => /^\s*(?:-\s+|F-\d+:)/i.test(line.trim()))
+      .filter((line) => /^\s*Main Task\s*:/i.test(line.trim()))
+      .length;
+    const subtaskCount = featureResult.featureList
+      .split('\n')
+      .filter((line) => /^\s*(?:-\s+)?F[- ]?\d+\s*:/i.test(line.trim()))
       .length;
     logFn(
       `🧩 Feature List generated (model: ${featureResult.model}, retried: ${featureResult.retried}, ` +
-      `${topLevelFeatureLines} lines, ${featureResult.featureList.length} chars)`
+      `${mainTaskCount} main tasks, ${subtaskCount} subtasks, ${featureResult.featureList.length} chars)`
     );
 
     try {
@@ -202,6 +235,7 @@ export async function runFeatureExpansionPipeline(params: {
         featureResult.featureList,
         client,
         language,
+        params.abortSignal,
       );
       logFn(`🏗️ Feature Expansion complete: ${expansionResult.expandedFeatures.length} features, ${expansionResult.totalTokens} tokens`);
 

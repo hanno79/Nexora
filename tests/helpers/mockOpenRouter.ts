@@ -198,16 +198,16 @@ export function buildMinimalPrdResponse(featureCount: number = 3, language: 'en'
   sections.push('');
 
   const featureNames = [
-    ['User Authentication', 'Benutzerauthentifizierung'],
-    ['Dashboard Analytics', 'Dashboard-Analysen'],
-    ['Document Export', 'Dokumentenexport'],
+    ['PRD Authoring Workflow', 'PRD-Erstellungs-Workflow'],
+    ['Quality Gate Evaluation', 'Qualitaets-Gate-Evaluierung'],
+    ['Document Refinement', 'Dokumentenverfeinerung'],
     ['Team Collaboration', 'Teamzusammenarbeit'],
-    ['Notification Engine', 'Benachrichtigungssystem'],
-    ['Search Indexing', 'Suchindexierung'],
-    ['Role Management', 'Rollenverwaltung'],
-    ['Audit Logging', 'Audit-Protokollierung'],
-    ['API Gateway', 'API-Gateway'],
-    ['Data Migration', 'Datenmigration'],
+    ['Feature Catalogue Builder', 'Feature-Katalog-Erstellung'],
+    ['Version History Tracking', 'Versionshistorie-Verfolgung'],
+    ['Requirement Validation', 'Anforderungsvalidierung'],
+    ['Compilation Pipeline', 'Kompilierungs-Pipeline'],
+    ['Structured Export', 'Strukturierter Export'],
+    ['Iterative Refinement', 'Iterative Verfeinerung'],
   ];
 
   for (let i = 1; i <= featureCount; i++) {
@@ -220,8 +220,8 @@ export function buildMinimalPrdResponse(featureCount: number = 3, language: 'en'
     sections.push('1. Purpose');
     sections.push(
       isGerman
-        ? `"${fName}" liefert einen klar abgegrenzten Nutzerwert mit messbarem Ergebnis fuer die Zielgruppe.`
-        : `"${fName}" delivers a clearly scoped user capability with an observable outcome for the target audience.`,
+        ? `"${fName}" unterstuetzt die kollaborative Produktplanung und PRD-Erstellung durch deterministisch geprueften Qualitaetsoutput fuer das Zielteam.`
+        : `"${fName}" supports collaborative product planning and PRD creation with deterministic quality-checked output for the target team.`,
     );
     sections.push('');
     sections.push('2. Actors');
@@ -324,8 +324,8 @@ export function buildMinimalPrdResponse(featureCount: number = 3, language: 'en'
   sections.push('## Out of Scope');
   sections.push(
     isGerman
-      ? '- Native Mobile-Apps sind nicht Teil dieses Releases.\n- Erweiterte Analytics und Reporting werden in einer spaeteren Phase umgesetzt.'
-      : '- Native mobile apps are not part of this release.\n- Advanced analytics and reporting will be implemented in a later phase.',
+      ? '- Native Mobile-Apps sind nicht Teil dieses Releases.\n- Erweiterte Analytics und Reporting sind in diesem Release nicht enthalten.'
+      : '- Native mobile apps are not part of this release.\n- Advanced analytics and reporting are excluded from this release.',
   );
   sections.push('');
 

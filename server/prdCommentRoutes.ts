@@ -7,10 +7,13 @@ Beschreibung: Registriert PRD-Kommentar-Routen als kleines Modul.
 
 // ÄNDERUNG 08.03.2026: Kommentar-Routen aus `server/routes.ts` extrahiert,
 // um die Hauptdatei konservativ weiter zu verkleinern.
+// ÄNDERUNG 08.03.2026: Kommentar-POST-Body auf Zod-Validierung umgestellt.
 
 import type { Request, RequestHandler } from 'express';
+import { ZodError } from 'zod';
 import { asyncHandler } from './asyncHandler';
 import { requirePrdAccess } from './prdAccess';
+import { commentSchema } from './schemas';
 import type { IStorage } from './storage';
 
 type AuthenticatedRequest = Request & {
@@ -82,11 +85,18 @@ export function registerPrdCommentRoutes(
     }
 
     const userId = req.user.claims.sub;
-    const { content, sectionId } = req.body as { content?: string; sectionId?: string | null };
+    let parsedCommentBody: ReturnType<typeof commentSchema.parse>;
+    try {
+      parsedCommentBody = commentSchema.parse(req.body);
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({ message: 'Validation error', errors: error.issues });
+      }
 
-    if (!content || content.trim() === '') {
-      return res.status(400).json({ message: 'Comment content is required' });
+      throw error;
     }
+
+    const { content, sectionId } = parsedCommentBody;
 
     const comment = await deps.storage.createComment({
       prdId: id,

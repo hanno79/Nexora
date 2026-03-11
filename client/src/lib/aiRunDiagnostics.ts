@@ -37,6 +37,18 @@ export type ClientCompilerDiagnostics = {
   failureStage?: string | null;
   semanticVerifierVerdict?: 'pass' | 'fail' | null;
   primaryGateReason?: string | null;
+  structuralParseReason?: string | null;
+  rawFeatureHeadingSamples?: string[];
+  normalizationApplied?: boolean;
+  normalizedFeatureCountRecovered?: number;
+  primaryCapabilityAnchors?: string[];
+  featurePriorityWindow?: string[];
+  coreFeatureIds?: string[];
+  supportFeatureIds?: string[];
+  canonicalFeatureIds?: string[];
+  timelineMismatchedFeatureIds?: string[];
+  timelineRewrittenFromFeatureMap?: boolean;
+  timelineRewriteAppliedLines?: number;
   semanticBlockingCodes?: string[];
   semanticBlockingIssues?: ClientCompilerIssue[];
   initialSemanticBlockingIssues?: ClientCompilerIssue[];
@@ -49,6 +61,28 @@ export type ClientCompilerDiagnostics = {
   semanticRepairTruncated?: boolean;
   repairGapReason?: string | null;
   repairCycleCount?: number;
+  compilerRepairTruncationCount?: number;
+  compilerRepairFinishReasons?: string[];
+  repairRejected?: boolean;
+  repairRejectedReason?: string | null;
+  repairDegradationSignals?: string[];
+  degradedCandidateAvailable?: boolean;
+  degradedCandidateSource?: 'pre_repair_best' | 'post_targeted_repair' | null;
+  displayedCandidateSource?: 'passed' | 'pre_repair_best' | 'post_targeted_repair' | null;
+  diagnosticsAlignedWithDisplayedCandidate?: boolean;
+  collapsedFeatureNameIds?: string[];
+  placeholderFeatureIds?: string[];
+  acceptanceBoilerplateFeatureIds?: string[];
+  featureQualityFloorFeatureIds?: string[];
+  featureQualityFloorFailedFeatureIds?: string[];
+  featureQualityFloorPassed?: boolean;
+  primaryFeatureQualityReason?: string | null;
+  emptyMainFlowFeatureIds?: string[];
+  placeholderPurposeFeatureIds?: string[];
+  placeholderAlternateFlowFeatureIds?: string[];
+  thinAcceptanceCriteriaFeatureIds?: string[];
+  semanticRepairChangedSections?: string[];
+  semanticRepairStructuralChange?: boolean;
   earlyDriftDetected?: boolean;
   earlyDriftCodes?: string[];
   earlyDriftSections?: string[];
@@ -57,6 +91,16 @@ export type ClientCompilerDiagnostics = {
   earlyRepairAttempted?: boolean;
   earlyRepairApplied?: boolean;
   primaryEarlyDriftReason?: string | null;
+  runtimeFailureCode?: 'provider_exhaustion' | 'provider_auth' | 'provider_unavailable' | null;
+  providerFailureSummary?: string | null;
+  providerFailureCounts?: {
+    rateLimited: number;
+    timedOut: number;
+    provider4xx: number;
+    emptyResponse: number;
+  } | null;
+  providerFailedModels?: string[];
+  providerFailureStage?: string | null;
   repairModelIds?: string[];
   reviewerModelIds?: string[];
   verifierModelIds?: string[];
@@ -131,10 +175,8 @@ function toLastModelAttempt(value: unknown): ClientLastModelAttempt | null {
   };
 }
 
-function sanitizeCompilerDiagnostics(value: unknown): ClientCompilerDiagnostics | null {
-  if (!isObject(value)) return null;
-
-  const diagnostics: ClientCompilerDiagnostics = {
+function mapCompilerCoreFields(value: Record<string, any>): Partial<ClientCompilerDiagnostics> {
+  return {
     structuredFeatureCount: typeof value.structuredFeatureCount === 'number' ? value.structuredFeatureCount : undefined,
     totalFeatureCount: typeof value.totalFeatureCount === 'number' ? value.totalFeatureCount : undefined,
     jsonSectionUpdates: typeof value.jsonSectionUpdates === 'number' ? value.jsonSectionUpdates : undefined,
@@ -159,6 +201,37 @@ function sanitizeCompilerDiagnostics(value: unknown): ClientCompilerDiagnostics 
         ? value.semanticVerifierVerdict
         : undefined,
     primaryGateReason: typeof value.primaryGateReason === 'string' ? value.primaryGateReason : undefined,
+    structuralParseReason: typeof value.structuralParseReason === 'string' ? value.structuralParseReason : undefined,
+    rawFeatureHeadingSamples: toStringArray(value.rawFeatureHeadingSamples),
+    normalizationApplied: typeof value.normalizationApplied === 'boolean' ? value.normalizationApplied : undefined,
+    normalizedFeatureCountRecovered:
+      typeof value.normalizedFeatureCountRecovered === 'number'
+        ? value.normalizedFeatureCountRecovered
+        : undefined,
+  };
+}
+
+function mapFeatureClassificationFields(value: Record<string, any>): Partial<ClientCompilerDiagnostics> {
+  return {
+    primaryCapabilityAnchors: toStringArray(value.primaryCapabilityAnchors),
+    featurePriorityWindow: toStringArray(value.featurePriorityWindow),
+    coreFeatureIds: toStringArray(value.coreFeatureIds),
+    supportFeatureIds: toStringArray(value.supportFeatureIds),
+    canonicalFeatureIds: toStringArray(value.canonicalFeatureIds),
+    timelineMismatchedFeatureIds: toStringArray(value.timelineMismatchedFeatureIds),
+    timelineRewrittenFromFeatureMap:
+      typeof value.timelineRewrittenFromFeatureMap === 'boolean'
+        ? value.timelineRewrittenFromFeatureMap
+        : undefined,
+    timelineRewriteAppliedLines:
+      typeof value.timelineRewriteAppliedLines === 'number'
+        ? value.timelineRewriteAppliedLines
+        : undefined,
+  };
+}
+
+function mapSemanticRepairFields(value: Record<string, any>): Partial<ClientCompilerDiagnostics> {
+  return {
     semanticBlockingCodes: toStringArray(value.semanticBlockingCodes),
     semanticBlockingIssues: toCompilerIssueArray(value.semanticBlockingIssues),
     initialSemanticBlockingIssues: toCompilerIssueArray(value.initialSemanticBlockingIssues),
@@ -171,6 +244,57 @@ function sanitizeCompilerDiagnostics(value: unknown): ClientCompilerDiagnostics 
     semanticRepairTruncated: typeof value.semanticRepairTruncated === 'boolean' ? value.semanticRepairTruncated : undefined,
     repairGapReason: typeof value.repairGapReason === 'string' ? value.repairGapReason : undefined,
     repairCycleCount: typeof value.repairCycleCount === 'number' ? value.repairCycleCount : undefined,
+    compilerRepairTruncationCount:
+      typeof value.compilerRepairTruncationCount === 'number'
+        ? value.compilerRepairTruncationCount
+        : undefined,
+    compilerRepairFinishReasons: toStringArray(value.compilerRepairFinishReasons),
+    repairRejected: typeof value.repairRejected === 'boolean' ? value.repairRejected : undefined,
+    repairRejectedReason: typeof value.repairRejectedReason === 'string' ? value.repairRejectedReason : undefined,
+    repairDegradationSignals: toStringArray(value.repairDegradationSignals),
+    degradedCandidateAvailable:
+      typeof value.degradedCandidateAvailable === 'boolean' ? value.degradedCandidateAvailable : undefined,
+    degradedCandidateSource:
+      value.degradedCandidateSource === 'pre_repair_best' || value.degradedCandidateSource === 'post_targeted_repair'
+        ? value.degradedCandidateSource
+        : undefined,
+    displayedCandidateSource:
+      value.displayedCandidateSource === 'passed'
+      || value.displayedCandidateSource === 'pre_repair_best'
+      || value.displayedCandidateSource === 'post_targeted_repair'
+        ? value.displayedCandidateSource
+        : undefined,
+    diagnosticsAlignedWithDisplayedCandidate:
+      typeof value.diagnosticsAlignedWithDisplayedCandidate === 'boolean'
+        ? value.diagnosticsAlignedWithDisplayedCandidate
+        : undefined,
+    collapsedFeatureNameIds: toStringArray(value.collapsedFeatureNameIds),
+    placeholderFeatureIds: toStringArray(value.placeholderFeatureIds),
+    acceptanceBoilerplateFeatureIds: toStringArray(value.acceptanceBoilerplateFeatureIds),
+    featureQualityFloorFeatureIds: toStringArray(value.featureQualityFloorFeatureIds),
+    featureQualityFloorFailedFeatureIds: toStringArray(value.featureQualityFloorFailedFeatureIds),
+    featureQualityFloorPassed:
+      typeof value.featureQualityFloorPassed === 'boolean'
+        ? value.featureQualityFloorPassed
+        : undefined,
+    primaryFeatureQualityReason:
+      typeof value.primaryFeatureQualityReason === 'string'
+        ? value.primaryFeatureQualityReason
+        : undefined,
+    emptyMainFlowFeatureIds: toStringArray(value.emptyMainFlowFeatureIds),
+    placeholderPurposeFeatureIds: toStringArray(value.placeholderPurposeFeatureIds),
+    placeholderAlternateFlowFeatureIds: toStringArray(value.placeholderAlternateFlowFeatureIds),
+    thinAcceptanceCriteriaFeatureIds: toStringArray(value.thinAcceptanceCriteriaFeatureIds),
+    semanticRepairChangedSections: toStringArray(value.semanticRepairChangedSections),
+    semanticRepairStructuralChange:
+      typeof value.semanticRepairStructuralChange === 'boolean'
+        ? value.semanticRepairStructuralChange
+        : undefined,
+  };
+}
+
+function mapDriftAndFailureFields(value: Record<string, any>): Partial<ClientCompilerDiagnostics> {
+  return {
     earlyDriftDetected: typeof value.earlyDriftDetected === 'boolean' ? value.earlyDriftDetected : undefined,
     earlyDriftCodes: toStringArray(value.earlyDriftCodes),
     earlyDriftSections: toStringArray(value.earlyDriftSections),
@@ -179,6 +303,36 @@ function sanitizeCompilerDiagnostics(value: unknown): ClientCompilerDiagnostics 
     earlyRepairAttempted: typeof value.earlyRepairAttempted === 'boolean' ? value.earlyRepairAttempted : undefined,
     earlyRepairApplied: typeof value.earlyRepairApplied === 'boolean' ? value.earlyRepairApplied : undefined,
     primaryEarlyDriftReason: typeof value.primaryEarlyDriftReason === 'string' ? value.primaryEarlyDriftReason : undefined,
+    runtimeFailureCode:
+      value.runtimeFailureCode === 'provider_exhaustion'
+      || value.runtimeFailureCode === 'provider_auth'
+      || value.runtimeFailureCode === 'provider_unavailable'
+        ? value.runtimeFailureCode
+        : undefined,
+    providerFailureSummary:
+      typeof value.providerFailureSummary === 'string'
+        ? value.providerFailureSummary
+        : undefined,
+    providerFailureCounts:
+      isObject(value.providerFailureCounts)
+      && typeof value.providerFailureCounts.rateLimited === 'number'
+      && typeof value.providerFailureCounts.timedOut === 'number'
+      && typeof value.providerFailureCounts.provider4xx === 'number'
+      && typeof value.providerFailureCounts.emptyResponse === 'number'
+        ? {
+            rateLimited: value.providerFailureCounts.rateLimited,
+            timedOut: value.providerFailureCounts.timedOut,
+            provider4xx: value.providerFailureCounts.provider4xx,
+            emptyResponse: value.providerFailureCounts.emptyResponse,
+          }
+        : undefined,
+    providerFailedModels: toStringArray(value.providerFailedModels),
+    providerFailureStage: typeof value.providerFailureStage === 'string' ? value.providerFailureStage : undefined,
+  };
+}
+
+function mapModelTrackingFields(value: Record<string, any>): Partial<ClientCompilerDiagnostics> {
+  return {
     repairModelIds: toStringArray(value.repairModelIds),
     reviewerModelIds: toStringArray(value.reviewerModelIds),
     verifierModelIds: toStringArray(value.verifierModelIds),
@@ -197,8 +351,18 @@ function sanitizeCompilerDiagnostics(value: unknown): ClientCompilerDiagnostics 
     languageFixRequired: typeof value.languageFixRequired === 'boolean' ? value.languageFixRequired : undefined,
     aggregatedFeatureCount: typeof value.aggregatedFeatureCount === 'number' ? value.aggregatedFeatureCount : undefined,
   };
+}
 
-  return diagnostics;
+function sanitizeCompilerDiagnostics(value: unknown): ClientCompilerDiagnostics | null {
+  if (!isObject(value)) return null;
+
+  return {
+    ...mapCompilerCoreFields(value),
+    ...mapFeatureClassificationFields(value),
+    ...mapSemanticRepairFields(value),
+    ...mapDriftAndFailureFields(value),
+    ...mapModelTrackingFields(value),
+  };
 }
 
 export function extractAiRunFinalContent(response: unknown): string {
@@ -289,6 +453,15 @@ export function extractAiRunRecord(response: unknown): ClientCompilerRunRecord {
 
 export function isFailedQualityRun(response: unknown): boolean {
   return extractAiRunRecord(response).qualityStatus === 'failed_quality';
+}
+
+export function isFailedRuntimeRun(response: unknown): boolean {
+  return extractAiRunRecord(response).qualityStatus === 'failed_runtime';
+}
+
+export function isFailedAiRun(response: unknown): boolean {
+  const status = extractAiRunRecord(response).qualityStatus;
+  return status === 'failed_quality' || status === 'failed_runtime';
 }
 
 export function hasUsableAiRunContent(response: unknown): boolean {

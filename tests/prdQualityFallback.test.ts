@@ -162,6 +162,67 @@ describe('pickBestDegradedResult', () => {
     expect(pickBestDegradedResult(primaryError, new Error('runtime error'))).toBeNull();
   });
 
+  it('gibt null zurueck, wenn der degradierte Kandidat klare Fallback-Sektionen enthaelt', () => {
+    const primaryError = new PrdCompilerQualityError(
+      'primary failed',
+      makeQualityReport({
+        issues: [{ severity: 'error', code: 'excessive_fallback_sections', message: 'too many fallback sections' }],
+      }),
+      [{ content: 'fallback-heavy content', model: 'a', usage: { prompt_tokens: 0, completion_tokens: 10, total_tokens: 10 } }]
+    );
+
+    expect(pickBestDegradedResult(primaryError, new Error('runtime error'))).toBeNull();
+  });
+
+  it('gibt null zurueck, wenn Placeholder-Features den degradieren Kandidaten dominieren', () => {
+    const primaryError = new PrdCompilerQualityError(
+      'primary failed',
+      makeQualityReport({
+        issues: [{ severity: 'warning', code: 'minor_issue', message: 'minor issue' }],
+      }),
+      [{ content: 'placeholder-heavy content', model: 'a', usage: { prompt_tokens: 0, completion_tokens: 10, total_tokens: 10 } }],
+      undefined,
+      {
+        featureQualityFloorPassed: false,
+        placeholderFeatureIds: ['F-01'],
+        emptyMainFlowFeatureIds: ['F-01'],
+      }
+    );
+
+    expect(pickBestDegradedResult(primaryError, new Error('runtime error'))).toBeNull();
+  });
+
+  it('bevorzugt den zulaessigen Primaerkandidaten, wenn der bessere Fallback semantisch degradiert ist', () => {
+    const primaryError = new PrdCompilerQualityError(
+      'primary failed',
+      makeQualityReport({
+        issues: [{ severity: 'error', code: 'minor_error', message: 'minor error' }],
+        featureCount: 3,
+      }),
+      [{ content: 'primary acceptable content', model: 'a', usage: { prompt_tokens: 0, completion_tokens: 20, total_tokens: 20 } }]
+    );
+
+    const fallbackError = new PrdCompilerQualityError(
+      'fallback failed',
+      makeQualityReport({
+        issues: [{ severity: 'warning', code: 'minor_warning', message: 'minor warning' }],
+        featureCount: 6,
+      }),
+      [{ content: 'fallback but degraded', model: 'b', usage: { prompt_tokens: 0, completion_tokens: 30, total_tokens: 30 } }],
+      undefined,
+      {
+        featureQualityFloorPassed: false,
+        placeholderPurposeFeatureIds: ['F-02'],
+        acceptanceBoilerplateFeatureIds: ['F-02'],
+      }
+    );
+
+    const result = pickBestDegradedResult(primaryError, fallbackError);
+
+    expect(result).not.toBeNull();
+    expect(result!.content).toBe('primary acceptable content');
+  });
+
   it('marks excessive fallback degradation as non-acceptable when requested', () => {
     const rejected = shouldRejectDegradedResult({
       quality: makeQualityReport({

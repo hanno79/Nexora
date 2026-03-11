@@ -9,6 +9,7 @@
 // Prüft Placeholder-Erkennung und forciertes Überschreiben falscher Feature-Inhalte
 // ÄNDERUNG 07.03.2026: Reale Session-/MFA-/Audit-Fehlfamilien und Login-Falschpositiv abgesichert
 // ÄNDERUNG 07.03.2026: Generische MFA-Bezeichnungen mit Enrollment-Flow gegen Falschpositiv abgesichert
+// ÄNDERUNG 10.03.2026: Vision-/Timeline-Prompt-Cluster fuer deterministische Smoke-Issues abgesichert
 
 /// <reference types="vitest" />
 import { describe, expect, it, vi } from 'vitest';
@@ -584,5 +585,139 @@ describe('prdContentReviewer Semantik', () => {
     expect(combinedPrompts).toContain('User.passwordHash');
     expect(combinedPrompts).toContain('business_rule_constraint_conflict');
     expect(combinedPrompts).toContain('out_of_scope_reintroduced');
+  });
+
+  it('buendelt Vision-, Timeline- und fruehe Feature-Ziele fuer deterministische Smoke-Issues im ersten Batch', async () => {
+    const structure = makeStructure([
+      {
+        id: 'F-01',
+        name: 'Shared Notes Capture',
+        rawContent: 'Benutzer erfassen und teilen gemeinsame Notizen in Echtzeit.',
+        purpose: 'Ermoeglicht Teams das gemeinsame Erfassen und Aktualisieren von Projektnotizen.',
+        actors: 'Teammitglied',
+        trigger: 'Benutzer erstellt oder bearbeitet eine gemeinsame Notiz.',
+        preconditions: 'Ein Projektarbeitsraum ist geoeffnet.',
+        postconditions: 'Die Notiz ist fuer alle berechtigten Teammitglieder synchron verfuegbar.',
+        dataImpact: 'SharedNote und SharedNoteRevision werden aktualisiert.',
+        uiImpact: 'Editor und Freigabestatus werden aktualisiert.',
+        mainFlow: [
+          'Benutzer oeffnet eine gemeinsame Notiz.',
+          'System speichert und synchronisiert die Bearbeitung fuer das Team.',
+        ],
+        acceptanceCriteria: ['Gemeinsame Notizen bleiben nach dem Speichern fuer berechtigte Teammitglieder synchron sichtbar.'],
+      },
+      {
+        id: 'F-02',
+        name: 'Session Management with Configurable Expiry',
+        rawContent: 'Administratoren konfigurieren Sitzungsgrenzen und Ablaufzeiten.',
+        purpose: 'Erlaubt die Konfiguration von Sitzungsablauf und Inaktivitaetsgrenzen.',
+        actors: 'Administrator',
+        trigger: 'Administrator passt Session-Einstellungen an.',
+        preconditions: 'Administrationsrechte sind vorhanden.',
+        postconditions: 'Neue Sitzungsregeln werden fuer kuenftige Logins gespeichert.',
+        dataImpact: 'SessionPolicy wird aktualisiert.',
+        uiImpact: 'Admin-Einstellungsdialog zeigt neue Ablaufwerte.',
+        mainFlow: [
+          'Administrator oeffnet die Session-Einstellungen.',
+          'System speichert neue Ablauf- und Inaktivitaetsgrenzen.',
+        ],
+        acceptanceCriteria: ['Neue Sitzungsgrenzen werden fuer kuenftige Sitzungen angewendet.'],
+      },
+      {
+        id: 'F-03',
+        name: 'Workspace Audit Export',
+        rawContent: 'Administratoren exportieren Protokolle.',
+        purpose: 'Erlaubt den Export von Audit-Daten fuer Compliance-Pruefungen.',
+        actors: 'Administrator',
+        trigger: 'Administrator startet den Audit-Export.',
+        preconditions: 'Audit-Daten liegen vor.',
+        postconditions: 'Ein Exportpaket wird bereitgestellt.',
+        dataImpact: 'AuditExport wird erzeugt.',
+        uiImpact: 'Exportstatus wird angezeigt.',
+        mainFlow: ['Administrator startet den Export.', 'System erstellt ein Exportpaket.'],
+        acceptanceCriteria: ['Audit-Exporte koennen fuer den gewaehlten Zeitraum heruntergeladen werden.'],
+      },
+    ]);
+    structure.systemVision = 'Die Plattform soll vor allem gemeinsame Notizerfassung, Freigabe und Team-Zusammenarbeit im Arbeitsraum verbessern.';
+    structure.timelineMilestones = 'Phase 1 referenziert F-02, beschreibt aber inhaltlich das gemeinsame Erfassen und Teilen von Notizen.';
+
+    const prompts: string[] = [];
+    const reviewer = vi.fn(async (prompt: string) => {
+      prompts.push(prompt);
+      return {
+        content: '{"sections":{},"features":[]}',
+        model: 'mock/semantic-reviewer',
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        finishReason: 'stop' as const,
+      };
+    });
+
+    const result = await applySemanticPatchRefinement({
+      content: assembleStructureToMarkdown(structure),
+      structure,
+      issues: [
+        {
+          code: 'vision_capability_coverage_missing',
+          sectionKey: 'systemVision',
+          message: 'Primary product capabilities from the vision are not represented clearly enough in the leading feature set.',
+          severity: 'error',
+          suggestedAction: 'rewrite',
+        },
+        {
+          code: 'vision_capability_coverage_missing',
+          sectionKey: 'feature:F-01',
+          message: 'Shared Notes Capture should more clearly represent the primary product capability in the leading feature window.',
+          severity: 'error',
+          suggestedAction: 'enrich',
+          targetFields: ['purpose', 'trigger', 'mainFlow', 'acceptanceCriteria'],
+        },
+        {
+          code: 'support_features_overweight',
+          sectionKey: 'feature:F-02',
+          message: 'Session Management with Configurable Expiry currently outweighs core user-value capabilities in the leading feature window.',
+          severity: 'error',
+          suggestedAction: 'enrich',
+          targetFields: ['purpose', 'trigger', 'mainFlow', 'preconditions', 'postconditions', 'dataImpact', 'acceptanceCriteria'],
+        },
+        {
+          code: 'timeline_feature_reference_mismatch',
+          sectionKey: 'timelineMilestones',
+          message: 'Timeline references F-02 in a way that aligns more strongly with F-01 than with the canonical feature F-02.',
+          severity: 'error',
+          suggestedAction: 'rewrite',
+        },
+        {
+          code: 'timeline_feature_reference_mismatch',
+          sectionKey: 'feature:F-01',
+          message: 'Timeline language should align F-01 with shared note capture instead of session policy behavior.',
+          severity: 'error',
+          suggestedAction: 'enrich',
+          targetFields: ['name', 'purpose', 'mainFlow', 'trigger', 'acceptanceCriteria'],
+        },
+        {
+          code: 'timeline_feature_reference_mismatch',
+          sectionKey: 'feature:F-02',
+          message: 'Timeline language should align F-02 with session policy behavior instead of note collaboration behavior.',
+          severity: 'error',
+          suggestedAction: 'enrich',
+          targetFields: ['name', 'purpose', 'mainFlow', 'trigger', 'acceptanceCriteria'],
+        },
+      ],
+      language: 'de',
+      originalRequest: 'Bitte liefere eine kollaborative Feature-PRD fuer gemeinsame Teamnotizen.',
+      reviewer,
+    });
+
+    expect(result.refined).toBe(false);
+    expect(reviewer).toHaveBeenCalledTimes(1);
+    expect(prompts[0]).toContain('## Target Section: systemVision');
+    expect(prompts[0]).toContain('## Target Section: timelineMilestones');
+    expect(prompts[0]).toContain('## Target Feature: F-01 - Shared Notes Capture');
+    expect(prompts[0]).toContain('## Target Feature: F-02 - Session Management with Configurable Expiry');
+    expect(prompts[0]).toContain('Leading Feature Window (fixed order; strengthen content instead of reordering):');
+    expect(prompts[0]).toContain('Feature List Position: 1');
+    expect(prompts[0]).toContain('Feature List Position: 2');
+    expect(prompts[0]).toContain('Support, admin, setup, configuration, or enabler mechanics may remain, but they must read as subordinate enablers');
+    expect(prompts[0]).toContain('Timeline & Milestones must reference the canonical feature identity and user outcome of the matching feature.');
   });
 });

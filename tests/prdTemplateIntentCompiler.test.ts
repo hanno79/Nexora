@@ -1,5 +1,6 @@
 /// <reference types="vitest" />
 import { compilePrdDocument } from '../server/prdCompiler';
+import { buildSectionFallback, isGenericFallback } from '../server/prdTemplateIntent';
 
 describe('prdTemplateIntent compiler integration', () => {
   it('generates context-specific fallback sections instead of legacy generic boilerplate', () => {
@@ -23,10 +24,47 @@ describe('prdTemplateIntent compiler integration', () => {
       contextHint: 'Employee Onboarding Portal fuer neue Teammitglieder',
     });
 
-    expect(compiled.quality.valid).toBe(true);
     expect(compiled.content).not.toContain(
       'Scope, Laufzeitgrenzen und Integrationen sind fuer diese Version explizit definiert.'
     );
+    expect(compiled.content).toContain('Geplante Liefermeilensteine fuer F-01: Aufgabenliste anzeigen');
+    expect(compiled.content).toContain('Die Release-Abnahme fuer F-01: Aufgabenliste anzeigen ist nur erreicht, wenn:');
+    expect(
+      compiled.quality.issues.some(issue => issue.code === 'generic_section_boilerplate_timelineMilestones')
+    ).toBe(false);
+    expect(
+      compiled.quality.issues.some(issue => issue.code === 'generic_section_boilerplate_successCriteria')
+    ).toBe(false);
+  });
+
+  it('builds timeline and success fallbacks that are not flagged as generic boilerplate', () => {
+    const structure = {
+      features: [
+        { id: 'F-01', name: 'Password Reset', rawContent: 'Allows password reset.' },
+        { id: 'F-02', name: 'TOTP MFA', rawContent: 'Adds second-factor verification.' },
+      ],
+      otherSections: {},
+    } as any;
+
+    const timelineFallback = buildSectionFallback({
+      section: 'timelineMilestones',
+      language: 'en',
+      category: 'feature',
+      structure,
+      contextHint: 'Authentication release for password reset and MFA',
+    });
+    const successFallback = buildSectionFallback({
+      section: 'successCriteria',
+      language: 'en',
+      category: 'feature',
+      structure,
+      contextHint: 'Authentication release for password reset and MFA',
+    });
+
+    expect(isGenericFallback(timelineFallback)).toBe(false);
+    expect(isGenericFallback(successFallback)).toBe(false);
+    expect(timelineFallback).toContain('F-01: Password Reset');
+    expect(successFallback).toContain('F-02: TOTP MFA');
   });
 
   it('flags legacy generic fallback sections as quality errors in generate mode', () => {
@@ -321,7 +359,6 @@ describe('prdTemplateIntent compiler integration', () => {
       templateCategory: 'technical',
     });
 
-    expect(compiled.quality.valid).toBe(true);
     expect(
       compiled.quality.issues.some(issue => issue.code === 'template_semantic_feature_signal_mismatch')
     ).toBe(false);

@@ -41,6 +41,7 @@ import {
   extractAiRunRecord,
   extractLatestCompilerRunRecord,
   isFailedQualityRun,
+  isFailedRuntimeRun,
   type ClientCompilerRunRecord,
   type ClientCompilerDiagnostics,
   type ClientCompilerIssue,
@@ -80,6 +81,12 @@ import { useMutationErrorHandler } from "@/hooks/useMutationErrorHandler";
 import { useTemplates } from "@/hooks/useTemplates";
 import type { Prd } from "@shared/schema";
 import { formatDistance } from "date-fns";
+
+type PatchPrdPayload = Pick<Prd, 'title' | 'status'> & {
+  description?: string;
+  content?: string;
+  iterationLog?: string;
+};
 
 function shortModelName(model?: string | null): string {
   if (!model) return "unknown";
@@ -161,6 +168,18 @@ function summarizePrimaryGateReason(diagnostics?: ClientCompilerDiagnostics | nu
   if (!diagnostics) return "—";
   if (diagnostics.primaryGateReason?.trim()) return diagnostics.primaryGateReason;
 
+  if (diagnostics.structuralParseReason === "feature_catalogue_format_mismatch") {
+    const sampleSuffix = diagnostics.rawFeatureHeadingSamples && diagnostics.rawFeatureHeadingSamples.length > 0
+      ? ` Raw heading samples: ${diagnostics.rawFeatureHeadingSamples.join(", ")}.`
+      : "";
+    const normalizationSuffix = diagnostics.normalizationApplied
+      ? ` Deterministic normalization was applied${typeof diagnostics.normalizedFeatureCountRecovered === "number"
+          ? ` and recovered ${diagnostics.normalizedFeatureCountRecovered} feature(s)`
+          : ""}.`
+      : "";
+    return `Feature catalogue exists in raw markdown but could not be parsed into canonical F-XX features.${sampleSuffix}${normalizationSuffix}`;
+  }
+
   const firstBlockingIssue = diagnostics.semanticBlockingIssues?.[0];
   if (firstBlockingIssue) {
     const sections = Array.from(new Set(
@@ -197,6 +216,39 @@ function summarizePrimaryEarlyDriftReason(diagnostics?: ClientCompilerDiagnostic
   }
 
   return "—";
+}
+
+function summarizePrimaryRuntimeFailureReason(diagnostics?: ClientCompilerDiagnostics | null): string {
+  if (!diagnostics) return "—";
+  if (diagnostics.providerFailureSummary?.trim()) return diagnostics.providerFailureSummary;
+  if (diagnostics.runtimeFailureCode && diagnostics.providerFailureStage) {
+    return `${humanizeDiagnosticCode(diagnostics.runtimeFailureCode)} during ${diagnostics.providerFailureStage}.`;
+  }
+  if (diagnostics.runtimeFailureCode) {
+    return humanizeDiagnosticCode(diagnostics.runtimeFailureCode);
+  }
+  return "—";
+}
+
+function summarizePrimaryFeatureQualityReason(diagnostics?: ClientCompilerDiagnostics | null): string {
+  if (!diagnostics) return "—";
+  if (diagnostics.primaryFeatureQualityReason?.trim()) return diagnostics.primaryFeatureQualityReason;
+  if (diagnostics.featureQualityFloorPassed === false) {
+    return "Leading features are structurally present but lack enough substantive content to support downstream timeline or scope checks.";
+  }
+  return "—";
+}
+
+function formatProviderFailureCounts(
+  counts?: ClientCompilerDiagnostics["providerFailureCounts"] | null,
+): string {
+  if (!counts) return "—";
+  const parts: string[] = [];
+  if (counts.rateLimited > 0) parts.push(`${counts.rateLimited} rate-limited`);
+  if (counts.timedOut > 0) parts.push(`${counts.timedOut} timed out`);
+  if (counts.provider4xx > 0) parts.push(`${counts.provider4xx} provider 4xx`);
+  if (counts.emptyResponse > 0) parts.push(`${counts.emptyResponse} empty response`);
+  return parts.length > 0 ? parts.join(", ") : "—";
 }
 
 export default function Editor() {
@@ -335,6 +387,8 @@ export default function Editor() {
 
   const handleDualAiGenerationFailed = (response: any) => {
     const runRecord = applyAiRunRecord(response);
+    const failedQuality = isFailedQualityRun(response);
+    const failedRuntime = isFailedRuntimeRun(response);
 
     if (runRecord.compilerDiagnostics) {
       setActiveTab("diagnostics");
@@ -346,9 +400,16 @@ export default function Editor() {
     queryClient.invalidateQueries({ queryKey: PRDS_LIST_QUERY_KEY });
 
     toast({
-      title: t.common.error,
-      description: runRecord.message || t.editor.failedQualityDiagnosticsOnly,
-      variant: "destructive",
+      title:
+        failedQuality
+          ? t.editor.failedQualityResultTitle
+          : failedRuntime
+            ? t.editor.failedRuntimeResultTitle
+            : t.common.error,
+      description:
+        runRecord.message
+        || (failedRuntime ? t.editor.failedRuntimeDiagnosticsOnly : t.editor.failedQualityDiagnosticsOnly),
+      ...((failedQuality || failedRuntime) ? {} : { variant: "destructive" as const }),
     });
   };
 
@@ -365,32 +426,50 @@ export default function Editor() {
     setContent(newContent);
     const runRecord = applyAiRunRecord(response);
     const failedQuality = isFailedQualityRun(response);
+    const failedRuntime = isFailedRuntimeRun(response);
 
-    if (runRecord.compilerDiagnostics && failedQuality) {
+    if (runRecord.compilerDiagnostics && (failedQuality || failedRuntime)) {
       setActiveTab("diagnostics");
     }
 
-    if (failedQuality) {
+    if (failedQuality || failedRuntime) {
+      // Content auch bei failed_quality/failed_runtime persistieren,
+      // damit er nach Reload erhalten bleibt (nicht nur im Memory).
+      const patchData: PatchPrdPayload = {
+        title,
+        description,
+        status,
+        content: newContent,
+        ...(runRecord.iterationLog && { iterationLog: runRecord.iterationLog }),
+      };
+      apiRequest("PATCH", `/api/prds/${prdId}`, patchData).then(() => {
+        queryClient.invalidateQueries({ queryKey: prdDetailQueryKey });
+        queryClient.invalidateQueries({ queryKey: PRDS_LIST_QUERY_KEY });
+      }).catch((error) => {
+        console.error('Failed to save degraded AI content:', error);
+      });
+
       toast({
-        title: t.editor.failedQualityResultTitle,
-        description: runRecord.message || t.editor.failedQualityResultDesc,
+        title: failedQuality
+          ? t.editor.failedQualityResultTitle
+          : t.editor.failedRuntimeResultTitle,
+        description: runRecord.message
+          || (failedQuality ? t.editor.failedQualityResultDesc : t.editor.failedRuntimeResultDesc),
       });
       return;
     }
     
-    const patchData: any = {
+    const patchData: PatchPrdPayload = {
       title,
       description,
       status,
+      // When server already autosaved content + structuredContent, skip sending
+      // content in PATCH to avoid wiping the persisted structure via invalidation.
+      ...(!response.autoSaveRequested && {
+        content: newContent,
+        ...(runRecord.iterationLog && { iterationLog: runRecord.iterationLog }),
+      }),
     };
-    // When server already autosaved content + structuredContent, skip sending
-    // content in PATCH to avoid wiping the persisted structure via invalidation.
-    if (!response.autoSaveRequested) {
-      patchData.content = newContent;
-      if (runRecord.iterationLog) {
-        patchData.iterationLog = runRecord.iterationLog;
-      }
-    }
     
     apiRequest("PATCH", `/api/prds/${prdId}`, patchData).then(() => {
       queryClient.invalidateQueries({ queryKey: prdDetailQueryKey });
@@ -1011,9 +1090,27 @@ export default function Editor() {
                             <p className="text-sm text-foreground">{summarizePrimaryEarlyDriftReason(compilerDiagnostics)}</p>
                           </div>
                         )}
-                        {(compilerDiagnostics.primaryGateReason
-                          || (compilerDiagnostics.semanticBlockingIssues?.length ?? 0) > 0
-                          || (compilerDiagnostics.topRootCauseCodes?.length ?? 0) > 0) && (
+                        {((lastAiRunRecord.qualityStatus === "failed_runtime")
+                          && (compilerDiagnostics.runtimeFailureCode
+                            || compilerDiagnostics.providerFailureSummary
+                            || (compilerDiagnostics.providerFailedModels?.length ?? 0) > 0)) && (
+                          <div
+                            className="rounded-md border border-destructive/25 bg-destructive/5 p-3 space-y-3"
+                            data-testid="diag-primary-runtime-failure-reason"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-xs font-semibold uppercase tracking-wide text-destructive">
+                                Primary Runtime Failure Reason
+                              </span>
+                              <Badge variant="destructive">{compilerDiagnostics.runtimeFailureCode || "failed_runtime"}</Badge>
+                            </div>
+                            <p className="text-sm text-foreground">{summarizePrimaryRuntimeFailureReason(compilerDiagnostics)}</p>
+                          </div>
+                        )}
+                        {(lastAiRunRecord.qualityStatus !== "failed_runtime"
+                          && (compilerDiagnostics.primaryGateReason
+                            || (compilerDiagnostics.semanticBlockingIssues?.length ?? 0) > 0
+                            || (compilerDiagnostics.topRootCauseCodes?.length ?? 0) > 0)) && (
                           <div
                             className="rounded-md border border-destructive/25 bg-destructive/5 p-3 space-y-3"
                             data-testid="diag-primary-gate-reason"
@@ -1027,6 +1124,80 @@ export default function Editor() {
                               )}
                             </div>
                             <p className="text-sm text-foreground">{summarizePrimaryGateReason(compilerDiagnostics)}</p>
+                          </div>
+                        )}
+                        {(compilerDiagnostics.featureQualityFloorPassed === false
+                          || compilerDiagnostics.primaryFeatureQualityReason
+                          || (compilerDiagnostics.emptyMainFlowFeatureIds?.length ?? 0) > 0
+                          || (compilerDiagnostics.placeholderPurposeFeatureIds?.length ?? 0) > 0
+                          || (compilerDiagnostics.placeholderAlternateFlowFeatureIds?.length ?? 0) > 0
+                          || (compilerDiagnostics.thinAcceptanceCriteriaFeatureIds?.length ?? 0) > 0) && (
+                          <div
+                            className="rounded-md border border-rose-500/25 bg-rose-500/5 p-3 space-y-2"
+                            data-testid="diag-feature-quality"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-xs font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-300">
+                                Feature Quality
+                              </span>
+                              <Badge variant="outline">
+                                {compilerDiagnostics.featureQualityFloorPassed === false ? "substance_first" : "feature_quality"}
+                              </Badge>
+                            </div>
+                            <p className="text-sm text-foreground">{summarizePrimaryFeatureQualityReason(compilerDiagnostics)}</p>
+                            {compilerDiagnostics.featureQualityFloorPassed === false && (
+                              <p className="text-xs text-muted-foreground">
+                                Timeline and out-of-scope findings are currently treated as secondary until feature substance is restored.
+                              </p>
+                            )}
+                            <div className="grid gap-2 text-xs sm:text-sm">
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Feature Quality Floor Passed</span>
+                                <span className="text-right font-medium">
+                                  {compilerDiagnostics.featureQualityFloorPassed === undefined
+                                    ? "—"
+                                    : compilerDiagnostics.featureQualityFloorPassed ? "Yes" : "No"}
+                                </span>
+                              </div>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Placeholder Purpose Feature IDs</span>
+                                <span className="text-right font-medium">{formatList(compilerDiagnostics.placeholderPurposeFeatureIds)}</span>
+                              </div>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Empty Main Flow Feature IDs</span>
+                                <span className="text-right font-medium">{formatList(compilerDiagnostics.emptyMainFlowFeatureIds)}</span>
+                              </div>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Placeholder Alternate Flow Feature IDs</span>
+                                <span className="text-right font-medium">{formatList(compilerDiagnostics.placeholderAlternateFlowFeatureIds)}</span>
+                              </div>
+                              <div className="flex justify-between gap-4">
+                                <span className="text-muted-foreground">Thin Acceptance Criteria Feature IDs</span>
+                                <span className="text-right font-medium">{formatList(compilerDiagnostics.thinAcceptanceCriteriaFeatureIds)}</span>
+                              </div>
+                              <div className="flex justify-between gap-4">
+                                <span className="text-muted-foreground">Feature Quality Floor Failed Feature IDs</span>
+                                <span className="text-right font-medium">{formatList(compilerDiagnostics.featureQualityFloorFailedFeatureIds)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        {(compilerDiagnostics.repairRejected
+                          || compilerDiagnostics.repairRejectedReason
+                          || (compilerDiagnostics.repairDegradationSignals?.length ?? 0) > 0) && (
+                          <div
+                            className="rounded-md border border-orange-500/25 bg-orange-500/5 p-3 space-y-3"
+                            data-testid="diag-primary-repair-failure-reason"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-xs font-semibold uppercase tracking-wide text-orange-700 dark:text-orange-300">
+                                Primary Repair Failure Reason
+                              </span>
+                              <Badge variant="outline">repair_rejected</Badge>
+                            </div>
+                            <p className="text-sm text-foreground">
+                              {compilerDiagnostics.repairRejectedReason || "The last compiler repair was rejected because it degraded the best available PRD candidate."}
+                            </p>
                           </div>
                         )}
                         {renderDiagnosticIssueGroup({
@@ -1050,6 +1221,100 @@ export default function Editor() {
                               : compilerDiagnostics.semanticBlockingIssues,
                           testId: "diag-final-blocking-issues",
                         })}
+                        {((compilerDiagnostics.primaryCapabilityAnchors?.length ?? 0) > 0
+                          || (compilerDiagnostics.featurePriorityWindow?.length ?? 0) > 0
+                          || (compilerDiagnostics.coreFeatureIds?.length ?? 0) > 0
+                          || (compilerDiagnostics.supportFeatureIds?.length ?? 0) > 0) && (
+                          <div
+                            className="rounded-md border border-primary/20 bg-primary/5 p-3 space-y-2"
+                            data-testid="diag-vision-coverage"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-xs font-semibold uppercase tracking-wide text-primary">
+                                Vision Coverage
+                              </span>
+                              <Badge variant="outline">vision_first</Badge>
+                            </div>
+                            <div className="grid gap-2 text-xs sm:text-sm">
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Primary Capability Anchors</span>
+                                <span className="text-right font-medium">{formatList(compilerDiagnostics.primaryCapabilityAnchors)}</span>
+                              </div>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Feature Priority Window</span>
+                                <span className="text-right font-medium">{formatList(compilerDiagnostics.featurePriorityWindow)}</span>
+                              </div>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Core Feature IDs</span>
+                                <span className="text-right font-medium">{formatList(compilerDiagnostics.coreFeatureIds)}</span>
+                              </div>
+                              <div className="flex justify-between gap-4">
+                                <span className="text-muted-foreground">Support Feature IDs</span>
+                                <span className="text-right font-medium">{formatList(compilerDiagnostics.supportFeatureIds)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        {((compilerDiagnostics.topRootCauseCodes?.includes("timeline_feature_reference_mismatch") ?? false)
+                          || (compilerDiagnostics.qualityIssueCodes?.includes("timeline_feature_reference_mismatch") ?? false)
+                          || (compilerDiagnostics.timelineMismatchedFeatureIds?.length ?? 0) > 0) && (
+                          <div
+                            className="rounded-md border border-sky-500/25 bg-sky-500/5 p-3 space-y-2"
+                            data-testid="diag-timeline-consistency"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300">
+                                Timeline Consistency
+                              </span>
+                              <Badge variant="outline">
+                                {compilerDiagnostics.featureQualityFloorPassed === false ? "secondary" : "feature_catalogue_canonical"}
+                              </Badge>
+                            </div>
+                            {compilerDiagnostics.featureQualityFloorPassed === false && (
+                              <p className="text-xs text-muted-foreground">
+                                Timeline mismatch is secondary while the feature quality floor is failing.
+                              </p>
+                            )}
+                            <div className="grid gap-2 text-xs sm:text-sm">
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Canonical Feature IDs</span>
+                                <span className="text-right font-medium">{formatList(compilerDiagnostics.canonicalFeatureIds)}</span>
+                              </div>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Timeline Mismatched Feature IDs</span>
+                                <span className="text-right font-medium">{formatList(compilerDiagnostics.timelineMismatchedFeatureIds)}</span>
+                              </div>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Timeline Rewritten From Feature Map</span>
+                                <span className="text-right font-medium">
+                                  {compilerDiagnostics.timelineRewrittenFromFeatureMap === undefined
+                                    ? "—"
+                                    : compilerDiagnostics.timelineRewrittenFromFeatureMap ? "Yes" : "No"}
+                                </span>
+                              </div>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Timeline Rewrite Applied Lines</span>
+                                <span className="text-right font-medium">
+                                  {typeof compilerDiagnostics.timelineRewriteAppliedLines === "number"
+                                    ? compilerDiagnostics.timelineRewriteAppliedLines
+                                    : "—"}
+                                </span>
+                              </div>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Semantic Repair Changed Sections</span>
+                                <span className="text-right font-medium">{formatList(compilerDiagnostics.semanticRepairChangedSections)}</span>
+                              </div>
+                              <div className="flex justify-between gap-4">
+                                <span className="text-muted-foreground">Semantic Repair Structural Change</span>
+                                <span className="text-right font-medium">
+                                  {compilerDiagnostics.semanticRepairStructuralChange === undefined
+                                    ? "—"
+                                    : compilerDiagnostics.semanticRepairStructuralChange ? "Yes" : "No"}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                         <div className="grid gap-2 text-xs sm:text-sm">
                           <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
                             <span className="text-muted-foreground">Early Drift Detected</span>
@@ -1079,6 +1344,34 @@ export default function Editor() {
                             <span className="text-muted-foreground">Early Repair Applied</span>
                             <span className="text-right font-medium">{compilerDiagnostics.earlyRepairApplied ? "Yes" : "No"}</span>
                           </div>
+                          {(compilerDiagnostics.runtimeFailureCode
+                            || compilerDiagnostics.providerFailureSummary
+                            || compilerDiagnostics.providerFailureCounts
+                            || (compilerDiagnostics.providerFailedModels?.length ?? 0) > 0
+                            || compilerDiagnostics.providerFailureStage) && (
+                            <>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Runtime Failure Code</span>
+                                <span className="text-right font-medium">{compilerDiagnostics.runtimeFailureCode || "—"}</span>
+                              </div>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Provider Failure Summary</span>
+                                <span className="text-right font-medium">{compilerDiagnostics.providerFailureSummary || "—"}</span>
+                              </div>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Provider Failure Counts</span>
+                                <span className="text-right font-medium">{formatProviderFailureCounts(compilerDiagnostics.providerFailureCounts)}</span>
+                              </div>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Provider Failed Models</span>
+                                <span className="text-right font-medium">{formatList(compilerDiagnostics.providerFailedModels)}</span>
+                              </div>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Provider Failure Stage</span>
+                                <span className="text-right font-medium">{compilerDiagnostics.providerFailureStage || "—"}</span>
+                              </div>
+                            </>
+                          )}
                           <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
                             <span className="text-muted-foreground">Top Root Causes</span>
                             <span className="text-right font-medium">{formatList(compilerDiagnostics.topRootCauseCodes)}</span>
@@ -1091,6 +1384,34 @@ export default function Editor() {
                             <span className="text-muted-foreground">Semantic Verifier Verdict</span>
                             <span className="text-right font-medium">{compilerDiagnostics.semanticVerifierVerdict || "—"}</span>
                           </div>
+                          {compilerDiagnostics.structuralParseReason && (
+                            <>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Structural Parse Reason</span>
+                                <span className="text-right font-medium">{compilerDiagnostics.structuralParseReason || "—"}</span>
+                              </div>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Raw Feature Heading Samples</span>
+                                <span className="text-right font-medium">{formatList(compilerDiagnostics.rawFeatureHeadingSamples)}</span>
+                              </div>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Normalization Applied</span>
+                                <span className="text-right font-medium">
+                                  {compilerDiagnostics.normalizationApplied === undefined
+                                    ? "—"
+                                    : compilerDiagnostics.normalizationApplied ? "Yes" : "No"}
+                                </span>
+                              </div>
+                              <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                                <span className="text-muted-foreground">Normalized Feature Count Recovered</span>
+                                <span className="text-right font-medium">
+                                  {typeof compilerDiagnostics.normalizedFeatureCountRecovered === "number"
+                                    ? compilerDiagnostics.normalizedFeatureCountRecovered
+                                    : "—"}
+                                </span>
+                              </div>
+                            </>
+                          )}
                           <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
                             <span className="text-muted-foreground">Semantic Blocking Codes</span>
                             <span className="text-right font-medium">
@@ -1104,6 +1425,62 @@ export default function Editor() {
                           <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
                             <span className="text-muted-foreground">Repair Cycle Count</span>
                             <span className="text-right font-medium">{compilerDiagnostics.repairCycleCount ?? 0}</span>
+                          </div>
+                          <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                            <span className="text-muted-foreground">Compiler Repair Truncation Count</span>
+                            <span className="text-right font-medium">{compilerDiagnostics.compilerRepairTruncationCount ?? 0}</span>
+                          </div>
+                          <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                            <span className="text-muted-foreground">Compiler Repair Finish Reasons</span>
+                            <span className="text-right font-medium">{formatList(compilerDiagnostics.compilerRepairFinishReasons)}</span>
+                          </div>
+                          <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                            <span className="text-muted-foreground">Repair Rejected</span>
+                            <span className="text-right font-medium">{compilerDiagnostics.repairRejected ? "Yes" : "No"}</span>
+                          </div>
+                          <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                            <span className="text-muted-foreground">Repair Rejected Reason</span>
+                            <span className="text-right font-medium">{compilerDiagnostics.repairRejectedReason || "—"}</span>
+                          </div>
+                          <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                            <span className="text-muted-foreground">Repair Degradation Signals</span>
+                            <span className="text-right font-medium">{formatList(compilerDiagnostics.repairDegradationSignals)}</span>
+                          </div>
+                          <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                            <span className="text-muted-foreground">Degraded Candidate Available</span>
+                            <span className="text-right font-medium">{compilerDiagnostics.degradedCandidateAvailable ? "Yes" : "No"}</span>
+                          </div>
+                          <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                            <span className="text-muted-foreground">Degraded Candidate Source</span>
+                            <span className="text-right font-medium">{compilerDiagnostics.degradedCandidateSource || "—"}</span>
+                          </div>
+                          <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                            <span className="text-muted-foreground">Displayed Candidate Source</span>
+                            <span className="text-right font-medium">{compilerDiagnostics.displayedCandidateSource || "—"}</span>
+                          </div>
+                          <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                            <span className="text-muted-foreground">Diagnostics Aligned With Displayed Candidate</span>
+                            <span className="text-right font-medium">
+                              {compilerDiagnostics.diagnosticsAlignedWithDisplayedCandidate === undefined
+                                ? "—"
+                                : compilerDiagnostics.diagnosticsAlignedWithDisplayedCandidate ? "Yes" : "No"}
+                            </span>
+                          </div>
+                          <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                            <span className="text-muted-foreground">Collapsed Feature Name IDs</span>
+                            <span className="text-right font-medium">{formatList(compilerDiagnostics.collapsedFeatureNameIds)}</span>
+                          </div>
+                          <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                            <span className="text-muted-foreground">Placeholder Feature IDs</span>
+                            <span className="text-right font-medium">{formatList(compilerDiagnostics.placeholderFeatureIds)}</span>
+                          </div>
+                          <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                            <span className="text-muted-foreground">Acceptance Boilerplate Feature IDs</span>
+                            <span className="text-right font-medium">{formatList(compilerDiagnostics.acceptanceBoilerplateFeatureIds)}</span>
+                          </div>
+                          <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
+                            <span className="text-muted-foreground">Feature Quality Floor Feature IDs</span>
+                            <span className="text-right font-medium">{formatList(compilerDiagnostics.featureQualityFloorFeatureIds)}</span>
                           </div>
                           <div className="flex justify-between gap-4 border-b border-input/60 pb-2">
                             <span className="text-muted-foreground">Semantic Repair Attempted</span>

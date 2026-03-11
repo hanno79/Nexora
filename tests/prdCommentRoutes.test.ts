@@ -90,7 +90,15 @@ describe('registerPrdCommentRoutes', () => {
 
     const response = await invokeRoute(findRoute(routes, 'post', '/api/prds/:id/comments'), { content: '   ' }, { id: 'prd-1' });
     expect(response.statusCode).toBe(400);
-    expect(response.payload).toEqual({ message: 'Comment content is required' });
+    expect(response.payload).toEqual({
+      message: 'Validation error',
+      errors: [
+        expect.objectContaining({
+          message: 'Comment content is required',
+          path: ['content'],
+        }),
+      ],
+    });
     expect((dependencies.storage as any).createComment).not.toHaveBeenCalled();
   });
 

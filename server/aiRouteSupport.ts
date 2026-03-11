@@ -7,8 +7,31 @@ Beschreibung: Pure KI-Routen-Helfer fuer Statuscode-Mapping und Artefakt-Metrik-
 
 // ÄNDERUNG 08.03.2026: DB-/Compiler-gebundene Helfer nach
 // `aiRouteCompilerSupport.ts` verschoben, damit dieses Modul import-sicher bleibt.
+// ÄNDERUNG 10.03.2026: Expliziten Smoke-Header fuer sichere Free-/Development-Defaults ergänzt.
 
 import type { PrdQualityStatus } from './prdRunQuality';
+
+export const SMOKE_FREE_ONLY_HEADER = 'x-smoke-free-only';
+
+function readHeaderValue(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    return typeof value[0] === 'string' ? value[0] : undefined;
+  }
+
+  return typeof value === 'string' ? value : undefined;
+}
+
+export function resolveAiPreferenceUserId(
+  request: { headers?: Record<string, unknown> },
+  userId: string | undefined,
+): string | undefined {
+  const smokeHeader = readHeaderValue(request.headers?.[SMOKE_FREE_ONLY_HEADER]);
+  const shouldForceFreeDefaults = ['1', 'true', 'yes', 'on'].includes(
+    smokeHeader?.trim().toLowerCase() || '',
+  );
+
+  return shouldForceFreeDefaults ? undefined : userId;
+}
 
 export function qualityStatusHttpCode(status: PrdQualityStatus): number {
   if (status === 'failed_quality') return 422;

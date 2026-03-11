@@ -1,3 +1,12 @@
+/*
+Author: rahn
+Datum: 08.03.2026
+Version: 1.0
+Beschreibung: Zentrale Zod-Schemas fuer API-Validierung.
+*/
+
+// ÄNDERUNG 08.03.2026: Kommentar-Body-Schema fuer PRD-Kommentarrouten ergänzt.
+
 import { z } from "zod";
 
 export const updateUserSchema = z.object({
@@ -28,6 +37,13 @@ export const requestApprovalSchema = z.object({
 
 export const respondApprovalSchema = z.object({
   approved: z.boolean(),
+});
+
+export const commentSchema = z.object({
+  content: z.string().max(50000).refine((value) => value.trim().length > 0, {
+    message: 'Comment content is required',
+  }),
+  sectionId: z.string().nullish(),
 });
 
 export const sharePrdSchema = z.object({

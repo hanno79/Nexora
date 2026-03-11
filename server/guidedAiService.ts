@@ -70,13 +70,14 @@ export class GuidedAiService {
     projectIdea: string,
     userId: string,
     options?: {
+      aiPreferenceUserId?: string;
       existingContent?: string;
       mode?: 'improve' | 'generate';
       templateCategory?: string;
     }
   ): Promise<GuidedStartResponse & { sessionId: string }> {
     const authenticatedUserId = requireAuthenticatedUserId(userId);
-    const { client, contentLanguage } = await createClientWithUserPreferences(authenticatedUserId);
+    const { client, contentLanguage } = await createClientWithUserPreferences(options?.aiPreferenceUserId ?? authenticatedUserId);
     const normalizedExistingContent = typeof options?.existingContent === 'string'
       ? options.existingContent.trim()
       : '';
@@ -172,12 +173,13 @@ export class GuidedAiService {
     sessionId: string,
     answers: GuidedAnswerInput[],
     questions: GuidedQuestion[],
-    userId: string
+    userId: string,
+    aiPreferenceUserId?: string,
   ): Promise<GuidedAnswerResponse> {
     const authenticatedUserId = requireAuthenticatedUserId(userId);
     const context = await getGuidedSessionContextOrThrow(this.conversationContexts, sessionId, authenticatedUserId);
 
-    const { client, contentLanguage } = await createClientWithUserPreferences(authenticatedUserId);
+    const { client, contentLanguage } = await createClientWithUserPreferences(aiPreferenceUserId ?? authenticatedUserId);
     const resolvedLanguage = detectContentLanguage(
       contentLanguage,
       `${context.projectIdea || ''}\n${context.featureOverview || ''}`
@@ -306,6 +308,7 @@ export class GuidedAiService {
     sessionId: string,
     userId: string,
     options?: {
+      aiPreferenceUserId?: string;
       templateCategory?: string;
     }
   ): Promise<GuidedFinalizeResponse> {
@@ -313,7 +316,7 @@ export class GuidedAiService {
     const authenticatedUserId = requireAuthenticatedUserId(userId);
     const context = await consumeGuidedSessionContextOrThrow(this.conversationContexts, sessionId, authenticatedUserId);
 
-    const { client, contentLanguage } = await createClientWithUserPreferences(authenticatedUserId);
+    const { client, contentLanguage } = await createClientWithUserPreferences(options?.aiPreferenceUserId ?? authenticatedUserId);
     const resolvedLanguage = detectContentLanguage(
       contentLanguage,
       `${context.projectIdea || ''}\n${context.featureOverview || ''}\n${context.existingContent || ''}`
@@ -382,13 +385,14 @@ export class GuidedAiService {
     projectIdea: string,
     userId?: string,
     options?: {
+      aiPreferenceUserId?: string;
       existingContent?: string;
       mode?: 'improve' | 'generate';
       templateCategory?: string;
     }
   ): Promise<GuidedFinalizeResponse> {
     const startedAt = Date.now();
-    const { client, contentLanguage } = await createClientWithUserPreferences(userId);
+    const { client, contentLanguage } = await createClientWithUserPreferences(options?.aiPreferenceUserId ?? userId);
     const normalizedExistingContent = typeof options?.existingContent === 'string'
       ? options.existingContent.trim()
       : '';

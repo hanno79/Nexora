@@ -12,14 +12,19 @@ function usage(total: number) {
 describe('expandFeature language handling', () => {
   it('canonicalizes feature IDs when parsing feature lists', () => {
     const parsed = parseFeatureList([
-      'F-001: System Vision',
+      'Main Task: Aufgabenverwaltung',
+      'Task Summary: Verwaltet einzelne Aufgaben und ihren Status.',
+      '',
+      'F-001: Aufgabe erstellen',
       'Short description: canonical id check',
       '',
-      'F-02: User Login',
+      'F-02: Aufgabe bearbeiten',
       'Short description: login flow',
     ].join('\n'));
 
     expect(parsed.map(feature => feature.featureId)).toEqual(['F-01', 'F-02']);
+    expect(parsed[0].parentTaskName).toBe('Aufgabenverwaltung');
+    expect(parsed[0].parentTaskDescription).toContain('Status');
   });
 
   it('uses german deterministic fallback when expansion repeatedly fails validation', async () => {
@@ -67,6 +72,7 @@ describe('expandFeature language handling', () => {
       '5. Main Flow',
       '1. Schritt eins.',
       '2. Schritt zwei.',
+      '3. Schritt drei.',
       '6. Alternate Flows',
       '- Fehlerfall wird abgefangen.',
       '7. Postconditions',

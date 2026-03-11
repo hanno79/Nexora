@@ -4,6 +4,9 @@ export interface FeatureSpec {
 
   rawContent: string;
 
+  parentTaskName?: string;
+  parentTaskDescription?: string;
+
   purpose?: string;
   actors?: string;
   trigger?: string;

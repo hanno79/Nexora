@@ -46,6 +46,7 @@ import {
   resolveTemplateCategoryForPrd,
 } from "./aiRouteCompilerSupport";
 import {
+  resolveAiPreferenceUserId,
   qualityStatusHttpCode,
   withArtifactMetrics,
 } from "./aiRouteSupport";
@@ -783,6 +784,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const { userInput, existingContent, mode, prdId } = req.body;
     const userId = req.user.claims.sub;
+	  const aiPreferenceUserId = resolveAiPreferenceUserId(req, userId);
     const editablePrdId = await requireEditablePrdId(storage, req, res, prdId, {
       invalidMessage: "PRD ID must be a non-empty string",
     });
@@ -802,7 +804,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         existingContent,
         mode: mode || 'improve',
         templateCategory,
-      }, userId);
+	    }, aiPreferenceUserId);
 
       const modeResolution = resolvePrdWorkflowMode({
         requestedMode: mode === 'improve' ? 'improve' : 'generate',
@@ -901,10 +903,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               userId,
               qualityStatus: assessed.qualityStatus,
               finalizationStage: 'final',
-              content: assessed.qualityStatus === 'passed' ? assessed.compiled.content : undefined,
-              structuredContent: assessed.qualityStatus === 'passed'
-                ? (result.structuredContent || assessed.compiled.structure)
-                : undefined,
+              content: assessed.compiled.content,
+              structuredContent: result.structuredContent || assessed.compiled.structure,
               iterationLog,
               compilerDiagnostics: assessed.compilerDiagnostics,
             });
@@ -919,11 +919,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error: any) {
       const failure = classifyRunFailure(error);
+      // ÄNDERUNG 11.03.2026: Failure-Artefakte muessen degradierte Compiler-Struktur
+      // und Quality mitpersistieren, damit Feature-/Task-Metadaten erhalten bleiben.
       void persistCompilerRunArtifactBestEffort({
         workflow: 'dual',
         routeKey: 'dual-generate',
         qualityStatus: failure.qualityStatus,
         finalizationStage: 'final',
+        finalContent: failure.finalContent || undefined,
+        compiledContent: failure.compiledContent || undefined,
+        compiledStructure: failure.compiledStructure || undefined,
+        quality: failure.quality || undefined,
         compilerDiagnostics: failure.diagnostics,
         modelsUsed: [],
         requestContext: {
@@ -948,6 +954,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               userId,
               qualityStatus: failure.qualityStatus,
               finalizationStage: 'final',
+              content: failure.finalContent || failure.compiledContent || undefined,
+              structuredContent: failure.compiledStructure || undefined,
               iterationLog: mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, failure.qualityStatus, failure.diagnostics),
               compilerDiagnostics: failure.diagnostics,
             });
@@ -958,6 +966,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.status(qualityStatusHttpCode(failure.qualityStatus)).json({
         message: failure.message,
+        finalContent: failure.finalContent || undefined,
         qualityStatus: failure.qualityStatus,
         compilerDiagnostics: failure.diagnostics,
         finalizationStage: 'final',
@@ -976,13 +985,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const { content, prdId } = req.body;
     const userId = req.user.claims.sub;
+	  const aiPreferenceUserId = resolveAiPreferenceUserId(req, userId);
 
     if (!content) {
       return res.status(400).json({ message: "Content is required for review" });
     }
 
     const service = getDualAiService();
-    const review = await service.reviewOnly(content, userId);
+	  const review = await service.reviewOnly(content, aiPreferenceUserId);
 
     // Log AI usage for reviewer
     await logAiUsage(
@@ -1087,6 +1097,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Support both old format (initialContent) and new format (existingContent + additionalRequirements + mode)
       const { initialContent, existingContent, additionalRequirements, mode, iterationCount, useFinalReview, prdId } = req.body;
       userId = authReq.user.claims.sub;
+	      const aiPreferenceUserId = resolveAiPreferenceUserId(authReq, userId);
       editablePrdId = await requireEditablePrdId(storage, authReq, res, prdId, {
         invalidMessage: "PRD ID must be a non-empty string",
       });
@@ -1211,7 +1222,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         finalMode,
         iterations,
         useFinalReview || false,
-        userId,
+	        aiPreferenceUserId,
         sendSSE,
         isRequestClosed,
         requestAbortController.signal,
@@ -1240,6 +1251,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           routeKey: useSSE ? 'iterative-stream' : 'iterative-generate',
           qualityStatus: disconnectFailure.qualityStatus,
           finalizationStage: 'final',
+          finalContent: disconnectFailure.finalContent || undefined,
           compilerDiagnostics: disconnectFailure.diagnostics,
           requestContext: {
             prdId: editablePrdId || null,
@@ -1424,9 +1436,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               userId,
               qualityStatus: assessed.qualityStatus,
               finalizationStage: 'final',
-              content: assessed.qualityStatus === 'passed' ? contentToPersist : undefined,
+              content: contentToPersist,
               iterationLog,
-              structuredContent: assessed.qualityStatus === 'passed' ? (result.structuredContent || assessed.compiled.structure) : undefined,
+              structuredContent: result.structuredContent || assessed.compiled.structure,
               compilerDiagnostics: assessed.compilerDiagnostics,
             });
             logger.info("Iterative finalization persisted", {
@@ -1505,6 +1517,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         routeKey: useSSE ? 'iterative-stream' : 'iterative-generate',
         qualityStatus: failure.qualityStatus,
         finalizationStage: 'final',
+        finalContent: failure.finalContent || undefined,
+        compiledContent: failure.compiledContent || undefined,
+        compiledStructure: failure.compiledStructure || undefined,
+        quality: failure.quality || undefined,
         compilerDiagnostics: failure.diagnostics,
         requestContext: {
           prdId: editablePrdId || null,
@@ -1524,6 +1540,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!cancelledOrClosed && useSSE && res.headersSent && !res.writableEnded && !res.destroyed) {
         res.write(`event: error\ndata: ${JSON.stringify({
           message: failure.message,
+          finalContent: failure.finalContent || undefined,
           qualityStatus: failure.qualityStatus,
           compilerDiagnostics: failure.diagnostics,
           finalizationStage: 'final',
@@ -1533,6 +1550,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else if (!cancelledOrClosed) {
         res.status(qualityStatusHttpCode(failure.qualityStatus)).json({
           message: failure.message,
+          finalContent: failure.finalContent || undefined,
           qualityStatus: failure.qualityStatus,
           compilerDiagnostics: failure.diagnostics,
           finalizationStage: 'final',
@@ -1549,6 +1567,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               userId,
               qualityStatus: failure.qualityStatus,
               finalizationStage: 'final',
+              content: failure.finalContent || failure.compiledContent || undefined,
+              structuredContent: failure.compiledStructure || undefined,
               iterationLog: mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, failure.qualityStatus, failure.diagnostics),
               compilerDiagnostics: failure.diagnostics,
             });

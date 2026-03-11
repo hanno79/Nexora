@@ -1,0 +1,33 @@
+{
+  "timestamp": "2026-03-10T21:04:30.610Z",
+  "selectedTemplates": [
+    "feature"
+  ],
+  "selectedMethods": [
+    "simple"
+  ],
+  "expectedResultCount": 1,
+  "resultCount": 1,
+  "passedCount": 0,
+  "failedCount": 1,
+  "totalTokensUsed": 0,
+  "totalDurationMs": 581823,
+  "results": [
+    {
+      "template": "feature",
+      "method": "simple",
+      "valid": false,
+      "featureCount": 0,
+      "qualityScore": 0,
+      "errorIssues": [
+        "generate-dual failed (422): {\"message\":\"PRD compiler quality gate failed after 0 repair attempt(s): Reference \\\"User.lastLoginAt\\\" in feature:F-14.rawContent is not declared in the Domain Model for entity \\\"User\\\". | Reference \\"
+      ],
+      "warningIssues": [],
+      "modelsUsed": [],
+      "tokensUsed": 0,
+      "durationMs": 581823,
+      "truncatedLikely": false,
+      "error": "generate-dual failed (422): {\"message\":\"PRD compiler quality gate failed after 0 repair attempt(s): Reference \\\"User.lastLoginAt\\\" in feature:F-14.rawContent is not declared in the Domain Model for entity \\\"User\\\". | Reference \\"
+    }
+  ]
+}

@@ -13,6 +13,8 @@
 
 // ÄNDERUNG 07.03.2026: Semantische Feature-Prüfung und Feature-Placeholder-Enrichment ergänzt
 // Formal gefüllte, aber inhaltlich falsch zugeordnete Features werden jetzt gezielt umgeschrieben
+// ÄNDERUNG 10.03.2026: Vision-/Timeline-Cluster im gezielten Semantic-Repair geschaerft
+// Fruehe Kernfeatures werden jetzt gemeinsam mit System Vision und Timeline priorisiert, damit feature/simple bei Vision-/Support-/Timeline-Konflikten stabiler repariert wird
 
 import type { PRDStructure } from './prdStructure';
 import type { TokenUsage } from '@shared/schema';
@@ -99,6 +101,8 @@ export interface SemanticPatchRefineResult {
   refined: boolean;
   reviewerAttempts: ReviewerRefineResult[];
   truncated: boolean;
+  changedSections: string[];
+  structuralChange: boolean;
 }
 
 export type ReviewerContentGenerator = (prompt: string) => Promise<ReviewerRefineResult>;
@@ -143,6 +147,9 @@ const PATCHABLE_SECTION_KEY_SET = new Set<string>(
 );
 
 const FEATURE_SEMANTIC_CLUSTER_FIELDS: FeatureEnrichableField[] = [
+  'name',
+  'purpose',
+  'mainFlow',
   'preconditions',
   'postconditions',
   'dataImpact',
@@ -565,10 +572,6 @@ export function analyzeContentQuality(
 // Feature enrichment: build prompt to fill empty feature fields via AI
 // ---------------------------------------------------------------------------
 
-const ENRICHABLE_FIELDS = [
-  ...FEATURE_ENRICHABLE_FIELDS,
-] as const;
-
 function collectFeatureAiTargetFields(feature: PRDStructure['features'][number]): FeatureEnrichableField[] {
   const targetedFields: FeatureEnrichableField[] = [];
 
@@ -676,10 +679,10 @@ export function parseFeatureEnrichResponse(
 
     const fields: Record<string, string | string[]> = {};
 
-    for (const fieldName of ENRICHABLE_FIELDS) {
+    for (const fieldName of FEATURE_ENRICHABLE_FIELDS) {
       // Match **fieldName**: content or **fieldName**:\n content
       const pattern = new RegExp(
-        `\\*\\*${fieldName}\\*\\*:\\s*([\\s\\S]*?)(?=\\*\\*(?:${ENRICHABLE_FIELDS.join('|')})\\*\\*:|===\\s*F-|$)`,
+        `\\*\\*${fieldName}\\*\\*:\\s*([\\s\\S]*?)(?=\\*\\*(?:${FEATURE_ENRICHABLE_FIELDS.join('|')})\\*\\*:|===\\s*F-|$)`,
         'i'
       );
       const match = block.match(pattern);
@@ -724,7 +727,7 @@ function normalizeFeatureFieldValue(
 }
 
 function featureHasStructuredContent(feature: PRDStructure['features'][number]): boolean {
-  return FEATURE_ENRICHABLE_FIELDS.some(field => normalizeFeatureFieldValue(feature, field).length > 0);
+  return FEATURE_ENRICHABLE_FIELDS.some(field => field !== 'name' && normalizeFeatureFieldValue(feature, field).length > 0);
 }
 
 function normalizeOtherSectionsForGuard(otherSections: Record<string, string>): string {
@@ -906,6 +909,9 @@ function targetMatchesDeterministicIssue(
     if (target.sectionKey === 'outOfScope' && issue.code === 'out_of_scope_future_leakage') {
       return true;
     }
+    if (target.sectionKey === 'deployment' && issue.code === 'deployment_runtime_contradiction') {
+      return true;
+    }
 
     return target.issueCodes.some(code => deterministicIssueSupportsVerifierCode(code, issue.code));
   }
@@ -974,9 +980,17 @@ function buildSemanticRepairBatches(targets: SemanticRepairTarget[]): SemanticRe
     if (batch.length > 0) batches.push(batch);
   };
 
+  // ÄNDERUNG 10.03.2026: System Vision und Timeline werden fuer deterministische
+  // Vision-/Priorisierungsfehler bewusst mit den fruehesten betroffenen Features gebuendelt.
   const firstFeature = features.shift();
-  if (firstFeature) {
-    pushBatch([firstFeature, takeSection('systemVision') || takeSection('domainModel')]);
+  const systemVisionTarget = takeSection('systemVision');
+  const timelineTarget = takeSection('timelineMilestones');
+  if (firstFeature && (timelineTarget || systemVisionTarget)) {
+    pushBatch([systemVisionTarget, timelineTarget, firstFeature, features.shift()]);
+  } else if (firstFeature) {
+    pushBatch([firstFeature, takeSection('domainModel')]);
+  } else if (timelineTarget || systemVisionTarget) {
+    pushBatch([systemVisionTarget, timelineTarget]);
   }
 
   if (sectionsByKey.has('domainModel') && sectionsByKey.has('globalBusinessRules')) {
@@ -1044,6 +1058,7 @@ function buildSemanticConsistencyClusterContext(
     `- Domain Model: ${summarizeSemanticContext(structure.domainModel, 280)}`,
     `- Global Business Rules: ${summarizeSemanticContext(structure.globalBusinessRules, 280)}`,
     `- Out of Scope: ${summarizeSemanticContext(structure.outOfScope, 280)}`,
+    `- Timeline & Milestones: ${summarizeSemanticContext(structure.timelineMilestones, 280)}`,
   ];
 
   if (targetedFeatures.length > 0) {
@@ -1121,6 +1136,18 @@ function buildSemanticRepairTargets(
     }
   }
 
+  if (targets.has('timelineMilestones')) {
+    for (const target of targets.values()) {
+      if (target.kind !== 'feature') continue;
+      target.targetFields = Array.from(new Set([
+        ...target.targetFields,
+        'name',
+        'purpose',
+        'mainFlow',
+      ]));
+    }
+  }
+
   return Array.from(targets.values());
 }
 
@@ -1148,6 +1175,23 @@ function buildSemanticRepairPrompt(params: {
     ? 'Schreibe alle erklaerenden Inhalte auf Deutsch. Technische Bezeichner, Entity-Namen und Feldnamen duerfen in ihrer kanonischen Schreibweise bleiben.'
     : 'Write all explanatory prose in English. Keep technical identifiers, entity names, and field names in their canonical form where needed.';
   const consistencyClusterContext = buildSemanticConsistencyClusterContext(structure, targets);
+  const touchesAcceptanceCriteria = targets.some(
+    target => target.kind === 'feature' && target.targetFields.includes('acceptanceCriteria')
+  );
+  const touchesAlternateFlows = targets.some(
+    target => target.kind === 'feature' && target.targetFields.includes('alternateFlows')
+  );
+  const preservesFeatureIdentity = targets.some(target => target.kind === 'feature');
+  const issueCodes = new Set(targets.flatMap(target => target.issueCodes));
+  const reinforcesVisionFirstWindow = issueCodes.has('vision_capability_coverage_missing')
+    || issueCodes.has('support_features_overweight');
+  const reinforcesTimelineIdentity = issueCodes.has('timeline_feature_reference_mismatch');
+  const leadingFeatureWindow = (reinforcesVisionFirstWindow || reinforcesTimelineIdentity)
+    ? (structure.features || [])
+      .slice(0, 6)
+      .map((feature, index) => `- ${index + 1}. ${feature.id}: ${feature.name} — ${summarizeSemanticContext(feature.purpose || feature.rawContent, 140)}`)
+      .join('\n') || '- (none)'
+    : '';
 
   const targetBlocks = targets.map(target => {
     const deterministicEvidence = target.evidence.length > 0
@@ -1178,9 +1222,13 @@ function buildSemanticRepairPrompt(params: {
     }
 
     const feature = (structure.features || []).find(entry => String(entry.id || '').trim().toUpperCase() === target.featureId);
+    const featurePosition = (structure.features || []).findIndex(entry =>
+      String(entry.id || '').trim().toUpperCase() === target.featureId
+    );
     const fieldLines = target.targetFields.map(field => `- ${field}: ${summarizeFeatureField((feature as any)?.[field]) || '(missing)'}`);
     return [
       `## Target Feature: ${target.featureId} - ${target.featureName}`,
+      `Feature List Position: ${featurePosition >= 0 ? featurePosition + 1 : 'unknown'}`,
       `Issue Codes: ${target.issueCodes.join(', ') || 'unknown'}`,
       `Target Fields: ${target.targetFields.join(', ')}`,
       'Blocking Issues:',
@@ -1216,6 +1264,7 @@ PROJECT CONTEXT
 - Out of Scope: ${String(structure.outOfScope || '(missing)').slice(0, 500)}
 - Feature Index:
 ${featureIndex}
+${leadingFeatureWindow ? `- Leading Feature Window (fixed order; strengthen content instead of reordering):\n${leadingFeatureWindow}` : ''}
 ${consistencyClusterContext ? `\n${consistencyClusterContext}` : ''}
 
 TARGETS
@@ -1253,7 +1302,15 @@ STRICT RULES
 - For Domain Model patches, describe entity fields in plain prose (for example: "GameSession stores sessionId, activePowerUpId, and score.") instead of pseudo-signature syntax like "GameSession(sessionId, activePowerUpId, score)".
 - Global Business Rules are hard constraints; do not contradict them in features, milestones, success criteria, or scope text.
 - Remove scope/meta leakage: only product facts belong in these sections, never planning instructions or reviewer commentary.
-- Out of Scope must contain strict exclusions only; remove future options, roadmap language, or implied later expansions.`;
+- Out of Scope must contain strict exclusions only; remove future options, roadmap language, or implied later expansions.
+${preservesFeatureIdentity ? '- Preserve each target feature identity. Do not rename a feature to its bare ID and do not strip a descriptive feature name.' : ''}
+${reinforcesVisionFirstWindow ? '- When repairing vision coverage or support overweight, strengthen the earliest targeted features so the leading feature window clearly expresses the primary end-user capabilities promised by System Vision.' : ''}
+${reinforcesVisionFirstWindow ? '- Support, admin, setup, configuration, or enabler mechanics may remain, but they must read as subordinate enablers and must not overshadow core user-value capabilities in the leading feature window.' : ''}
+${reinforcesVisionFirstWindow ? '- Because feature order is fixed, repair prioritization by sharpening Purpose, Trigger, Main Flow, Preconditions, Postconditions, Data Impact, and Acceptance Criteria of the targeted core features instead of inventing new scope or generic filler.' : ''}
+${reinforcesTimelineIdentity ? '- Timeline & Milestones must reference the canonical feature identity and user outcome of the matching feature. Never let one feature ID describe the workflow, state change, or responsibility of a neighboring feature.' : ''}
+${reinforcesTimelineIdentity ? '- If two targeted features are semantically adjacent, separate them cleanly: each feature must keep its own trigger, main flow, and acceptance criteria, and the timeline wording must align to that separation.' : ''}
+${touchesAcceptanceCriteria ? '- Acceptance criteria must be feature-specific, directly derivable from Trigger, Main Flow, Postconditions, and Data Impact, and must not reuse near-identical generic criteria across different features.' : ''}
+${touchesAlternateFlows ? '- Alternate Flows must contain at least one concrete exception, rejection, or edge case. Never return placeholder bullets, bare markdown markers, or dummy one-line entries.' : ''}`;
 }
 
 function extractJsonObjectFromText(text: string): string {
@@ -1298,11 +1355,25 @@ function extractJsonObjectFromText(text: string): string {
   return source.slice(firstBrace);
 }
 
+function isPatchPlaceholderText(value: string): boolean {
+  const normalized = String(value || '')
+    .replace(/[*_`>#-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  if (!normalized) return true;
+  if (normalized === '**' || normalized === '*' || normalized === '-') return true;
+  if (normalized === 'tbd' || normalized === 'todo' || normalized === 'placeholder') return true;
+  if (normalized === 'n/a' || normalized === 'na') return true;
+  return /^f-\d+$/.test(normalized) || /^feature id[:\s-]*f-\d+$/i.test(normalized);
+}
+
 function normalizePatchedArrayField(value: unknown): string[] | null {
   if (Array.isArray(value)) {
     const items = value
       .map(entry => String(entry || '').trim())
-      .filter(entry => entry.length > 0);
+      .map(entry => entry.replace(/^\d+\.\s*/, '').replace(/^-\s*\[.\]\s*/, '').replace(/^-\s*/, '').trim())
+      .filter(entry => entry.length > 0 && !isPatchPlaceholderText(entry));
     return items.length > 0 ? items : null;
   }
 
@@ -1310,7 +1381,7 @@ function normalizePatchedArrayField(value: unknown): string[] | null {
     const items = value
       .split(/\n+/)
       .map(entry => entry.replace(/^\d+\.\s*/, '').replace(/^-\s*\[.\]\s*/, '').replace(/^-\s*/, '').trim())
-      .filter(entry => entry.length > 0);
+      .filter(entry => entry.length > 0 && !isPatchPlaceholderText(entry));
     return items.length > 0 ? items : null;
   }
 
@@ -1320,7 +1391,7 @@ function normalizePatchedArrayField(value: unknown): string[] | null {
 function normalizePatchedScalarField(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const next = value.trim();
-  return next.length > 0 ? next : null;
+  return next.length > 0 && !isPatchPlaceholderText(next) ? next : null;
 }
 
 function parseSemanticPatchResponse(
@@ -1399,9 +1470,10 @@ function parseSemanticPatchResponse(
 function applySemanticPatchToStructure(params: {
   structure: PRDStructure;
   patch: NormalizedSemanticPatch;
-}): { structure: PRDStructure; changed: boolean } {
+}): { structure: PRDStructure; changed: boolean; changedSections: string[] } {
   let changed = false;
   let nextStructure: PRDStructure = params.structure;
+  const changedSections = new Set<string>();
 
   if (Object.keys(params.patch.sections).length > 0) {
     const updatedSections = { ...nextStructure } as PRDStructure;
@@ -1411,6 +1483,7 @@ function applySemanticPatchToStructure(params: {
       if (normalizeForMatch(currentValue) === normalizeForMatch(value)) continue;
       (updatedSections as any)[typedKey] = value;
       changed = true;
+      changedSections.add(String(typedKey));
     }
     nextStructure = updatedSections;
   }
@@ -1449,6 +1522,7 @@ function applySemanticPatchToStructure(params: {
 
       if (featureChanged) {
         changed = true;
+        changedSections.add(`feature:${String(feature.id || '').trim().toUpperCase()}`);
         return updatedFeature;
       }
 
@@ -1463,7 +1537,7 @@ function applySemanticPatchToStructure(params: {
     }
   }
 
-  return { structure: nextStructure, changed };
+  return { structure: nextStructure, changed, changedSections: Array.from(changedSections) };
 }
 
 export async function applySemanticPatchRefinement(options: {
@@ -1482,11 +1556,12 @@ export async function applySemanticPatchRefinement(options: {
   const batches = buildSemanticRepairBatches(targets);
 
   if (!reviewer || targets.length === 0) {
-    return { content, structure, refined: false, reviewerAttempts, truncated: false };
+    return { content, structure, refined: false, reviewerAttempts, truncated: false, changedSections: [], structuralChange: false };
   }
 
   let refined = false;
   let truncated = false;
+  const changedSections = new Set<string>();
 
   const processBatch = async (
     batch: SemanticRepairTarget[],
@@ -1524,6 +1599,7 @@ export async function applySemanticPatchRefinement(options: {
 
     const applied = applySemanticPatchToStructure({ structure, patch });
     if (!applied.changed) return false;
+    applied.changedSections.forEach(sectionKey => changedSections.add(sectionKey));
 
     structure = applied.structure;
     content = assembleStructureToMarkdown(structure);
@@ -1540,6 +1616,8 @@ export async function applySemanticPatchRefinement(options: {
     refined,
     reviewerAttempts,
     truncated,
+    changedSections: Array.from(changedSections),
+    structuralChange: changedSections.size > 0,
   };
 }
 

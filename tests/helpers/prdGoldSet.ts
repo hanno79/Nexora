@@ -170,7 +170,7 @@ const BASE_FEATURES: GoldSetFeature[] = [
 
 const EN_SECTIONS = {
   systemVision: 'The reusable LLM widget gives product teams one embedded control surface for provider selection, model configuration, fallback ordering, and runtime governance. It reduces duplicated implementation work while keeping model-routing behavior, cost visibility, and reviewable defaults consistent across projects.',
-  systemBoundaries: 'The scope includes the embeddable React widget, a backend configuration API, and persistent runtime settings stored in PostgreSQL. The system serves authenticated internal users through web applications and deliberately excludes native mobile clients from the current release.',
+  systemBoundaries: 'The scope includes the embeddable React widget, a backend configuration API, and persistent runtime settings stored in PostgreSQL. The system serves authenticated internal users through web applications.',
   domainModel: [
     '- Provider (id, name, tier, isFree, orderIndex, description)',
     '- Model (id, providerId, name, costPerToken, isFree, capabilitySummary)',
@@ -207,7 +207,7 @@ const EN_SECTIONS = {
   outOfScope: [
     '- Native mobile applications for iOS or Android are not included in this release.',
     '- Direct client-side storage of secret provider API keys is excluded from the widget.',
-    '- Real-time collaborative editing of widget settings is deferred to a later phase.',
+    '- Real-time collaborative editing of widget settings is excluded from this release.',
   ].join('\n'),
   timeline: [
     '- Phase 1: Provider and model configuration foundations.',
@@ -223,7 +223,7 @@ const EN_SECTIONS = {
 
 const DE_SECTIONS = {
   systemVision: 'Das wiederverwendbare LLM-Widget bietet Teams eine gemeinsame Oberflaeche fuer Provider-Auswahl, Modellkonfiguration, Fallback-Reihenfolge und Laufzeit-Governance. Es reduziert doppelten Implementierungsaufwand und haelt Routing-Verhalten, Kostentransparenz und nachvollziehbare Standardwerte ueber Projekte hinweg konsistent.',
-  systemBoundaries: 'Der Scope umfasst das einbettbare React-Widget, eine Backend-Konfigurations-API und persistente Laufzeit-Einstellungen in PostgreSQL. Das System bedient authentifizierte interne Benutzer in Webanwendungen und schliesst native Mobile-Clients in diesem Release bewusst aus.',
+  systemBoundaries: 'Der Scope umfasst das einbettbare React-Widget, eine Backend-Konfigurations-API und persistente Laufzeit-Einstellungen in PostgreSQL. Das System bedient authentifizierte interne Benutzer in Webanwendungen.',
   domainModel: [
     '- Provider (id, name, tier, isFree, orderIndex, description)',
     '- Model (id, providerId, name, costPerToken, isFree, capabilitySummary)',
@@ -260,7 +260,7 @@ const DE_SECTIONS = {
   outOfScope: [
     '- Native Mobile-Apps fuer iOS oder Android sind nicht Teil dieses Releases.',
     '- Direkte clientseitige Speicherung geheimer Provider-API-Keys ist aus dem Widget ausgeschlossen.',
-    '- Echtzeit-Kollaboration bei Widget-Einstellungen wird auf eine spaetere Phase verschoben.',
+    '- Echtzeit-Kollaboration bei Widget-Einstellungen ist in diesem Release nicht enthalten.',
   ].join('\n'),
   timeline: [
     '- Phase 1: Grundlagen fuer Provider- und Modellkonfiguration.',

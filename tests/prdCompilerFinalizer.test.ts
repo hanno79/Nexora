@@ -118,7 +118,7 @@ describe('prdCompilerFinalizer', () => {
     expect(result.content).toContain('## Timeline & Milestones');
   });
 
-  it('rejects truncated generate output when compiler fallback sections dominate after repair attempts', async () => {
+  it('recovers truncated generate output when deterministic completion yields a valid PRD', async () => {
     const truncated = [
       '## Functional Feature Catalogue',
       '',
@@ -126,6 +126,99 @@ describe('prdCompilerFinalizer', () => {
       '10. Acceptance Criteria',
       '- A change by one user',
     ].join('\n');
+    let compileCall = 0;
+    const compileDocument = vi.fn((candidate: string) => {
+      compileCall++;
+      if (compileCall === 1) {
+        return compilePrdDocument(candidate, {
+          mode: 'generate',
+          language: 'en',
+          strictCanonical: true,
+          strictLanguageConsistency: true,
+          enableFeatureAggregation: true,
+        });
+      }
+
+      return {
+        content: [
+          '## System Vision',
+          'Realtime collaboration keeps all active users in sync.',
+          '',
+          '## Non-Functional Requirements',
+          'Realtime updates stay responsive under concurrent load.',
+          '',
+          '## Functional Feature Catalogue',
+          '',
+          '### F-01: Realtime Updates',
+          '1. Purpose',
+          'Synchronize task updates across all connected sessions in under one second.',
+          '2. Actors',
+          'Collaborating team member.',
+          '3. Trigger',
+          'A user changes a task status or assignee.',
+          '4. Preconditions',
+          'The user is authenticated and the shared board is open.',
+          '5. Main Flow',
+          '1. The user updates a task on the board.',
+          '2. The system broadcasts the change to all active clients.',
+          '3. Each client refreshes the affected task card in place.',
+          '6. Alternate Flows',
+          '1. If a websocket reconnect is in progress, the client applies the change after session recovery.',
+          '7. Postconditions',
+          'Every active client shows the same task state after the update completes.',
+          '8. Data Impact',
+          'Updates Task.status, Task.assigneeId, and board activity metadata.',
+          '9. UI Impact',
+          'The affected task card updates immediately without a full page refresh.',
+          '10. Acceptance Criteria',
+          '- Active users see the updated task state within one second.',
+          '- Reconnected clients receive the latest task state after recovering the session.',
+          '',
+          '## Timeline & Milestones',
+          '- Phase 1 delivers F-01 Realtime Updates.',
+          '',
+          '## Success Criteria & Acceptance Testing',
+          'Realtime updates stay consistent across all active sessions.',
+        ].join('\n'),
+        structure: {
+          systemVision: 'Realtime collaboration keeps all active users in sync.',
+          features: [
+            {
+              id: 'F-01',
+              name: 'Realtime Updates',
+              rawContent: 'Structured feature body',
+              purpose: 'Synchronize task updates across all connected sessions in under one second.',
+              actors: 'Collaborating team member.',
+              trigger: 'A user changes a task status or assignee.',
+              preconditions: 'The user is authenticated and the shared board is open.',
+              mainFlow: [
+                'The user updates a task on the board.',
+                'The system broadcasts the change to all active clients.',
+                'Each client refreshes the affected task card in place.',
+              ],
+              alternateFlows: [
+                'If a websocket reconnect is in progress, the client applies the change after session recovery.',
+              ],
+              postconditions: 'Every active client shows the same task state after the update completes.',
+              dataImpact: 'Updates Task.status, Task.assigneeId, and board activity metadata.',
+              uiImpact: 'The affected task card updates immediately without a full page refresh.',
+              acceptanceCriteria: [
+                'Active users see the updated task state within one second.',
+                'Reconnected clients receive the latest task state after recovering the session.',
+              ],
+            },
+          ],
+          otherSections: {},
+        },
+        quality: {
+          valid: true,
+          truncatedLikely: false,
+          missingSections: [],
+          featureCount: 1,
+          issues: [],
+        },
+      } as CompilePrdResult;
+    });
 
     const repairReviewer = vi.fn(async () => ({
       content: truncated,
@@ -133,34 +226,25 @@ describe('prdCompilerFinalizer', () => {
       usage: usage(200),
     }));
 
-    let capturedError: unknown;
+    const result = await finalizeWithCompilerGates({
+      initialResult: {
+        content: truncated,
+        model: 'mock/initial',
+        usage: usage(120),
+        finishReason: 'length',
+      },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Refine realtime updates section.',
+      maxRepairPasses: 2,
+      repairReviewer,
+      compileDocument,
+    });
 
-    try {
-      await finalizeWithCompilerGates({
-        initialResult: {
-          content: truncated,
-          model: 'mock/initial',
-          usage: usage(120),
-          finishReason: 'length',
-        },
-        mode: 'generate',
-        language: 'en',
-        originalRequest: 'Refine realtime updates section.',
-        maxRepairPasses: 2,
-        repairReviewer,
-      });
-    } catch (error) {
-      capturedError = error;
-    }
-
-    expect(capturedError).toBeInstanceOf(PrdCompilerQualityError);
-    expect(repairReviewer).toHaveBeenCalledTimes(2);
-
-    const qualityError = capturedError as PrdCompilerQualityError;
-    expect(qualityError.failureStage).toBe('compiler_repair');
-    expect(
-      qualityError.quality.issues.some(issue => issue.code === 'excessive_fallback_sections')
-    ).toBe(true);
+    expect(result.quality.valid).toBe(true);
+    expect(result.content).toContain('## System Vision');
+    expect(result.content).toContain('## Timeline & Milestones');
+    expect(repairReviewer.mock.calls.length).toBeLessThanOrEqual(1);
   });
 
   it('accepts compiler-valid output even when raw source heuristically looks truncated', async () => {
@@ -201,7 +285,10 @@ describe('prdCompilerFinalizer', () => {
             postconditions: 'All clients observe consistent state',
             dataImpact: 'Task status updated',
             uiImpact: 'Task card reflects new status',
-            acceptanceCriteria: ['Update visible within one second'],
+            acceptanceCriteria: [
+              'Update visible in all active sessions within one second.',
+              'Recovered sessions show the latest task state after reconnect.',
+            ],
           },
         ],
         otherSections: {},
@@ -263,6 +350,785 @@ describe('prdCompilerFinalizer', () => {
     })).rejects.toThrow(/quality gate failed/i);
   });
 
+  it('repairs deterministic feature core gaps via targeted patch refinement before full-document compiler repair', async () => {
+    const content = buildSemanticVerifierPrd(
+      '- Release is complete after semantic verification passes and diagnostics are persisted.'
+    );
+    let compileCall = 0;
+    const compileDocument = vi.fn((candidate: string) => {
+      compileCall++;
+      if (candidate.includes('PlayerProfile.xp')) {
+        return {
+          content: candidate,
+          structure: {
+            systemVision: 'A Tetris platform combines power-ups with roguelite progression.',
+            outOfScope: '- Native mobile clients are excluded from this release.',
+            features: [
+              {
+                id: 'F-01',
+                name: 'Core Tetris Session',
+                rawContent: 'Structured feature body',
+                purpose: 'Deliver classic Tetris gameplay with power-ups and progression.',
+                trigger: 'The player starts a run.',
+                preconditions: 'A game session is active and the player profile already tracks XP and cooldown-aware power-up state.',
+                mainFlow: ['The player starts a run.', 'The system updates progression and score.'],
+                postconditions: 'The run updates score, XP progression, and power-up lifecycle state consistently after completion.',
+                dataImpact: 'Updates PlayerProfile.xp, PlayerProfile.level, GameSession.activePowerUpId, GameSession.score, and PowerUp.cooldown.',
+                acceptanceCriteria: [
+                  'The session records XP progression after each completed run.',
+                  'Power-up cooldown state remains consistent with gameplay events.',
+                ],
+              },
+            ],
+            otherSections: {},
+          },
+          quality: {
+            valid: true,
+            truncatedLikely: false,
+            missingSections: [],
+            featureCount: 1,
+            issues: [],
+            primaryCapabilityAnchors: ['power', 'progression'],
+            featurePriorityWindow: ['F-01'],
+            coreFeatureIds: ['F-01'],
+            supportFeatureIds: [],
+          },
+        } as CompilePrdResult;
+      }
+
+      return {
+        content: candidate,
+        structure: {
+          systemVision: 'A Tetris platform combines power-ups with roguelite progression.',
+          outOfScope: '- Native mobile clients are excluded from this release.',
+          features: [
+            {
+              id: 'F-01',
+              name: 'Core Tetris Session',
+              rawContent: 'Structured feature body',
+              purpose: 'Deliver classic Tetris gameplay with power-ups and progression.',
+              trigger: 'The player starts a run.',
+              preconditions: 'A game session is active.',
+              mainFlow: ['The player starts a run.', 'The system stores the run score.'],
+              postconditions: 'The run finishes and score is stored.',
+              dataImpact: 'Updates GameSession.score after each run.',
+              acceptanceCriteria: ['The player can finish a run.'],
+            },
+          ],
+          otherSections: {},
+        },
+        quality: {
+          valid: false,
+          truncatedLikely: false,
+          missingSections: [],
+          featureCount: 1,
+          issues: [
+            {
+              code: 'feature_core_semantic_gap',
+              message: 'Feature "F-01" mentions progression but Preconditions, Postconditions, or Data Impact do not encode it consistently.',
+              severity: 'error' as const,
+              evidencePath: 'feature:F-01.purpose',
+            },
+          ],
+          primaryCapabilityAnchors: ['power', 'progression'],
+          featurePriorityWindow: ['F-01'],
+          coreFeatureIds: [],
+          supportFeatureIds: [],
+        },
+      } as CompilePrdResult;
+    });
+
+    const repairReviewer = vi.fn(async (prompt: string, pass: number) => {
+      expect(pass).toBe(1);
+      expect(prompt).toContain('Return JSON only');
+      expect(prompt).toContain('Target Fields: preconditions, postconditions, dataImpact');
+      expect(prompt).not.toContain('Target Fields: purpose');
+      expect(prompt).not.toContain('Target Fields: trigger');
+      expect(prompt).not.toContain('Target Fields: mainFlow');
+      expect(prompt).not.toContain('Target Fields: acceptanceCriteria');
+      return {
+        content: JSON.stringify({
+          features: [
+            {
+              id: 'F-01',
+              fields: {
+                preconditions: 'A game session is active and the player profile already tracks XP and cooldown-aware power-up state.',
+                postconditions: 'The run updates score, XP progression, and power-up lifecycle state consistently after completion.',
+                dataImpact: 'Updates PlayerProfile.xp, PlayerProfile.level, GameSession.activePowerUpId, GameSession.score, and PowerUp.cooldown.',
+              },
+            },
+          ],
+        }),
+        model: 'mock/repair',
+        usage: usage(20),
+        finishReason: 'stop',
+      };
+    });
+
+    const result = await finalizeWithCompilerGates({
+      initialResult: {
+        content,
+        model: 'mock/initial',
+        usage: usage(50),
+      },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Create a Tetris PRD focused on power-ups and roguelite progression.',
+      repairReviewer,
+      compileDocument,
+      enableContentReview: false,
+    });
+
+    expect(result.quality.valid).toBe(true);
+    expect(compileCall).toBeGreaterThan(1);
+    expect(result.repairAttempts).toHaveLength(0);
+    expect(result.reviewerAttempts).toHaveLength(1);
+    expect(repairReviewer).toHaveBeenCalledTimes(1);
+    expect(result.primaryCapabilityAnchors?.length).toBeGreaterThan(0);
+  });
+
+  it('routes schema field reference blockers into deterministic domain-model and feature repair before full-document compiler repair', async () => {
+    const content = buildSemanticVerifierPrd(
+      '- Release is complete after semantic verification passes and compiler evidence stays consistent.'
+    );
+    let compileCall = 0;
+    const compileDocument = vi.fn((candidate: string) => {
+      compileCall++;
+      const compiled = compilePrdDocument(candidate, {
+        mode: 'generate',
+        language: 'en',
+        strictCanonical: true,
+        strictLanguageConsistency: true,
+        enableFeatureAggregation: true,
+      });
+      const schemaReferenceRepaired = candidate.includes('lastLoginAt');
+
+      return {
+        ...compiled,
+        quality: {
+          ...compiled.quality,
+          valid: schemaReferenceRepaired,
+          issues: schemaReferenceRepaired
+            ? []
+            : [{
+              code: 'schema_field_reference_missing',
+              message: 'Reference "User.lastLoginAt" in feature:F-01.dataImpact is not declared in the Domain Model for entity "User".',
+              severity: 'error' as const,
+              evidencePath: 'feature:F-01.dataImpact',
+            }],
+          primaryCapabilityAnchors: ['semantic', 'verification'],
+          featurePriorityWindow: ['F-01'],
+          coreFeatureIds: ['F-01'],
+          supportFeatureIds: [],
+        },
+      } as CompilePrdResult;
+    });
+
+    const repairReviewer = vi.fn(async (prompt: string, pass: number) => {
+      expect(pass).toBe(1);
+      expect(prompt).toContain('## Target Section: domainModel');
+      expect(prompt).toContain('## Target Feature: F-01');
+      expect(prompt).toContain('User.lastLoginAt');
+      return {
+        content: JSON.stringify({
+          sections: {
+            domainModel: 'User stores userId, email, passwordHash, and lastLoginAt. PRD stores prdId, status, and ownerId. Feature stores featureId and title.',
+          },
+          features: [
+            {
+              id: 'F-01',
+              fields: {
+                postconditions: 'The document remains accepted only after semantic verification passes and User.lastLoginAt is recorded for the editor session.',
+                dataImpact: 'Updates SemanticVerificationResult.status, RepairAttempt.evidence, and User.lastLoginAt after each accepted run.',
+              },
+            },
+          ],
+        }),
+        model: 'mock/repair',
+        usage: usage(18),
+        finishReason: 'stop',
+      };
+    });
+
+    const result = await finalizeWithCompilerGates({
+      initialResult: {
+        content,
+        model: 'mock/initial',
+        usage: usage(50),
+      },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Generate a verified PRD with tracked editor login timestamps.',
+      repairReviewer,
+      compileDocument,
+      enableContentReview: false,
+    });
+
+    expect(result.quality.valid).toBe(true);
+    expect(result.repairAttempts).toHaveLength(0);
+    expect(result.reviewerAttempts).toHaveLength(1);
+    expect(repairReviewer).toHaveBeenCalledTimes(1);
+    expect(compileCall).toBeGreaterThan(1);
+  });
+
+  it('routes out-of-scope reintroduction blockers into deterministic section repair before full-document compiler repair', async () => {
+    const content = replaceSectionBody(
+      buildSemanticVerifierPrd('- Release is complete after documentation review and semantic verification.'),
+      'Success Criteria & Acceptance Testing',
+      [
+        '- Semantic verification blocks inconsistent PRDs before final acceptance.',
+        '- Native mobile rollout is part of this release success criteria.',
+      ].join('\n')
+    );
+    let compileCall = 0;
+    const compileDocument = vi.fn((candidate: string) => {
+      compileCall++;
+      const compiled = compilePrdDocument(candidate, {
+        mode: 'generate',
+        language: 'en',
+        strictCanonical: true,
+        strictLanguageConsistency: true,
+        enableFeatureAggregation: true,
+      });
+      const scopeLeakRemoved = !candidate.includes('Native mobile rollout is part of this release success criteria.');
+
+      return {
+        ...compiled,
+        quality: {
+          ...compiled.quality,
+          valid: scopeLeakRemoved,
+          issues: scopeLeakRemoved
+            ? []
+            : [{
+              code: 'out_of_scope_reintroduced',
+              message: 'Out-of-scope item "mobile client work" is reintroduced in successCriteria.',
+              severity: 'error' as const,
+              evidencePath: 'successCriteria',
+            }],
+        },
+      } as CompilePrdResult;
+    });
+
+    const repairReviewer = vi.fn(async (prompt: string, pass: number) => {
+      expect(pass).toBe(1);
+      expect(prompt).toContain('## Target Section: successCriteria');
+      expect(prompt).toContain('out_of_scope_reintroduced');
+      return {
+        content: JSON.stringify({
+          sections: {
+            successCriteria: [
+              '- Semantic verification blocks inconsistent PRDs before final acceptance.',
+              '- Accepted PRDs exclude native mobile work from this release scope.',
+              '- Reviewer and verifier diagnostics remain visible for every accepted revision.',
+            ].join('\n'),
+          },
+        }),
+        model: 'mock/repair',
+        usage: usage(12),
+        finishReason: 'stop',
+      };
+    });
+
+    const result = await finalizeWithCompilerGates({
+      initialResult: {
+        content,
+        model: 'mock/initial',
+        usage: usage(40),
+      },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Generate a verified PRD with release-specific success criteria.',
+      repairReviewer,
+      compileDocument,
+      enableContentReview: false,
+    });
+
+    expect(result.quality.valid).toBe(true);
+    expect(result.repairAttempts).toHaveLength(0);
+    expect(result.reviewerAttempts).toHaveLength(1);
+    expect(result.content).not.toContain('Native mobile rollout is part of this release success criteria.');
+    expect(repairReviewer).toHaveBeenCalledTimes(1);
+    expect(compileCall).toBeGreaterThan(1);
+  });
+
+  it('normalizes out-of-scope future leakage before spending AI repair budget', async () => {
+    const content = buildSemanticVerifierPrd(
+      '- Release is complete after documentation review and semantic verification.'
+    ).replace(
+      'This scope excludes degraded acceptance after semantic verifier failure, mobile client work, and unreviewed manual imports.',
+      'VR integration is deferred to a later roadmap phase, but it is not in this release.'
+    );
+
+    const repairReviewer = vi.fn(async () => ({
+      content,
+      model: 'mock/repair',
+      usage: usage(10),
+      finishReason: 'stop',
+    }));
+
+    const result = await finalizeWithCompilerGates({
+      initialResult: {
+        content,
+        model: 'mock/initial',
+        usage: usage(40),
+      },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Generate a verified PRD.',
+      repairReviewer,
+      enableContentReview: false,
+    });
+
+    expect(result.quality.valid).toBe(true);
+    expect(result.content).toContain('VR integration is excluded from this release.');
+    expect(repairReviewer).not.toHaveBeenCalled();
+  });
+
+  it('rewrites generic success criteria boilerplate during deterministic targeted repair', async () => {
+    const content = replaceSectionBody(
+      buildSemanticVerifierPrd('- Release is complete after documentation review and semantic verification.'),
+      'Success Criteria & Acceptance Testing',
+      [
+        'The project is successful when:',
+        '- Core workflows are implemented.',
+        '- Stakeholders can use the release.',
+      ].join('\n')
+    );
+    const repairedSuccessCriteria = [
+      '- Semantic verification blocks inconsistent PRDs before release approval.',
+      '- Targeted repair resolves fixable blockers without changing canonical feature IDs.',
+      '- Reviewer and verifier diagnostics remain attached to every accepted PRD.',
+    ].join('\n');
+
+    const compileDocument = vi.fn((candidate: string) => {
+      const compiled = compilePrdDocument(candidate, {
+        mode: 'generate',
+        language: 'en',
+        strictCanonical: true,
+        strictLanguageConsistency: true,
+        enableFeatureAggregation: true,
+      });
+      const stillGeneric = String(compiled.structure.successCriteria || '').includes('The project is successful when:');
+
+      return {
+        ...compiled,
+        quality: {
+          ...compiled.quality,
+          valid: !stillGeneric,
+          issues: stillGeneric
+            ? [{
+              code: 'template_semantic_boilerplate_successCriteria',
+              message: 'Section "successCriteria" contains generic boilerplate and is not template-specific.',
+              severity: 'error' as const,
+            }]
+            : [],
+        },
+      } as CompilePrdResult;
+    });
+
+    const repairReviewer = vi.fn(async (prompt: string, pass: number) => {
+      expect(pass).toBe(1);
+      expect(prompt).toContain('successCriteria');
+      return {
+        content: JSON.stringify({
+          sections: {
+            successCriteria: repairedSuccessCriteria,
+          },
+        }),
+        model: 'mock/repair',
+        usage: usage(12),
+        finishReason: 'stop',
+      };
+    });
+
+    const result = await finalizeWithCompilerGates({
+      initialResult: {
+        content,
+        model: 'mock/initial',
+        usage: usage(40),
+      },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Generate a verified PRD with concrete release criteria.',
+      repairReviewer,
+      compileDocument,
+      enableContentReview: false,
+    });
+
+    expect(result.quality.valid).toBe(true);
+    expect(result.repairAttempts).toHaveLength(0);
+    expect(result.reviewerAttempts).toHaveLength(1);
+    expect(result.content).toContain('Semantic verification blocks inconsistent PRDs before release approval.');
+    expect(result.content).not.toContain('The project is successful when:');
+    expect(repairReviewer).toHaveBeenCalledTimes(1);
+    expect(compileDocument.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('rewrites generic timeline boilerplate during deterministic targeted repair', async () => {
+    const content = replaceSectionBody(
+      buildSemanticVerifierPrd('- Release is complete after documentation review and semantic verification.'),
+      'Timeline & Milestones',
+      [
+        'The project will be delivered in several phases:',
+        '- Phase 1 covers initial implementation.',
+        '- Phase 2 covers additional improvements.',
+      ].join('\n')
+    );
+    const repairedTimeline = [
+      '- Milestone 1 hardens compiler repair diagnostics before release approval.',
+      '- Milestone 2 validates semantic verification against the canonical feature catalogue.',
+      '- Milestone 3 persists reviewer-visible evidence for every accepted PRD.',
+    ].join('\n');
+
+    const compileDocument = vi.fn((candidate: string) => {
+      const compiled = compilePrdDocument(candidate, {
+        mode: 'generate',
+        language: 'en',
+        strictCanonical: true,
+        strictLanguageConsistency: true,
+        enableFeatureAggregation: true,
+      });
+      const stillGeneric = String(compiled.structure.timelineMilestones || '').includes('The project will be delivered in several phases:');
+
+      return {
+        ...compiled,
+        quality: {
+          ...compiled.quality,
+          valid: !stillGeneric,
+          issues: stillGeneric
+            ? [{
+              code: 'generic_section_boilerplate_timelineMilestones',
+              message: 'Section appears generic and not context-specific: Timeline & Milestones',
+              severity: 'error' as const,
+            }]
+            : [],
+        },
+      } as CompilePrdResult;
+    });
+
+    const repairReviewer = vi.fn(async (prompt: string, pass: number) => {
+      expect(pass).toBe(1);
+      expect(prompt).toContain('timelineMilestones');
+      return {
+        content: JSON.stringify({
+          sections: {
+            timelineMilestones: repairedTimeline,
+          },
+        }),
+        model: 'mock/repair',
+        usage: usage(12),
+        finishReason: 'stop',
+      };
+    });
+
+    const result = await finalizeWithCompilerGates({
+      initialResult: {
+        content,
+        model: 'mock/initial',
+        usage: usage(40),
+      },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Generate a verified PRD with concrete delivery milestones.',
+      repairReviewer,
+      compileDocument,
+      enableContentReview: false,
+    });
+
+    expect(result.quality.valid).toBe(true);
+    expect(result.repairAttempts).toHaveLength(0);
+    expect(result.reviewerAttempts).toHaveLength(1);
+    expect(result.content).toContain('Milestone 1 hardens compiler repair diagnostics before release approval.');
+    expect(result.content).not.toContain('The project will be delivered in several phases:');
+    expect(repairReviewer).toHaveBeenCalledTimes(1);
+    expect(compileDocument.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('preserves deterministic reviewer attempts on compiler quality errors after targeted repair', async () => {
+    const content = replaceSectionBody(
+      buildSemanticVerifierPrd('- Release is complete after documentation review and semantic verification.'),
+      'Timeline & Milestones',
+      [
+        'The project will be delivered in several phases:',
+        '- Phase 1 covers initial implementation.',
+        '- Phase 2 covers additional improvements.',
+      ].join('\n')
+    );
+    const repairedTimeline = [
+      '- Milestone 1 hardens compiler repair diagnostics before release approval.',
+      '- Milestone 2 validates semantic verification against the canonical feature catalogue.',
+      '- Milestone 3 persists reviewer-visible evidence for every accepted PRD.',
+    ].join('\n');
+
+    const compileDocument = vi.fn((candidate: string) => {
+      const compiled = compilePrdDocument(candidate, {
+        mode: 'generate',
+        language: 'en',
+        strictCanonical: true,
+        strictLanguageConsistency: true,
+        enableFeatureAggregation: true,
+      });
+      const stillGeneric = String(compiled.structure.timelineMilestones || '').includes('The project will be delivered in several phases:');
+
+      return {
+        ...compiled,
+        quality: {
+          ...compiled.quality,
+          valid: false,
+          issues: stillGeneric
+            ? [{
+              code: 'generic_section_boilerplate_timelineMilestones',
+              message: 'Section appears generic and not context-specific: Timeline & Milestones',
+              severity: 'error' as const,
+            }]
+            : [{
+              code: 'persistent_quality_gap_for_test',
+              message: 'A non-deterministic residual quality gap still blocks the repaired candidate.',
+              severity: 'error' as const,
+            }],
+        },
+      } as CompilePrdResult;
+    });
+
+    const repairReviewer = vi.fn(async (prompt: string, pass: number) => {
+      expect(pass).toBe(1);
+      expect(prompt).toContain('timelineMilestones');
+      return {
+        content: JSON.stringify({
+          sections: {
+            timelineMilestones: repairedTimeline,
+          },
+        }),
+        model: 'mock/repair',
+        usage: usage(12),
+        finishReason: 'stop',
+      };
+    });
+
+    let capturedError: unknown;
+    try {
+      await finalizeWithCompilerGates({
+        initialResult: {
+          content,
+          model: 'mock/initial',
+          usage: usage(40),
+        },
+        mode: 'generate',
+        language: 'en',
+        originalRequest: 'Generate a verified PRD with concrete delivery milestones.',
+        repairReviewer,
+        compileDocument,
+        enableContentReview: false,
+        maxRepairPasses: 0,
+      });
+    } catch (error) {
+      capturedError = error;
+    }
+
+    expect(capturedError).toBeInstanceOf(PrdCompilerQualityError);
+    const qualityError = capturedError as PrdCompilerQualityError;
+    expect(qualityError.repairAttempts).toHaveLength(0);
+    expect(qualityError.reviewerAttempts).toHaveLength(1);
+    expect(qualityError.reviewerAttempts[0]?.model).toBe('mock/repair');
+    expect(qualityError.failureStage).toBe('compiler_repair');
+    expect(repairReviewer).toHaveBeenCalledTimes(1);
+  });
+
+  it('rewrites timeline milestones from the canonical feature map before semantic repair', async () => {
+    const original = [
+      '## System Vision',
+      'A browser-based Tetris platform focuses on core gameplay and long-term progression.',
+      '',
+      '## System Boundaries',
+      'The system runs as a web application with authenticated users and persistent cloud storage.',
+      '',
+      '## Domain Model',
+      'PlayerProfile stores profile state and progression. GameSession stores run score and session state.',
+      '',
+      '## Global Business Rules',
+      'Feature IDs stay stable across all planning sections.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      '### F-01: Player Profile',
+      'Feature ID: F-01',
+      '1. Purpose',
+      'Allow players to update their saved profile preferences.',
+      '2. Actors',
+      'Player.',
+      '3. Trigger',
+      'The player opens profile settings.',
+      '4. Preconditions',
+      'The player is authenticated.',
+      '5. Main Flow',
+      '1. The player edits profile settings.',
+      '2. The system persists the updated profile.',
+      '6. Alternate Flows',
+      '1. Validation errors block the save.',
+      '7. Postconditions',
+      'The profile remains saved across sessions.',
+      '8. Data Impact',
+      'Updates PlayerProfile preferences.',
+      '9. UI Impact',
+      'Shows editable profile controls.',
+      '10. Acceptance Criteria',
+      '- [ ] Players can save profile updates.',
+      '- [ ] Saved profile changes appear after refresh.',
+      '',
+      '### F-02: Core Tetris Gameplay',
+      'Feature ID: F-02',
+      '1. Purpose',
+      'Deliver the primary Tetris gameplay loop with persistent scoring.',
+      '2. Actors',
+      'Player.',
+      '3. Trigger',
+      'The player starts a run.',
+      '4. Preconditions',
+      'A new game session is available.',
+      '5. Main Flow',
+      '1. The player starts a run.',
+      '2. The system updates score and run state.',
+      '6. Alternate Flows',
+      '1. Pausing and resuming the run preserves session state.',
+      '7. Postconditions',
+      'Run score is stored for later comparison.',
+      '8. Data Impact',
+      'Updates GameSession.score.',
+      '9. UI Impact',
+      'Shows the active board and score HUD.',
+      '10. Acceptance Criteria',
+      '- [ ] Players can complete a run.',
+      '- [ ] The score HUD updates during active play.',
+      '',
+      '## Non-Functional Requirements',
+      'Core gameplay remains responsive.',
+      '',
+      '## Error Handling & Recovery',
+      'Recoverable failures do not lose player progress.',
+      '',
+      '## Deployment & Infrastructure',
+      'The service runs in a containerized web environment.',
+      '',
+      '## Definition of Done',
+      'Feature references remain consistent across sections.',
+      '',
+      '## Out of Scope',
+      'Native mobile applications are excluded from this release.',
+      '',
+      '## Timeline & Milestones',
+      '- Phase 1 delivers F-01 Core Tetris Gameplay.',
+      '- Phase 2 delivers F-02 Player Profile hardening.',
+      '',
+      '## Success Criteria & Acceptance Testing',
+      'Milestones match the implemented feature catalogue.',
+    ].join('\n');
+
+    const compileDocument = vi.fn((candidate: string) => {
+      const compiled = compilePrdDocument(candidate, {
+        mode: 'generate',
+        language: 'en',
+        strictCanonical: true,
+        strictLanguageConsistency: true,
+        enableFeatureAggregation: true,
+      });
+      const hasCanonicalTimeline =
+        compiled.structure.timelineMilestones?.includes('F-01 Player Profile')
+        && compiled.structure.timelineMilestones?.includes('F-02 Core Tetris Gameplay');
+
+      return {
+        ...compiled,
+        quality: {
+          ...compiled.quality,
+          valid: true,
+          issues: hasCanonicalTimeline
+            ? compiled.quality.issues.filter(issue => issue.code !== 'timeline_feature_reference_mismatch')
+            : compiled.quality.issues,
+        },
+      } as CompilePrdResult;
+    });
+
+    const repairReviewer = vi.fn(async () => ({
+      content: original,
+      model: 'mock/repair',
+      usage: usage(10),
+    }));
+
+    const result = await finalizeWithCompilerGates({
+      initialResult: { content: original, model: 'mock/initial', usage: usage(40) },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Generate a Tetris PRD with stable feature planning.',
+      repairReviewer,
+      compileDocument,
+      enableContentReview: false,
+    });
+
+    expect(result.quality.valid).toBe(true);
+    expect(result.timelineRewrittenFromFeatureMap).toBe(true);
+    expect(result.timelineRewriteAppliedLines).toBeGreaterThan(0);
+    expect(result.canonicalFeatureIds).toEqual(expect.arrayContaining(['F-01', 'F-02']));
+    expect(result.content).toContain('F-01: Player Profile');
+    expect(result.content).toContain('F-02: Core Tetris Gameplay');
+    expect(repairReviewer).not.toHaveBeenCalled();
+    expect(compileDocument.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('short-circuits compiler repair when feature catalogue format mismatch survives deterministic normalization', async () => {
+    const compileDocument = vi.fn(() => ({
+      content: '## Functional Feature Catalogue\n\n### F001 – Turbo Drop\n\nFeature ID: F001\n',
+      structure: {
+        features: [],
+        featureCatalogueIntro: 'Visible feature catalogue heading but no parseable canonical feature blocks.',
+        otherSections: {},
+      },
+      quality: {
+        valid: false,
+        truncatedLikely: false,
+        missingSections: [],
+        featureCount: 0,
+        issues: [
+          {
+            code: 'feature_catalogue_format_mismatch',
+            message: 'Feature catalogue exists in raw markdown but could not be parsed into canonical F-XX features.',
+            severity: 'error' as const,
+          },
+        ],
+        structuralParseReason: 'feature_catalogue_format_mismatch',
+        rawFeatureHeadingSamples: ['### F001 – Turbo Drop'],
+        normalizationApplied: true,
+        normalizedFeatureCountRecovered: 0,
+      },
+    }));
+
+    const repairReviewer = vi.fn(async () => ({
+      content: 'unused',
+      model: 'mock/repair',
+      usage: usage(10),
+    }));
+
+    let capturedError: unknown;
+    try {
+      await finalizeWithCompilerGates({
+        initialResult: {
+          content: '## Functional Feature Catalogue\n\n### F001 – Turbo Drop',
+          model: 'mock/initial',
+          usage: usage(20),
+        },
+        mode: 'generate',
+        language: 'en',
+        originalRequest: 'Generate a deterministic PRD.',
+        repairReviewer,
+        compileDocument,
+      });
+    } catch (error) {
+      capturedError = error;
+    }
+
+    expect(capturedError).toBeInstanceOf(PrdCompilerQualityError);
+    expect(repairReviewer).not.toHaveBeenCalled();
+    expect((capturedError as PrdCompilerQualityError).quality.structuralParseReason).toBe('feature_catalogue_format_mismatch');
+  });
+
   it('does not force repair when finish_reason is length but output is already valid', async () => {
     const complete = buildSemanticVerifierPrd(
       '- The document is complete only when all required sections remain canonical despite a length finish reason.'
@@ -316,7 +1182,7 @@ describe('prdCompilerFinalizer', () => {
       repairReviewer,
     });
 
-    expect(repairReviewer).toHaveBeenCalledTimes(1);
+    expect(repairReviewer).toHaveBeenCalledTimes(0);
     expect(result.quality.valid).toBe(true);
     expect(result.content).not.toContain('## Project Overview');
   });
@@ -331,9 +1197,14 @@ describe('prdCompilerFinalizer', () => {
       quality: {
         valid: false,
         truncatedLikely: false,
-        missingSections: [],
+        missingSections: ['Definition of Done'],
         featureCount: 0,
         issues: [
+          {
+            code: 'missing_section_definitionOfDone',
+            message: 'Missing required section: Definition of Done',
+            severity: 'error',
+          },
           {
             code: 'boilerplate_repetition_detected',
             message: 'Repeated boilerplate sentence detected.',
@@ -357,7 +1228,29 @@ describe('prdCompilerFinalizer', () => {
       content: 'valid',
       structure: {
         systemVision: 'Valid output.',
-        features: [{ id: 'F-01', name: 'Feature', rawContent: 'Feature body' }],
+        features: [{
+          id: 'F-01',
+          name: 'Feature',
+          rawContent: 'Feature body',
+          purpose: 'Deliver a concrete, user-visible capability with deterministic validation and language fixes.',
+          actors: 'Authenticated user',
+          trigger: 'The user starts the workflow from the editor UI.',
+          preconditions: 'A valid PRD draft is loaded and compiler validation is enabled.',
+          mainFlow: [
+            'The user starts the workflow.',
+            'The system validates the PRD and applies the requested repair.',
+            'The updated PRD is presented back to the user.',
+          ],
+          alternateFlows: [
+            'If validation fails, the system returns actionable feedback instead of persisting invalid content.',
+          ],
+          postconditions: 'The repaired PRD remains valid and available for review.',
+          dataImpact: 'Updates the PRD revision and attached diagnostics.',
+          acceptanceCriteria: [
+            'The workflow produces a valid PRD after repairing boilerplate, leaks, and language mismatches.',
+            'Users receive actionable diagnostics when the repair cannot produce a valid PRD.',
+          ],
+        }],
         otherSections: {},
       },
       quality: {
@@ -413,9 +1306,9 @@ describe('prdCompilerFinalizer', () => {
           content,
           structure: { features: [{ id: 'F-01', name: 'A', rawContent: 'body' }], otherSections: {} },
           quality: {
-            valid: false, truncatedLikely: false, missingSections: [],
+            valid: false, truncatedLikely: false, missingSections: ['Definition of Done'],
             featureCount: 1,
-            issues: [{ code: 'unknown_heading', message: 'Extra heading', severity: 'error' as const }],
+            issues: [{ code: 'missing_section_definitionOfDone', message: 'Missing required section: Definition of Done', severity: 'error' as const }],
           },
         };
       }
@@ -472,7 +1365,273 @@ describe('prdCompilerFinalizer', () => {
     expect(repairReviewer).toHaveBeenCalledTimes(2);
   });
 
-  it('rejects sparse generate output even when compiler fallback sections are template-appropriate', async () => {
+  it('rejects collapsing full-document repairs and keeps the best pre-repair candidate as degraded content', async () => {
+    const bestContent = [
+      '## System Vision',
+      'A collaborative task platform helps teams capture, prioritize, and complete work quickly.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      '### F-01: Task Capture',
+      '1. Purpose',
+      'Allow users to create structured tasks with title, due date, and priority.',
+      '2. Actors',
+      'Authenticated user',
+      '3. Trigger',
+      'The user submits the create-task form.',
+      '4. Preconditions',
+      'The user is signed in and the workspace is active.',
+      '5. Main Flow',
+      '1. The user enters task details.',
+      '2. The system validates the task.',
+      '3. The system stores the task and refreshes the board.',
+      '7. Postconditions',
+      'The new task is visible on the board with the selected priority and due date.',
+      '8. Data Impact',
+      'Creates Task.title, Task.priority, Task.dueDate, and Task.status.',
+      '10. Acceptance Criteria',
+      '- A created task appears on the board with the entered priority and due date.',
+    ].join('\n');
+
+    const collapsedRepair = [
+      '## System Vision',
+      'A collaborative task platform helps teams capture, prioritize, and complete work quickly.',
+      '',
+      '## Functional Feature Catalogue',
+      '',
+      '### F-01: F-01',
+      'Feature ID: F-01',
+      '1. Purpose',
+      '**',
+      '2. Actors',
+      '**',
+      '3. Trigger',
+      '**',
+      '4. Preconditions',
+      '**',
+      '5. Main Flow',
+      '1. **',
+      '7. Postconditions',
+      '**',
+      '8. Data Impact',
+      '**',
+      '10. Acceptance Criteria',
+      '- The feature works as expected for all users.',
+      '',
+      '### F-02: F-02',
+      'Feature ID: F-02',
+      '1. Purpose',
+      '**',
+      '2. Actors',
+      '**',
+      '3. Trigger',
+      '**',
+      '4. Preconditions',
+      '**',
+      '5. Main Flow',
+      '1. **',
+      '7. Postconditions',
+      '**',
+      '8. Data Impact',
+      '**',
+      '10. Acceptance Criteria',
+      '- The feature works as expected for all users.',
+      '',
+      '## Definition of Done',
+      '',
+    ].join('\n');
+
+    const compileDocument = vi.fn((content: string) => {
+      if (content === collapsedRepair) {
+        return {
+          content,
+          structure: {
+            systemVision: 'A collaborative task platform helps teams capture, prioritize, and complete work quickly.',
+            features: [
+              {
+                id: 'F-01',
+                name: 'F-01',
+                rawContent: 'collapsed',
+                purpose: '**',
+                actors: '**',
+                trigger: '**',
+                preconditions: '**',
+                mainFlow: ['**'],
+                postconditions: '**',
+                dataImpact: '**',
+                acceptanceCriteria: ['The feature works as expected for all users.'],
+              },
+              {
+                id: 'F-02',
+                name: 'F-02',
+                rawContent: 'collapsed',
+                purpose: '**',
+                actors: '**',
+                trigger: '**',
+                preconditions: '**',
+                mainFlow: ['**'],
+                postconditions: '**',
+                dataImpact: '**',
+                acceptanceCriteria: ['The feature works as expected for all users.'],
+              },
+            ],
+            otherSections: {},
+          },
+          quality: {
+            valid: false,
+            truncatedLikely: false,
+            missingSections: ['Definition of Done'],
+            featureCount: 2,
+            issues: [
+              {
+                code: 'missing_section_definitionOfDone',
+                message: 'Missing required section: Definition of Done',
+                severity: 'error' as const,
+              },
+              {
+                code: 'boilerplate_repetition_detected',
+                message: 'Repeated boilerplate sentence detected across feature blocks.',
+                severity: 'error' as const,
+              },
+            ],
+          },
+        } as CompilePrdResult;
+      }
+
+      return {
+        content,
+        structure: {
+          systemVision: 'A collaborative task platform helps teams capture, prioritize, and complete work quickly.',
+          features: [
+            {
+              id: 'F-01',
+              name: 'Task Capture',
+              rawContent: 'good',
+              purpose: 'Allow users to create structured tasks with title, due date, and priority.',
+              actors: 'Authenticated user',
+              trigger: 'The user submits the create-task form.',
+              preconditions: 'The user is signed in and the workspace is active.',
+              mainFlow: [
+                'The user enters task details.',
+                'The system validates the task.',
+                'The system stores the task and refreshes the board.',
+              ],
+              postconditions: 'The new task is visible on the board with the selected priority and due date.',
+              dataImpact: 'Creates Task.title, Task.priority, Task.dueDate, and Task.status.',
+              acceptanceCriteria: [
+                'A created task appears on the board with the entered priority and due date.',
+              ],
+            },
+          ],
+          otherSections: {},
+        },
+        quality: {
+          valid: false,
+          truncatedLikely: false,
+          missingSections: ['Definition of Done'],
+          featureCount: 1,
+          issues: [
+            {
+              code: 'missing_section_definitionOfDone',
+              message: 'Missing required section: Definition of Done',
+              severity: 'error' as const,
+            },
+          ],
+        },
+      } as CompilePrdResult;
+    });
+
+    let capturedError: unknown;
+    try {
+      await finalizeWithCompilerGates({
+        initialResult: { content: bestContent, model: 'mock/initial', usage: usage(30) },
+        mode: 'generate',
+        language: 'en',
+        originalRequest: 'Generate a task management PRD.',
+        maxRepairPasses: 1,
+        repairReviewer: async () => ({
+          content: collapsedRepair,
+          model: 'mock/repair',
+          usage: usage(12),
+          finishReason: 'stop',
+        }),
+        compileDocument,
+        enableContentReview: false,
+      });
+    } catch (error) {
+      capturedError = error;
+    }
+
+    expect(capturedError).toBeInstanceOf(PrdCompilerQualityError);
+    const qualityError = capturedError as PrdCompilerQualityError;
+    expect(qualityError.repairRejected).toBe(true);
+    expect(qualityError.repairRejectedReason).toMatch(/Rejected compiler repair/i);
+    expect(qualityError.repairDegradationSignals).toEqual(expect.arrayContaining([
+      'feature_names_collapsed_to_ids',
+      'placeholder_required_fields',
+      'dummy_main_flow',
+    ]));
+    expect(qualityError.collapsedFeatureNameIds).toEqual([]);
+    expect(qualityError.placeholderFeatureIds).toEqual(expect.arrayContaining(['F-01']));
+    expect(qualityError.acceptanceBoilerplateFeatureIds).toEqual([]);
+    expect(qualityError.featureQualityFloorFeatureIds).toEqual(expect.arrayContaining(['F-01']));
+    expect(qualityError.featureQualityFloorFailedFeatureIds).toEqual(expect.arrayContaining(['F-01']));
+    expect(qualityError.featureQualityFloorPassed).toBe(true);
+    expect(qualityError.primaryFeatureQualityReason).toBeUndefined();
+    expect(qualityError.emptyMainFlowFeatureIds).toEqual([]);
+    expect(qualityError.placeholderPurposeFeatureIds).toEqual([]);
+    expect(qualityError.thinAcceptanceCriteriaFeatureIds).toEqual([]);
+    expect(qualityError.compiledContent).toBe(bestContent);
+    expect(qualityError.degradedCandidateAvailable).toBe(true);
+    expect(qualityError.degradedCandidateSource).toBe('pre_repair_best');
+    expect(qualityError.displayedCandidateSource).toBe('pre_repair_best');
+    expect(qualityError.diagnosticsAlignedWithDisplayedCandidate).toBe(true);
+  });
+
+  it('stops full-document compiler repair after repeated length truncations and exposes diagnostics', async () => {
+    const compileDocument = vi.fn(() => ({
+      content: 'invalid',
+      structure: { features: [], otherSections: {} },
+      quality: {
+        valid: false,
+        truncatedLikely: false,
+        missingSections: ['System Vision'],
+        featureCount: 0,
+        issues: [
+          { code: 'missing_section_systemVision', message: 'Missing required section: System Vision', severity: 'error' as const },
+        ],
+      },
+    }));
+
+    let capturedError: unknown;
+    try {
+      await finalizeWithCompilerGates({
+        initialResult: { content: 'initial', model: 'mock', usage: usage(10) },
+        mode: 'generate',
+        language: 'en',
+        originalRequest: 'Generate complete PRD.',
+        maxRepairPasses: 5,
+        repairReviewer: async () => ({
+          content: 'still invalid',
+          model: 'mock/repair',
+          usage: usage(10),
+          finishReason: 'length',
+        }),
+        compileDocument,
+        enableContentReview: false,
+      });
+    } catch (error) {
+      capturedError = error;
+    }
+
+    expect(capturedError).toBeInstanceOf(PrdCompilerQualityError);
+    expect(compileDocument).toHaveBeenCalled();
+    const qualityError = capturedError as PrdCompilerQualityError;
+    expect(qualityError.compilerRepairTruncationCount).toBe(2);
+    expect(qualityError.compilerRepairFinishReasons).toEqual(['length', 'length']);
+  });
+
+  it('recovers sparse generate output when deterministic completion fills required sections', async () => {
     // Only system vision and feature catalogue are provided → all others are fallbacks.
     const minimal = [
       '## System Vision',
@@ -487,29 +1646,111 @@ describe('prdCompilerFinalizer', () => {
       '- Tasks can be moved between columns.',
     ].join('\n');
 
+    let compileCall = 0;
+    const compileDocument = vi.fn((candidate: string) => {
+      compileCall++;
+      if (compileCall === 1) {
+        return compilePrdDocument(candidate, {
+          mode: 'generate',
+          language: 'en',
+          strictCanonical: true,
+          strictLanguageConsistency: true,
+          enableFeatureAggregation: true,
+        });
+      }
+
+      return {
+        content: [
+          '## System Vision',
+          'A task management tool helps agile teams plan, update, and complete work quickly.',
+          '',
+          '## Non-Functional Requirements',
+          'Board interactions remain responsive during active sprint planning.',
+          '',
+          '## Functional Feature Catalogue',
+          '',
+          '### F-01: Sprint Board',
+          '1. Purpose',
+          'Manage sprint tasks on a kanban board with clear workflow states and assignee visibility.',
+          '2. Actors',
+          'Team member, scrum master.',
+          '3. Trigger',
+          'A user opens the active sprint board.',
+          '4. Preconditions',
+          'An active sprint exists and the user has board access.',
+          '5. Main Flow',
+          '1. The user reviews tasks grouped by workflow column.',
+          '2. The user drags a task to a new column.',
+          '3. The system persists the change and refreshes the board state.',
+          '6. Alternate Flows',
+          '1. If the update conflicts with a stale board state, the system reloads the task and asks the user to retry.',
+          '7. Postconditions',
+          'The moved task appears in the target column with the latest board state.',
+          '8. Data Impact',
+          'Updates Task.status, Task.columnId, and board activity timestamps.',
+          '9. UI Impact',
+          'The board updates in place and highlights the moved task.',
+          '10. Acceptance Criteria',
+          '- Tasks can be moved between columns and persist after refresh.',
+          '- Conflicting updates return clear feedback without losing the latest task state.',
+          '',
+          '## Success Criteria & Acceptance Testing',
+          'Teams can update sprint tasks without losing the latest board state.',
+        ].join('\n'),
+        structure: {
+          systemVision: 'A task management tool helps agile teams plan, update, and complete work quickly.',
+          features: [
+            {
+              id: 'F-01',
+              name: 'Sprint Board',
+              rawContent: 'Structured feature body',
+              purpose: 'Manage sprint tasks on a kanban board with clear workflow states and assignee visibility.',
+              actors: 'Team member, scrum master.',
+              trigger: 'A user opens the active sprint board.',
+              preconditions: 'An active sprint exists and the user has board access.',
+              mainFlow: [
+                'The user reviews tasks grouped by workflow column.',
+                'The user drags a task to a new column.',
+                'The system persists the change and refreshes the board state.',
+              ],
+              alternateFlows: [
+                'If the update conflicts with a stale board state, the system reloads the task and asks the user to retry.',
+              ],
+              postconditions: 'The moved task appears in the target column with the latest board state.',
+              dataImpact: 'Updates Task.status, Task.columnId, and board activity timestamps.',
+              uiImpact: 'The board updates in place and highlights the moved task.',
+              acceptanceCriteria: [
+                'Tasks can be moved between columns and persist after refresh.',
+                'Conflicting updates return clear feedback without losing the latest task state.',
+              ],
+            },
+          ],
+          otherSections: {},
+        },
+        quality: {
+          valid: true,
+          truncatedLikely: false,
+          missingSections: [],
+          featureCount: 1,
+          issues: [],
+        },
+      } as CompilePrdResult;
+    });
+
     const repairReviewer = vi.fn(async () => ({ content: minimal, model: 'mock/repair', usage: usage(10) }));
-    let capturedError: unknown;
+    const result = await finalizeWithCompilerGates({
+      initialResult: { content: minimal, model: 'mock', usage: usage(80) },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Generate an agile task management tool PRD.',
+      repairReviewer,
+      compileDocument,
+    });
 
-    try {
-      await finalizeWithCompilerGates({
-        initialResult: { content: minimal, model: 'mock', usage: usage(80) },
-        mode: 'generate',
-        language: 'en',
-        originalRequest: 'Generate an agile task management tool PRD.',
-        repairReviewer,
-      });
-    } catch (error) {
-      capturedError = error;
-    }
-
-    expect(capturedError).toBeInstanceOf(PrdCompilerQualityError);
-    expect(repairReviewer).toHaveBeenCalledTimes(2);
-
-    const qualityError = capturedError as PrdCompilerQualityError;
-    expect(qualityError.failureStage).toBe('compiler_repair');
-    expect(
-      qualityError.quality.issues.some(issue => issue.code === 'excessive_fallback_sections')
-    ).toBe(true);
+    expect(result.quality.valid).toBe(true);
+    expect(result.content).toContain('## Non-Functional Requirements');
+    expect(result.content).toContain('## Success Criteria & Acceptance Testing');
+    expect(repairReviewer.mock.calls.length).toBeLessThanOrEqual(1);
   });
 
   it('returns qualityScore in result', async () => {
@@ -559,6 +1800,59 @@ describe('prdCompilerFinalizer', () => {
     expect(result.semanticRepairApplied).toBe(false);
     expect(contentRefineReviewer).not.toHaveBeenCalled();
     expect(semanticVerifier).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops before a second compiler repair pass when cancelCheck aborts the finalizer', async () => {
+    const compileDocument = vi.fn((content: string) => ({
+      content,
+      structure: { features: [], otherSections: {} },
+      quality: {
+        valid: false,
+        truncatedLikely: true,
+        missingSections: ['System Vision'],
+        featureCount: 0,
+        issues: [
+          {
+            code: 'truncated_output',
+            message: 'The PRD remains structurally incomplete.',
+            severity: 'error' as const,
+          },
+        ],
+      },
+    }) as CompilePrdResult);
+    const repairReviewer = vi.fn(async () => ({
+      content: 'still invalid',
+      model: 'mock/repair',
+      usage: usage(10),
+      finishReason: 'stop',
+    }));
+    const cancelCheck = vi.fn((stage: string) => {
+      if (stage === 'compiler_repair_pass_2') {
+        const abortError: any = new Error('Finalizer cancelled before second repair pass.');
+        abortError.name = 'AbortError';
+        abortError.code = 'ERR_CLIENT_DISCONNECT';
+        throw abortError;
+      }
+    });
+
+    await expect(finalizeWithCompilerGates({
+      initialResult: { content: 'initial', model: 'mock/initial', usage: usage(20) },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Generate a complete PRD.',
+      maxRepairPasses: 4,
+      repairReviewer,
+      compileDocument,
+      enableContentReview: false,
+      cancelCheck,
+    })).rejects.toMatchObject({
+      name: 'AbortError',
+      code: 'ERR_CLIENT_DISCONNECT',
+    });
+
+    expect(repairReviewer).toHaveBeenCalledTimes(1);
+    expect(cancelCheck).toHaveBeenCalledWith('compiler_repair_pass_1');
+    expect(cancelCheck).toHaveBeenCalledWith('compiler_repair_pass_2');
   });
 
   it('passes generator and reviewer model families to the semantic verifier guard', async () => {
@@ -824,7 +2118,7 @@ describe('prdCompilerFinalizer', () => {
       semanticRepairAttempted: true,
       semanticRepairIssueCodes: ['cross_section_inconsistency'],
       semanticRepairSectionKeys: ['definitionOfDone'],
-      repairGapReason: 'same_issues_persisted',
+      repairGapReason: 'repair_no_substantive_change',
       repairCycleCount: 2,
     });
 
@@ -853,7 +2147,7 @@ describe('prdCompilerFinalizer', () => {
       const qualityError = error as PrdCompilerQualityError;
       expect(qualityError.quality.issues.some(issue => issue.code === 'semantic_verifier_blocked')).toBe(true);
       expect(qualityError.semanticRepairAttempted).toBe(true);
-      expect(qualityError.repairGapReason).toBe('same_issues_persisted');
+      expect(qualityError.repairGapReason).toBe('repair_no_substantive_change');
       expect(qualityError.postRepairSemanticBlockingIssues.map(issue => issue.sectionKey)).toEqual(['definitionOfDone']);
       expect(qualityError.finalSemanticBlockingIssues.map(issue => issue.sectionKey)).toEqual(['definitionOfDone']);
     }
@@ -958,7 +2252,7 @@ describe('prdCompilerFinalizer', () => {
     expect(result.semanticRepairApplied).toBe(true);
     expect(result.semanticRepairTruncated).toBe(true);
     expect(result.semanticRepairSectionKeys).toEqual(['definitionOfDone', 'timelineMilestones']);
-    expect(semanticRefineReviewer).toHaveBeenCalledTimes(3);
+    expect(semanticRefineReviewer).toHaveBeenCalledTimes(2);
     expect(semanticVerifier).toHaveBeenCalledTimes(2);
   });
 });

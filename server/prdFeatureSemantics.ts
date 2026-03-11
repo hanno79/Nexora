@@ -13,7 +13,7 @@ import type { FeatureSpec } from './prdStructure';
 import { normalizeForMatch } from './prdTextUtils';
 
 export const FEATURE_ENRICHABLE_FIELDS = [
-  'purpose', 'actors', 'trigger', 'preconditions', 'mainFlow',
+  'name', 'purpose', 'actors', 'trigger', 'preconditions', 'mainFlow',
   'alternateFlows', 'postconditions', 'dataImpact', 'uiImpact', 'acceptanceCriteria',
 ] as const;
 

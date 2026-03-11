@@ -15,6 +15,8 @@ describe('OpenRouterClient fallback behavior', () => {
     const client = new OpenRouterClient('test-key', 'production');
     client.setPreferredModel('reviewer', 'minimax/minimax-m2.5');
     client.setPreferredModel('fallback', 'deepseek/deepseek-r1-0528:free');
+    // ÄNDERUNG 11.03.2026: Explizite Fallback-Chain setzen, da Tier-Defaults jetzt automatisch geladen werden
+    client.setFallbackChain(['deepseek/deepseek-r1-0528:free', 'anthropic/claude-sonnet-4']);
 
     const attempts: string[] = [];
     vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
@@ -40,6 +42,8 @@ describe('OpenRouterClient fallback behavior', () => {
     const client = new OpenRouterClient('test-key', 'production');
     client.setPreferredModel('reviewer', 'minimax/minimax-m2.5');
     client.setPreferredModel('fallback', 'anthropic/claude-sonnet-4');
+    // ÄNDERUNG 11.03.2026: Explizite Fallback-Chain setzen, da Tier-Defaults jetzt automatisch geladen werden
+    client.setFallbackChain(['anthropic/claude-sonnet-4']);
 
     const attempts: string[] = [];
     vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {

@@ -10,6 +10,7 @@ Beschreibung: Registriert Guided-Workflow-Routen inklusive Finalisierung, SSE-En
 
 import type { Express, RequestHandler } from 'express';
 import { asyncHandler } from './asyncHandler';
+import { resolveAiPreferenceUserId } from './aiRouteSupport';
 import { getGuidedAiService } from './guidedAiService';
 import { registerGuidedFinalizeRoutes } from './guidedFinalizeRoutes';
 import { registerGuidedFinalizeStreamRoute } from './guidedFinalizeStreamRoute';
@@ -34,6 +35,7 @@ export async function registerGuidedRoutes(
 
     const { projectIdea, existingContent, mode, prdId } = req.body;
     const userId = req.user.claims.sub;
+    const aiPreferenceUserId = resolveAiPreferenceUserId(req, userId);
     const prdContext = await resolveGuidedPrdContext(req, res, prdId);
     if (prdContext.shouldReturn) {
       return;
@@ -45,6 +47,7 @@ export async function registerGuidedRoutes(
     }
 
     const result = await getGuidedAiService().startGuidedWorkflow(normalized.normalizedIdea, userId, {
+      aiPreferenceUserId,
       existingContent: normalized.hasExistingContent ? normalized.normalizedExistingContent : undefined,
       mode: mode === 'improve' ? 'improve' : 'generate',
       templateCategory: prdContext.templateCategory,
@@ -90,6 +93,7 @@ export async function registerGuidedRoutes(
 
     const { sessionId, answers, questions } = req.body;
     const userId = req.user.claims.sub;
+    const aiPreferenceUserId = resolveAiPreferenceUserId(req, userId);
 
     if (!sessionId) {
       return res.status(400).json({ message: 'Session ID is required' });
@@ -103,7 +107,7 @@ export async function registerGuidedRoutes(
       return res.status(400).json({ message: 'Questions array is required for context' });
     }
 
-    const result = await getGuidedAiService().processAnswers(sessionId, answers, questions, userId);
+    const result = await getGuidedAiService().processAnswers(sessionId, answers, questions, userId, aiPreferenceUserId);
     res.json(result);
   }));
 

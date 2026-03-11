@@ -83,6 +83,16 @@ export function parseFeatureSubsections(rawContent: string): Partial<Pick<Featur
   return result;
 }
 
+export function parseFeatureMetadata(rawContent: string): Partial<Pick<FeatureSpec, 'parentTaskName' | 'parentTaskDescription'>> {
+  const parentTaskName = rawContent.match(/(?:^|\n)\s*(?:Parent Task|Main Task|Haupttask)\s*:\s*(.+?)(?:\n|$)/i)?.[1]?.trim();
+  const parentTaskDescription = rawContent.match(/(?:^|\n)\s*(?:Parent Task Description|Parent Task Summary|Main Task Summary|Task Summary|Beschreibung|Description)\s*:\s*(.+?)(?:\n|$)/i)?.[1]?.trim();
+
+  return {
+    ...(parentTaskName ? { parentTaskName } : {}),
+    ...(parentTaskDescription ? { parentTaskDescription } : {}),
+  };
+}
+
 interface SplitPoint {
   index: number;
   id: string;
@@ -102,9 +112,16 @@ function normalizeFeatureDisplayName(name: string, fallbackId: string): string {
   return normalizedName || fallbackId;
 }
 
+function isFallbackFeatureName(name: string, featureId: string): boolean {
+  const normalizedName = normalizeFeatureId(String(name || '').trim());
+  const normalizedId = normalizeFeatureId(String(featureId || '').trim());
+  return !!normalizedId && normalizedName === normalizedId;
+}
+
 export function parseFeatureBlocks(body: string): { features: FeatureSpec[]; introText: string } {
   const features: FeatureSpec[] = [];
   const bodyWithNewline = '\n' + body;
+  const featureIdCapture = '(F[- ]?\\d+)';
 
   const splitPoints: SplitPoint[] = [];
   const addSplitPoint = (index: number, id: string, name: string) => {
@@ -119,7 +136,10 @@ export function parseFeatureBlocks(body: string): { features: FeatureSpec[]; int
 
   // Pattern 1: Inline Feature ID with optional name
   // Verwendet \b um Feature-IDs in URLs nicht fälschlicherweise zu matchen
-  const inlinePattern = /(?:^|\n)(?:#{2,4}\s+)?(?:\*{0,2})(?:Feature\s+(?:ID:\s*)?|Feature\s+ID:\s*)\b(F-\d+)\b(?:\*{0,2})[: —–-]+(?!\n)(?:\*{0,2})([^\n]+?)(?:\*{0,2})(?:\n|$)/gi;
+  const inlinePattern = new RegExp(
+    String.raw`(?:^|\n)(?:#{2,4}\s+)?(?:\*{0,2})(?:Feature\s+(?:ID:\s*)?|Feature\s+ID:\s*)\b${featureIdCapture}\b(?:\*{0,2})[: —–-]+(?!\n)(?:\*{0,2})([^\n]+?)(?:\*{0,2})(?:\n|$)`,
+    'gi',
+  );
   let match: RegExpExecArray | null;
 
   // lastIndex zuruecksetzen um sicherzustellen dass die Suche von vorne beginnt
@@ -132,7 +152,10 @@ export function parseFeatureBlocks(body: string): { features: FeatureSpec[]; int
   }
 
   // Pattern 2: Two-line format with Feature ID and Feature Name
-  const twoLinePattern = /(?:^|\n)\s*(?:#{1,6}\s+)?(?:\*{0,2})Feature\s+ID(?:\*{0,2})?\s*:?\s*(?:\*{0,2})\s*(F-\d+)\b[^\n]*\n\s*(?:\*{0,2})Feature\s+Name(?:\*{0,2})?\s*:?\s*(?:\*{0,2})\s*(.+?)\s*(?:\n|$)/gi;
+  const twoLinePattern = new RegExp(
+    String.raw`(?:^|\n)\s*(?:#{1,6}\s+)?(?:\*{0,2})Feature\s+ID(?:\*{0,2})?\s*:?\s*(?:\*{0,2})\s*${featureIdCapture}\b[^\n]*\n\s*(?:\*{0,2})Feature\s+Name(?:\*{0,2})?\s*:?\s*(?:\*{0,2})\s*(.+?)\s*(?:\n|$)`,
+    'gi',
+  );
   let twoLineMatch: RegExpExecArray | null;
   twoLinePattern.lastIndex = 0;
   while ((twoLineMatch = twoLinePattern.exec(bodyWithNewline)) !== null) {
@@ -142,7 +165,10 @@ export function parseFeatureBlocks(body: string): { features: FeatureSpec[]; int
 
   // Pattern 3: Bold Feature ID
   // Verwendet \b um Feature-IDs in URLs nicht fälschlicherweise zu matchen
-  const boldIdPattern = /(?:^|\n)\s*\*{2}Feature\s+ID\s*:?\s*\b(F-\d+)\b\*{2}\s*\n/gi;
+  const boldIdPattern = new RegExp(
+    String.raw`(?:^|\n)\s*\*{2}Feature\s+ID\s*:?\s*\b${featureIdCapture}\b\*{2}\s*\n`,
+    'gi',
+  );
   const featureNamePattern = /\*{0,2}Feature\s+Name:?\*{0,2}\s*(.+?)(?:\*{0,2})\s*$/im;
 
   let boldMatch: RegExpExecArray | null;
@@ -161,7 +187,10 @@ export function parseFeatureBlocks(body: string): { features: FeatureSpec[]; int
   }
 
   // Pattern 4: Common output format - Feature ID line
-  const featureIdLinePattern = /(?:^|\n)\s*(?:\*{0,2})Feature\s+ID(?:\*{0,2})?\s*:?\s*(?:\*{0,2})\s*(F-\d+)\b[^\n]*(?:\n|$)/gi;
+  const featureIdLinePattern = new RegExp(
+    String.raw`(?:^|\n)\s*(?:\*{0,2})Feature\s+ID(?:\*{0,2})?\s*:?\s*(?:\*{0,2})\s*${featureIdCapture}\b[^\n]*(?:\n|$)`,
+    'gi',
+  );
   let featureIdLineMatch: RegExpExecArray | null;
   featureIdLinePattern.lastIndex = 0;
   while ((featureIdLineMatch = featureIdLinePattern.exec(bodyWithNewline)) !== null) {
@@ -186,7 +215,10 @@ export function parseFeatureBlocks(body: string): { features: FeatureSpec[]; int
   // Pattern 5: Heading format (### F-01: Name, ### Feature F-01: Name, ### Feature ID: F-01: Name)
   // Abdeckung: Markdown-Headings mit Feature-ID in verschiedenen Formaten
   // Verwendet \b um Feature-IDs in URLs nicht fälschlicherweise zu matchen
-  const headingPattern = /(?:^|\n)(#{2,4})\s+(?:\*{0,2})(?:Feature\s+)?(?:ID:\s*)?\b(F-\d+)\b(?:\*{0,2})[:\s—–-]+(?:\*{0,2})(.*?)(?:\*{0,2})\s*(?:\n|$)/gi;
+  const headingPattern = new RegExp(
+    String.raw`(?:^|\n)(#{2,4})\s+(?:\*{0,2})(?:Feature\s+)?(?:ID:\s*)?\b${featureIdCapture}\b(?:\*{0,2})[:\s—–-]+(?:\*{0,2})(.*?)(?:\*{0,2})\s*(?:\n|$)`,
+    'gi',
+  );
   let headingMatch: RegExpExecArray | null;
   headingPattern.lastIndex = 0;
   while ((headingMatch = headingPattern.exec(bodyWithNewline)) !== null) {
@@ -199,11 +231,20 @@ export function parseFeatureBlocks(body: string): { features: FeatureSpec[]; int
 
   splitPoints.sort((a, b) => a.index - b.index);
   const uniqueSplitPoints: typeof splitPoints = [];
-  const seenAt = new Set<string>();
+  const seenAt = new Map<string, number>();
   for (const point of splitPoints) {
     const key = `${point.index}:${point.id}`;
-    if (seenAt.has(key)) continue;
-    seenAt.add(key);
+    const existingIndex = seenAt.get(key);
+    if (existingIndex !== undefined) {
+      const existingPoint = uniqueSplitPoints[existingIndex];
+      const existingIsFallback = isFallbackFeatureName(existingPoint.name, existingPoint.id);
+      const candidateIsFallback = isFallbackFeatureName(point.name, point.id);
+      if (existingIsFallback && !candidateIsFallback) {
+        uniqueSplitPoints[existingIndex] = point;
+      }
+      continue;
+    }
+    seenAt.set(key, uniqueSplitPoints.length);
     uniqueSplitPoints.push(point);
   }
 
@@ -219,6 +260,7 @@ export function parseFeatureBlocks(body: string): { features: FeatureSpec[]; int
       id: uniqueSplitPoints[i].id,
       name: uniqueSplitPoints[i].name,
       rawContent,
+      ...parseFeatureMetadata(rawContent),
       ...parseFeatureSubsections(rawContent),
     });
   }

@@ -145,15 +145,16 @@ describe('openrouter safe defaults', () => {
       client.callWithFallback('generator', 'system', 'user', 64)
     ).rejects.toThrow('All');
 
-    // ÄNDERUNG 06.03.2026: Im Development-Tier sind kostenlose Direktprovider erlaubt,
-    // aber keine Paid-Default-Fallbacks aus Production/Premium.
-    const paidFallbackModels = new Set([
+    // ÄNDERUNG 11.03.2026: Im Development-Tier sind kostenlose Direktprovider erlaubt,
+    // aber keine Paid-Modelle (ohne :free Suffix). Prüfung auf tatsächlich bezahlte Modelle
+    // statt auf alle Modelle der Production/Premium-Ketten, da Free-Modelle dort auch enthalten sind.
+    const paidModelsInChains = [
       ...DEFAULT_PRODUCTION_FALLBACK_CHAIN,
       ...DEFAULT_PREMIUM_FALLBACK_CHAIN,
-    ]);
+    ].filter(m => !m.endsWith(':free'));
 
     expect(attemptedModels.length).toBeGreaterThan(0);
-    expect(attemptedModels.some((m) => paidFallbackModels.has(m))).toBe(false);
+    expect(attemptedModels.some((m) => paidModelsInChains.includes(m))).toBe(false);
     expect(attemptedModels.some((m) => m.includes('gemini-2.5-flash'))).toBe(false);
     expect(attemptedModels.some((m) => m.includes('claude-sonnet-4'))).toBe(false);
   });

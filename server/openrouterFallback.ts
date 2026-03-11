@@ -26,6 +26,7 @@ import {
 } from './modelFamily';
 import {
   MODEL_TIERS,
+  getDefaultFallbackChainForTier,
   sanitizeConfiguredModel,
   type ModelConfig,
 } from './openrouterModelConfig';
@@ -310,9 +311,11 @@ export async function executeOpenRouterFallback(
   };
 
   const primary = preferredModels[modelType];
+  // ÄNDERUNG 11.03.2026: Bei leerer Fallback-Kette auf Tier-Defaults zurückfallen,
+  // damit auch ohne User-Preferences mehrere Modelle zur Verfügung stehen.
   const fallbackChain = preferredFallbackChain.length > 0
     ? preferredFallbackChain
-    : (preferredModels.fallback ? [preferredModels.fallback] : []);
+    : [...getDefaultFallbackChainForTier(tier)];
   const tierModels = MODEL_TIERS[tier];
   const roleDefault = modelType === 'generator'
     ? tierModels.generator

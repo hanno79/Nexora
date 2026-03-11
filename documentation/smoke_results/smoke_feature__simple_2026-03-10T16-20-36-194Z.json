@@ -1,0 +1,41 @@
+{
+  "timestamp": "2026-03-10T16:20:36.194Z",
+  "selectedTemplates": [
+    "feature"
+  ],
+  "selectedMethods": [
+    "simple"
+  ],
+  "expectedResultCount": 1,
+  "resultCount": 1,
+  "passedCount": 0,
+  "failedCount": 1,
+  "totalTokensUsed": 9732,
+  "totalDurationMs": 1031829,
+  "results": [
+    {
+      "template": "feature",
+      "method": "simple",
+      "valid": false,
+      "featureCount": 6,
+      "qualityScore": 42,
+      "errorIssues": [
+        "[out_of_scope_reintroduced] Out-of-scope item \"The following features\" is reintroduced in successCriteria.",
+        "[out_of_scope_reintroduced] Out-of-scope item \"The following features\" is reintroduced in definitionOfDone.",
+        "[timeline_feature_reference_mismatch] Timeline references F-01 in a way that aligns more strongly with F-03: TOTP-Based Multi-Factor Authentication than with the canonical feature F-01.",
+        "[timeline_feature_reference_mismatch] Timeline references F-05 in a way that aligns more strongly with F-04: Session Management with Configurable Expiry than with the canonical feature F-05.",
+        "[vision_capability_coverage_missing] Primary product capabilities from the vision are not represented clearly enough in the leading feature set.",
+        "[support_features_overweight] Support or implementation-enabler features dominate the leading feature window ahead of primary user-value capabilities.",
+        "[feature_core_semantic_gap] Feature \"F-01: Email and Password Login\" mentions following but Preconditions, Postconditions, or Data Impact do not encode it consistently."
+      ],
+      "warningIssues": [],
+      "modelsUsed": [
+        "meta-llama/llama-4-maverick-17b-128e-instruct",
+        "arcee-ai/trinity-large-preview:free"
+      ],
+      "tokensUsed": 9732,
+      "durationMs": 1031829,
+      "truncatedLikely": false
+    }
+  ]
+}

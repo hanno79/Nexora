@@ -6,9 +6,15 @@ Beschreibung: Gezielte Unit-Tests fuer extrahierte KI-Routen-Helfer.
 */
 
 // ÄNDERUNG 08.03.2026: Regressionen fuer Statuscode-Mapping und Artefakt-Metrik-Anreicherung nach Routen-Split ergänzt.
+// ÄNDERUNG 10.03.2026: Smoke-Header-Regression fuer reproduzierbare Free-Only-AI-Defaults ergänzt.
 
 import { describe, expect, it, vi } from 'vitest';
-import { qualityStatusHttpCode, withArtifactMetrics } from '../server/aiRouteSupport';
+import {
+  qualityStatusHttpCode,
+  resolveAiPreferenceUserId,
+  SMOKE_FREE_ONLY_HEADER,
+  withArtifactMetrics,
+} from '../server/aiRouteSupport';
 
 describe('aiRouteSupport', () => {
   it('mappt Quality-Status konservativ auf die erwarteten HTTP-Statuscodes', () => {
@@ -39,5 +45,15 @@ describe('aiRouteSupport', () => {
     });
 
     vi.useRealTimers();
+  });
+
+  it('erzwingt per explizitem Smoke-Header sichere Default-Modelle statt DB-Praeferenzen', () => {
+    expect(resolveAiPreferenceUserId({
+      headers: { [SMOKE_FREE_ONLY_HEADER]: 'true' },
+    }, 'user-1')).toBeUndefined();
+  });
+
+  it('laesst normale Requests weiter mit der echten User-Praeferenz laufen', () => {
+    expect(resolveAiPreferenceUserId({ headers: {} }, 'user-1')).toBe('user-1');
   });
 });

@@ -29,6 +29,8 @@ Feature ID:
 Feature Name:
 \${featureName}
 
+\${parentTaskBlock}
+
 Feature Short Description:
 \${shortDescription}
 
@@ -65,6 +67,7 @@ CRITICAL RULES
 - Do NOT describe other features
 - Do NOT reference "see above"
 - Do NOT describe vision again
+- Stay inside the boundary of the provided parent Main Task when one is provided
 - Be technically precise
 - Be deterministic
 - No vague language ("etc", "and more")
@@ -114,14 +117,25 @@ function buildPrompt(
   featureId: string,
   featureName: string,
   shortDescription: string,
+  parentTaskName: string | undefined,
+  parentTaskDescription: string | undefined,
   language: SupportedContentLanguage
 ): string {
+  const parentTaskBlock = parentTaskName
+    ? [
+        `Parent Main Task:`,
+        parentTaskName,
+        parentTaskDescription ? `Parent Main Task Summary:\n${parentTaskDescription}` : '',
+      ].filter(Boolean).join('\n\n')
+    : 'Parent Main Task:\nNone provided';
+
   return FEATURE_EXPANSION_PROMPT
     .replaceAll('${userInput}', userInput)
     .replaceAll('${vision}', vision)
     .replaceAll('${featureId}', featureId)
     .replaceAll('${featureName}', featureName)
     .replaceAll('${shortDescription}', shortDescription)
+    .replaceAll('${parentTaskBlock}', parentTaskBlock)
     + `\n\n${buildLanguageInstruction(language)}`;
 }
 
@@ -151,8 +165,8 @@ function validateExpandedFeature(text: string): { valid: boolean; missing: strin
   const mainFlowSection = text.match(/Main Flow[\s\S]*?(?=\d+\.\s*(?:Alternate|Postconditions|Data|UI|Acceptance)|$)/i);
   if (mainFlowSection) {
     const numberedSteps = mainFlowSection[0].match(/^\s*\d+\.\s+/gm);
-    if (!numberedSteps || numberedSteps.length < 2) {
-      missing.push('Main Flow (numbered steps missing)');
+    if (!numberedSteps || numberedSteps.length < 3) {
+      missing.push('Main Flow (requires at least 3 numbered steps)');
     }
   }
 
@@ -162,6 +176,8 @@ function validateExpandedFeature(text: string): { valid: boolean; missing: strin
 export interface ExpandedFeature {
   featureId: string;
   featureName: string;
+  parentTaskName?: string;
+  parentTaskDescription?: string;
   content: string;
   model: string;
   usage: TokenUsage;
@@ -258,13 +274,15 @@ export async function expandFeature(
   featureName: string,
   shortDescription: string,
   client: OpenRouterClient,
-  language?: string | null
+  language?: string | null,
+  parentTaskName?: string,
+  parentTaskDescription?: string,
 ): Promise<ExpandedFeature> {
   const resolvedLanguage = resolveFeatureExpansionLanguage(language, userInput, vision);
-  const systemPrompt = buildPrompt(userInput, vision, featureId, featureName, shortDescription, resolvedLanguage);
+  const systemPrompt = buildPrompt(userInput, vision, featureId, featureName, shortDescription, parentTaskName, parentTaskDescription, resolvedLanguage);
   const userPrompt = resolvedLanguage === 'de'
-    ? `Expand feature ${featureId} "${featureName}" into a full implementation-ready specification. Output ONLY the expanded feature following the exact structure specified. Keep section labels in English, but write all section body text in German.`
-    : `Expand feature ${featureId} "${featureName}" into a full implementation-ready specification. Output ONLY the expanded feature following the exact structure specified. Keep section labels in English and write all section body text in English.`;
+    ? `Expand feature ${featureId} "${featureName}" into a full implementation-ready specification. Respect the parent Main Task boundary when provided. Output ONLY the expanded feature following the exact structure specified. Keep section labels in English, but write all section body text in German.`
+    : `Expand feature ${featureId} "${featureName}" into a full implementation-ready specification. Respect the parent Main Task boundary when provided. Output ONLY the expanded feature following the exact structure specified. Keep section labels in English and write all section body text in English.`;
 
   let retried = false;
 
@@ -285,6 +303,8 @@ export async function expandFeature(
       return {
         featureId,
         featureName,
+        ...(parentTaskName ? { parentTaskName } : {}),
+        ...(parentTaskDescription ? { parentTaskDescription } : {}),
         content: result.content,
         model: result.model,
         usage: result.usage,
@@ -303,6 +323,8 @@ export async function expandFeature(
         return {
           featureId,
           featureName,
+          ...(parentTaskName ? { parentTaskName } : {}),
+          ...(parentTaskDescription ? { parentTaskDescription } : {}),
           content: locallyRepaired,
           model: `${result.model}:local-structure-repair`,
           usage: result.usage,
@@ -330,6 +352,8 @@ export async function expandFeature(
       return {
         featureId,
         featureName,
+        ...(parentTaskName ? { parentTaskName } : {}),
+        ...(parentTaskDescription ? { parentTaskDescription } : {}),
         content: fallback,
         model: `${result.model}:deterministic-fallback`,
         usage: result.usage,
@@ -347,52 +371,38 @@ export interface ParsedFeature {
   featureId: string;
   featureName: string;
   shortDescription: string;
+  parentTaskName?: string;
+  parentTaskDescription?: string;
 }
 
 export function parseFeatureList(featureListText: string): ParsedFeature[] {
-  // Beide Parser ausfuehren und den mit mehr Ergebnissen verwenden.
-  // Strict liefert bessere Beschreibungen (Short description), aber matched
-  // nicht bei fehlenden Leerzeilen, Markdown-Bold oder Bullet-Prefix.
-  const strict = parseFeatureListStrict(featureListText);
-  const lenient = parseFeatureListLenient(featureListText);
-
-  if (strict.length >= lenient.length) return strict;
-
-  console.warn(`Strict parser found ${strict.length} features, lenient found ${lenient.length} — using lenient`);
-  return lenient;
-}
-
-function parseFeatureListStrict(text: string): ParsedFeature[] {
   const features: ParsedFeature[] = [];
-  const pattern = /F-(\d+):\s*(.+?)(?:\n|$)(?:Short description:\s*(.+?))?(?:\n|$)/gi;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(text)) !== null) {
-    const num = Number.parseInt(match[1], 10);
-    if (!Number.isFinite(num) || num <= 0) {
-      continue;
-    }
-    const name = match[2].trim();
-    const desc = match[3]?.trim() || name;
-
-    features.push({
-      featureId: `F-${String(num).padStart(2, '0')}`,
-      featureName: name,
-      shortDescription: desc,
-    });
-  }
-
-  return features;
-}
-
-function parseFeatureListLenient(text: string): ParsedFeature[] {
-  const features: ParsedFeature[] = [];
-  const lines = text.split('\n');
+  const lines = featureListText.split('\n');
+  let currentParentTaskName: string | undefined;
+  let currentParentTaskDescription: string | undefined;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
+    if (!line || /^Feature List\s*:/i.test(line)) continue;
+
+    const mainTaskMatch = line.match(/^(?:[-*]\s*)?(?:\*\*)?(?:Main Task|Haupttask|Parent Task)\s*:\s*(.+?)(?:\*\*)?$/i);
+    if (mainTaskMatch) {
+      currentParentTaskName = mainTaskMatch[1].trim();
+      currentParentTaskDescription = undefined;
+
+      if (i + 1 < lines.length) {
+        const nextLine = lines[i + 1].trim();
+        const summaryMatch = nextLine.match(/^(?:Task Summary|Main Task Summary|Parent Task Summary|Beschreibung|Description|Kurzbeschreibung)\s*:\s*(.+)/i);
+        if (summaryMatch) {
+          currentParentTaskDescription = summaryMatch[1].trim();
+          i++;
+        }
+      }
+      continue;
+    }
+
     // Match F-XX: Feature Name (optionally with markdown bold or leading bullet)
-    const match = line.match(/^(?:[-*]\s*)?(?:\*\*)?F-(\d+):\s*(?:\*\*)?\s*(.+?)(?:\*\*)?$/);
+    const match = line.match(/^(?:[-*]\s*)?(?:\*\*)?F[- ]?(\d+)\s*:\s*(?:\*\*)?\s*(.+?)(?:\*\*)?$/);
     if (!match) continue;
 
     const num = Number.parseInt(match[1], 10);
@@ -415,6 +425,8 @@ function parseFeatureListLenient(text: string): ParsedFeature[] {
       featureId: `F-${String(num).padStart(2, '0')}`,
       featureName: name,
       shortDescription: desc,
+      ...(currentParentTaskName ? { parentTaskName: currentParentTaskName } : {}),
+      ...(currentParentTaskDescription ? { parentTaskDescription: currentParentTaskDescription } : {}),
     });
   }
 
@@ -432,7 +444,8 @@ export async function expandAllFeatures(
   vision: string,
   featureListText: string,
   client: OpenRouterClient,
-  language?: string | null
+  language?: string | null,
+  abortSignal?: AbortSignal
 ): Promise<FeatureExpansionResult> {
   const parsedFeatures = parseFeatureList(featureListText);
 
@@ -448,6 +461,7 @@ export async function expandAllFeatures(
   const modelsUsed = new Set<string>();
 
   for (const feature of parsedFeatures) {
+    if (abortSignal?.aborted) break;
     try {
       const expanded = await expandFeature(
         userInput,
@@ -456,7 +470,9 @@ export async function expandAllFeatures(
         feature.featureName,
         feature.shortDescription,
         client,
-        language
+        language,
+        feature.parentTaskName,
+        feature.parentTaskDescription,
       );
 
       expandedFeatures.push(expanded);

@@ -11,7 +11,12 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
 import { GuidedAiDialog } from './GuidedAiDialog';
 import { useTranslation } from "@/lib/i18n";
-import { extractAiRunFinalContent, extractAiRunRecord, isFailedQualityRun } from "@/lib/aiRunDiagnostics";
+import {
+  extractAiRunFinalContent,
+  extractAiRunRecord,
+  isFailedAiRun,
+} from "@/lib/aiRunDiagnostics";
+import { hasMeaningfulPrdContent } from "@/lib/prdContentMode";
 import { readSSEStream, SsePayloadError } from "@/lib/sseReader";
 import { formatElapsedTime } from "@/lib/utils";
 import { useElapsedTimer } from "@/hooks/useElapsedTimer";
@@ -51,17 +56,17 @@ export function DualAiDialog({
   onGenerationFailed,
 }: DualAiDialogProps) {
   const { t } = useTranslation();
-  const hasRealContent = currentContent.trim().length > 0;
+  const hasRealContent = hasMeaningfulPrdContent(currentContent);
   const [userInput, setUserInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
-  // ÄNDERUNG 02.03.2025: 'guided-finalizing' als neuer Workflow-Step
+  // ÄNDERUNG 02.03.2026: 'guided-finalizing' als neuer Workflow-Step
   const [currentStep, setCurrentStep] = useState<'idle' | 'generating' | 'reviewing' | 'improving' | 'iterating' | 'guided-finalizing' | 'done'>('idle');
   const [generatorModel, setGeneratorModel] = useState('');
   const [reviewerModel, setReviewerModel] = useState('');
   const [verifierModel, setVerifierModel] = useState('');
   const [error, setError] = useState('');
-  const [runQualityStatus, setRunQualityStatus] = useState<'passed' | 'failed_quality' | null>(null);
+  const [runQualityStatus, setRunQualityStatus] = useState<'passed' | 'failed_quality' | 'failed_runtime' | null>(null);
   
   // Workflow-Modus: einfach, iterativ oder geführt (neu)
   const [workflowMode, setWorkflowMode] = useState<'simple' | 'iterative' | 'guided'>('simple');
@@ -80,7 +85,7 @@ export function DualAiDialog({
   const [totalTokensSoFar, setTotalTokensSoFar] = useState(0);
   // Fix 0.2: Mode transparency state for displaying effective mode in done step
   const [modeInfo, setModeInfo] = useState<{ effectiveMode?: string; baselineFeatureCount?: number; baselinePartial?: boolean } | null>(null);
-  // ÄNDERUNG 02.03.2025: States für Guided Finalisierung
+  // ÄNDERUNG 02.03.2026: States für Guided Finalisierung
   const [guidedSessionId, setGuidedSessionId] = useState<string | null>(null);
   const [guidedSessionInfo, setGuidedSessionInfo] = useState<{projectIdea: string; answersCount: number} | null>(null);
   const { elapsedSeconds, startTimer: startElapsedTimer, stopTimer: stopElapsedTimer, resetTimer: resetElapsedTimer } = useElapsedTimer();
@@ -98,13 +103,18 @@ export function DualAiDialog({
     setProgressDetail('');
     setTotalTokensSoFar(0);
     setModeInfo(null);
-    // ÄNDERUNG 02.03.2025: Guided Session States zurücksetzen
+    // ÄNDERUNG 02.03.2026: Guided Session States zurücksetzen
     setGuidedSessionId(null);
     setGuidedSessionInfo(null);
-    // ÄNDERUNG 02.03.2025: isGenerating zurücksetzen damit Dialog nicht deaktiviert bleibt
+    // ÄNDERUNG 02.03.2026: isGenerating zurücksetzen damit Dialog nicht deaktiviert bleibt
     setIsGenerating(false);
     resetElapsedTimer();
   }, [resetElapsedTimer]);
+
+  // Clear stale quality status when workflow mode changes
+  useEffect(() => {
+    setRunQualityStatus(null);
+  }, [workflowMode]);
 
   const applyResolvedModels = useCallback((sources: DualAiModelSources) => {
     const nextGeneratorModel = sources.generatorModel ?? sources.modelsUsed?.[0];
@@ -130,8 +140,22 @@ export function DualAiDialog({
     }
   }, []);
 
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) {
+        clearTimeout(closeTimerRef.current);
+      }
+    };
+  }, []);
+
   const closeDialogAfter = useCallback((delayMs: number) => {
-    setTimeout(() => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+    }
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null;
       onOpenChange(false);
       resetState();
     }, delayMs);
@@ -156,35 +180,47 @@ export function DualAiDialog({
       baselineFeatureCount: payload?.baselineFeatureCount,
       baselinePartial: payload?.baselinePartial,
     });
-    setRunQualityStatus(runRecord.qualityStatus === 'failed_quality' ? 'failed_quality' : 'passed');
+    if (runRecord.qualityStatus === 'failed_quality' || runRecord.qualityStatus === 'failed_runtime') {
+      setRunQualityStatus(runRecord.qualityStatus);
+    } else {
+      setRunQualityStatus('passed');
+    }
     return runRecord;
   }, [applyResolvedModels]);
 
   const finalizeRun = useCallback((payload: any, closeDelayMs: number) => {
-    const runRecord = applyRunPayload(payload);
-    const finalContent = extractAiRunFinalContent(payload);
-    if (!finalContent.trim()) {
-      throw new Error('AI returned no content. Please retry.');
-    }
+    try {
+      const runRecord = applyRunPayload(payload);
+      const finalContent = extractAiRunFinalContent(payload);
+      if (!finalContent.trim()) {
+        throw new Error('AI returned no content. Please retry.');
+      }
 
-    setCurrentStep('done');
-    setIsGenerating(false);
-    onContentGenerated(finalContent, {
-      ...payload,
-      compilerDiagnostics: runRecord.compilerDiagnostics ?? payload?.compilerDiagnostics ?? payload?.diagnostics,
-      qualityStatus: runRecord.qualityStatus ?? payload?.qualityStatus ?? 'passed',
-      degradedResult: runRecord.qualityStatus === 'failed_quality',
-    });
-    closeDialogAfter(closeDelayMs);
+      setCurrentStep('done');
+      setIsGenerating(false);
+      onContentGenerated(finalContent, {
+        ...payload,
+        compilerDiagnostics: runRecord.compilerDiagnostics ?? payload?.compilerDiagnostics ?? payload?.diagnostics,
+        qualityStatus: runRecord.qualityStatus ?? payload?.qualityStatus ?? 'passed',
+        degradedResult: runRecord.qualityStatus === 'failed_quality' || runRecord.qualityStatus === 'failed_runtime',
+      });
+      closeDialogAfter(closeDelayMs);
+    } catch (err) {
+      setIsGenerating(false);
+      setCurrentStep('idle');
+      setError(err instanceof Error ? err.message : 'Unknown error during finalization');
+      throw err;
+    }
   }, [applyRunPayload, closeDialogAfter, onContentGenerated]);
 
-  const handleFailedQualityPayload = useCallback((payload: any, closeDelayMs: number) => {
+  const handleFailedRunPayload = useCallback((payload: any, closeDelayMs: number) => {
     const runRecord = applyRunPayload(payload);
     const finalContent = extractAiRunFinalContent(payload);
+    const failedStatus = runRecord.qualityStatus === 'failed_runtime' ? 'failed_runtime' : 'failed_quality';
     const normalizedPayload = {
       ...payload,
       compilerDiagnostics: runRecord.compilerDiagnostics ?? payload?.compilerDiagnostics ?? payload?.diagnostics,
-      qualityStatus: 'failed_quality',
+      qualityStatus: failedStatus,
       degradedResult: true,
     };
 
@@ -209,10 +245,10 @@ export function DualAiDialog({
     return true;
   }, [applyRunPayload, closeDialogAfter, onContentGenerated, onGenerationFailed, t.dualAi.qualityGateFailed]);
 
-  // ÄNDERUNG 02.03.2025: Mit useCallback memoisiert für korrekte Dependencies
-  // ÄNDERUNG 02.03.2025: AbortController-Support für Cleanup hinzugefügt
+  // ÄNDERUNG 02.03.2026: Mit useCallback memoisiert für korrekte Dependencies
+  // ÄNDERUNG 02.03.2026: AbortController-Support für Cleanup hinzugefügt
   // MUSS vor dem useEffect definiert werden, das es verwendet
-  // ÄNDERUNG 02.03.2025: abortSignal Parameter entfernt - wird nicht verwendet
+  // ÄNDERUNG 02.03.2026: abortSignal Parameter entfernt - wird nicht verwendet
   const handleGuidedFinalization = useCallback(async (sessionId: string) => {
     setIsGenerating(true);
     setCurrentStep('guided-finalizing');
@@ -246,8 +282,8 @@ export function DualAiDialog({
         try {
           errorData = JSON.parse(errorText);
         } catch {}
-        if (errorData && isFailedQualityRun(errorData)) {
-          handleFailedQualityPayload(errorData, 1500);
+        if (errorData && isFailedAiRun(errorData)) {
+          handleFailedRunPayload(errorData, 1500);
           return;
         }
         throw new Error(errorData?.message || t.errors.generateFailed);
@@ -255,7 +291,7 @@ export function DualAiDialog({
 
       const contentType = response.headers.get('content-type') || '';
       if (contentType.includes('text/event-stream') && response.body) {
-        // ÄNDERUNG 02.03.2025: SSE Event-Handler bereinigt
+        // ÄNDERUNG 02.03.2026: SSE Event-Handler bereinigt
         // Nur Events behalten die vom Server tatsächlich gesendet werden
         const data = await readSSEStream(response.body, (event) => {
           switch (event.type) {
@@ -274,8 +310,8 @@ export function DualAiDialog({
         }, t.errors.generateFailed);
 
         if (!data) throw new Error('SSE stream ended without result');
-        if (isFailedQualityRun(data)) {
-          handleFailedQualityPayload(data, 1500);
+        if (isFailedAiRun(data)) {
+          handleFailedRunPayload(data, 1500);
           return;
         }
         finalizeRun(data, 2000);
@@ -287,8 +323,8 @@ export function DualAiDialog({
       } else {
         // Fallback: klassische JSON-Antwort
         const data = await response.json();
-        if (isFailedQualityRun(data)) {
-          handleFailedQualityPayload(data, 1500);
+        if (isFailedAiRun(data)) {
+          handleFailedRunPayload(data, 1500);
           return;
         }
         finalizeRun(data, 2000);
@@ -298,8 +334,8 @@ export function DualAiDialog({
         setGuidedSessionInfo(null);
       }
     } catch (err: any) {
-      if ((err instanceof SsePayloadError || err?.payload) && isFailedQualityRun(err.payload)) {
-        handleFailedQualityPayload(err.payload, 1500);
+      if ((err instanceof SsePayloadError || err?.payload) && isFailedAiRun(err.payload)) {
+        handleFailedRunPayload(err.payload, 1500);
         return;
       }
       console.error('Guided finalization error:', err);
@@ -308,7 +344,7 @@ export function DualAiDialog({
       } else {
         setError(err.message || t.errors.generateFailed);
       }
-      // ÄNDERUNG 02.03.2025: Session aus localStorage entfernen bei Fehler um Endlosschleife zu verhindern
+      // ÄNDERUNG 02.03.2026: Session aus localStorage entfernen bei Fehler um Endlosschleife zu verhindern
       localStorage.removeItem('nexora_guided_session_v2');
       setGuidedSessionId(null);
       setGuidedSessionInfo(null);
@@ -319,10 +355,10 @@ export function DualAiDialog({
       stopElapsedTimer();
     }
     // Dependencies für useCallback - alle verwendeten States und Props
-  }, [t, prdId, onContentGenerated, onOpenChange, startElapsedTimer, stopElapsedTimer, resetState, handleFailedQualityPayload, finalizeRun]);
+  }, [t, prdId, onContentGenerated, onOpenChange, startElapsedTimer, stopElapsedTimer, resetState, handleFailedRunPayload, finalizeRun]);
 
-  // ÄNDERUNG 02.03.2025: Lade Guided Session aus localStorage beim Öffnen
-  // ÄNDERUNG 02.03.2025: Race Condition behoben - setTimeout mit Closure entfernt
+  // ÄNDERUNG 02.03.2026: Lade Guided Session aus localStorage beim Öffnen
+  // ÄNDERUNG 02.03.2026: Race Condition behoben - setTimeout mit Closure entfernt
   useEffect(() => {
     if (!open) return;
     
@@ -364,10 +400,10 @@ export function DualAiDialog({
     restoreSession();
   }, [open]);
 
-  // ÄNDERUNG 02.03.2025: Automatische Finalisierung nach Session-Restore
+  // ÄNDERUNG 02.03.2026: Automatische Finalisierung nach Session-Restore
   // Dieser Effect läuft NACHDEM die States (guidedSessionId, workflowMode) aktualisiert wurden
-  // ÄNDERUNG 02.03.2025: Verhindert Race Condition durch setTimeout - nutzt useEffect stattdessen
-  // ÄNDERUNG 02.03.2025: isFinalizing State verhindert Doppelausführung
+  // ÄNDERUNG 02.03.2026: Verhindert Race Condition durch setTimeout - nutzt useEffect stattdessen
+  // ÄNDERUNG 02.03.2026: isFinalizing State verhindert Doppelausführung
   const [isFinalizing, setIsFinalizing] = useState(false);
   
   useEffect(() => {
@@ -387,7 +423,7 @@ export function DualAiDialog({
           step: 'finalizing_in_progress'
         }));
         
-        // ÄNDERUNG 02.03.2025: isFinalizing State setzen um Race Condition zu verhindern
+        // ÄNDERUNG 02.03.2026: isFinalizing State setzen um Race Condition zu verhindern
         setIsFinalizing(true);
         
         handleGuidedFinalization(guidedSessionId).catch((err) => {
@@ -403,11 +439,11 @@ export function DualAiDialog({
     } catch (err) {
       console.warn('Failed to check session state:', err);
     }
-    // ÄNDERUNG 02.03.2025: isFinalizing zu Dependencies hinzugefügt
+    // ÄNDERUNG 02.03.2026: isFinalizing zu Dependencies hinzugefügt
   }, [open, guidedSessionId, workflowMode, currentStep, isFinalizing, handleGuidedFinalization, t.errors.generateFailed]);
 
   // KI-Benutzereinstellungen laden, um den Standard-Workflow-Modus zu setzen
-  // ÄNDERUNG 02.03.2025: Prüfe auf aktive Guided-Session VOR dem Settings-Load
+  // ÄNDERUNG 02.03.2026: Prüfe auf aktive Guided-Session VOR dem Settings-Load
   useEffect(() => {
     if (open) {
       // Wenn eine Guided-Session wiederhergestellt wurde, überspringe Settings-Load
@@ -517,11 +553,12 @@ export function DualAiDialog({
 
         // Quality-Gate-Fehler mit brauchbarem Content: Nutze den Content mit Warnung
         if (
-          isFailedQualityRun(errorData)
+          isFailedAiRun(errorData)
           || (response.status === 422 && (!!errorData?.finalContent?.trim() || !!errorData?.compilerDiagnostics))
+          || (response.status === 500 && (!!errorData?.finalContent?.trim() || !!errorData?.compilerDiagnostics))
         ) {
           console.warn('AI generation passed with quality warnings:', errorData.message);
-          handleFailedQualityPayload(errorData, 1500);
+          handleFailedRunPayload(errorData, 1500);
           return;
         }
 
@@ -530,8 +567,8 @@ export function DualAiDialog({
 
       const data = await response.json();
       releaseAbortController();
-      if (isFailedQualityRun(data)) {
-        handleFailedQualityPayload(data, 1500);
+      if (isFailedAiRun(data)) {
+        handleFailedRunPayload(data, 1500);
         return;
       }
       finalizeRun(data, 1500);
@@ -596,8 +633,8 @@ export function DualAiDialog({
         try {
           errorData = JSON.parse(errorText);
         } catch {}
-        if (errorData && isFailedQualityRun(errorData)) {
-          handleFailedQualityPayload(errorData, 1500);
+        if (errorData && isFailedAiRun(errorData)) {
+          handleFailedRunPayload(errorData, 1500);
           return;
         }
         throw new Error(errorData?.message || t.errors.generateFailed);
@@ -667,23 +704,23 @@ export function DualAiDialog({
         }, t.errors.generateFailed);
 
         if (!data) throw new Error('SSE stream ended without result');
-        if (isFailedQualityRun(data)) {
-          handleFailedQualityPayload(data, 1500);
+        if (isFailedAiRun(data)) {
+          handleFailedRunPayload(data, 1500);
           return;
         }
         finalizeRun(data, 2000);
       } else {
         // Fallback: klassische JSON-Antwort (kein SSE)
         const data = await response.json();
-        if (isFailedQualityRun(data)) {
-          handleFailedQualityPayload(data, 1500);
+        if (isFailedAiRun(data)) {
+          handleFailedRunPayload(data, 1500);
           return;
         }
         finalizeRun(data, 2000);
       }
     } catch (err: any) {
-      if ((err instanceof SsePayloadError || err?.payload) && isFailedQualityRun(err.payload)) {
-        handleFailedQualityPayload(err.payload, 1500);
+      if ((err instanceof SsePayloadError || err?.payload) && isFailedAiRun(err.payload)) {
+        handleFailedRunPayload(err.payload, 1500);
         return;
       }
       throw err;
@@ -698,7 +735,7 @@ export function DualAiDialog({
   };
 
 
-  // ÄNDERUNG 02.03.2025: Handler für Guided Finalisierung
+  // ÄNDERUNG 02.03.2026: Handler für Guided Finalisierung
   const handleGuidedReadyForFinalization = (sessionId: string, projectIdea: string, answersCount: number) => {
     setGuidedSessionId(sessionId);
     setGuidedSessionInfo({ projectIdea, answersCount });
@@ -718,11 +755,11 @@ export function DualAiDialog({
         return <Brain className="w-5 h-5 animate-pulse text-blue-500" />;
       case 'iterating':
         return <Repeat className="w-5 h-5 animate-spin text-purple-500" />;
-      // ÄNDERUNG 02.03.2025: Icon für Guided Finalisierung - FileText statt MessageSquare für bessere Unterscheidung
+      // ÄNDERUNG 02.03.2026: Icon für Guided Finalisierung - FileText statt MessageSquare für bessere Unterscheidung
       case 'guided-finalizing':
         return <FileText className="w-5 h-5 animate-pulse text-indigo-500" />;
       case 'done':
-        return runQualityStatus === 'failed_quality'
+        return runQualityStatus && runQualityStatus !== 'passed'
           ? <AlertCircle className="w-5 h-5 text-amber-500" />
           : <CheckCircle2 className="w-5 h-5 text-green-500" />;
       default:
@@ -740,11 +777,11 @@ export function DualAiDialog({
         return t.dualAi.improving;
       case 'iterating':
         return progressDetail || `${t.dualAi.iterating}: ${currentIteration}/${totalIterations}`;
-      // ÄNDERUNG 02.03.2025: Text für Guided Finalisierung
+      // ÄNDERUNG 02.03.2026: Text für Guided Finalisierung
       case 'guided-finalizing':
         return t.dualAi.guidedFinalizing;
       case 'done':
-        return runQualityStatus === 'failed_quality' ? t.dualAi.doneWithWarnings : t.dualAi.done;
+        return runQualityStatus && runQualityStatus !== 'passed' ? t.dualAi.doneWithWarnings : t.dualAi.done;
       default:
         return t.dualAi.ready;
     }
@@ -763,6 +800,9 @@ export function DualAiDialog({
       ? `${baseText} — ${t.dualAi.existingContentUsedAsContext}`
       : baseText;
   };
+
+  // ÄNDERUNG 08.03.2026: Modusinfo nur einmal berechnen, um Doppelaufrufe im JSX zu vermeiden.
+  const modeInfoText = getModeInfoText();
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -872,7 +912,7 @@ export function DualAiDialog({
             <div className="flex items-center gap-2 p-3 rounded-md bg-muted">
               {getStepIcon()}
               <span className="text-sm font-medium">{getStepText()}</span>
-              {/* ÄNDERUNG 02.03.2025: Badge für Guided-Modus */}
+              {/* ÄNDERUNG 02.03.2026: Badge für Guided-Modus */}
               {workflowMode === 'guided' && (
                 <Badge variant="secondary" className="ml-2 text-xs">
                   {t.dualAi.guided}
@@ -907,9 +947,9 @@ export function DualAiDialog({
               </div>
             )}
             {/* Fix 0.2: Mode transparency info line */}
-            {getModeInfoText() && (
+            {modeInfoText && (
               <p className="text-xs text-muted-foreground mt-1 px-1">
-                {getModeInfoText()}
+                {modeInfoText}
               </p>
             )}
             {/* Live-Statistiken für den Simple Run, Iterationsmodus und Guided Finalisierung */}
@@ -1019,13 +1059,13 @@ export function DualAiDialog({
       </DialogContent>
 
       {/* Geführter KI-Dialog - wird geöffnet, wenn der geführte Modus ausgewählt ist */}
-      {/* ÄNDERUNG 02.03.2025: onReadyForFinalization Callback hinzugefügt */}
+      {/* ÄNDERUNG 02.03.2026: onReadyForFinalization Callback hinzugefügt */}
       <GuidedAiDialog
         open={showGuidedDialog}
         onOpenChange={(isOpen) => {
           setShowGuidedDialog(isOpen);
           if (!isOpen) {
-            // ÄNDERUNG 02.03.2025: Nur zurücksetzen wenn keine Session läuft
+            // ÄNDERUNG 02.03.2026: Nur zurücksetzen wenn keine Session läuft
             if (!guidedSessionId) {
               onOpenChange(false);
               resetState();

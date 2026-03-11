@@ -10,12 +10,15 @@ export interface DeterministicSemanticIssue {
   severity: QualitySeverity;
   evidencePath?: string;
   evidenceSnippet?: string;
+  relatedPaths?: string[];
 }
 
 interface CollectSemanticIssuesOptions {
   mode?: 'generate' | 'improve';
   language?: SupportedLanguage;
   fallbackSections?: string[];
+  contextHint?: string;
+  baselineStructure?: PRDStructure;
 }
 
 interface TextScope {
@@ -67,6 +70,24 @@ interface ScopeExclusion {
   label: string;
   tokens: string[];
   snippet: string;
+}
+
+type FeaturePriorityClass =
+  | 'core_capability'
+  | 'supporting_capability'
+  | 'implementation_enabler'
+  | 'unknown';
+
+export interface VisionFirstCoverageDiagnostics {
+  primaryCapabilityAnchors: string[];
+  featurePriorityWindow: string[];
+  coreFeatureIds: string[];
+  supportFeatureIds: string[];
+}
+
+export interface TimelineConsistencyDiagnostics {
+  canonicalFeatureIds: string[];
+  timelineMismatchedFeatureIds: string[];
 }
 
 const SECTION_KEYS: Array<keyof PRDStructure> = [
@@ -163,11 +184,21 @@ const SCOPE_STOP_WORDS = new Set([
   'out',
   'release',
   'scope',
+  'modus',
+  'mode',
   'the',
   'this',
   'version',
   'werden',
   'wird',
+]);
+
+const HIGH_SIGNAL_SCOPE_TOKENS = new Set([
+  'multiplayer',
+  'singleplayer',
+  'coop',
+  'mobile',
+  'vr',
 ]);
 
 const CONSTRAINT_SUBJECT_PATTERNS: Array<{ subject: string; regex: RegExp }> = [
@@ -179,6 +210,9 @@ const CONSTRAINT_SUBJECT_PATTERNS: Array<{ subject: string; regex: RegExp }> = [
   { subject: 'availability', regex: /\b(?:availability|uptime|verfuegbarkeit)\b/i },
 ];
 
+// ÄNDERUNG 10.03.2026: Mehrdeutige Verben wie `retry` oder `use` duerfen in
+// Business-Rule-Fliesstexten nicht als nackte Schema-Properties zaehlen.
+// Echte Feldreferenzen bleiben ueber codeartige Identifier weiterhin erkennbar.
 const RULE_SCHEMA_PROPERTY_HINTS = new Set([
   'charge',
   'charges',
@@ -196,21 +230,164 @@ const RULE_SCHEMA_PROPERTY_HINTS = new Set([
   'multiplier',
   'quota',
   'remaining',
-  'retry',
   'score',
   'scores',
   'state',
   'status',
   'streak',
   'timer',
-  'use',
-  'uses',
   'xp',
 ]);
 
+const SUPPORT_ENABLER_LEXICON = new Set([
+  'admin',
+  'admins',
+  'analytics',
+  'auth',
+  'authentication',
+  'authorization',
+  'cache',
+  'caches',
+  'cicd',
+  'ci',
+  'cd',
+  'compliance',
+  'deployment',
+  'deployments',
+  'infrastructure',
+  'login',
+  'logins',
+  'logout',
+  'migration',
+  'migrations',
+  'monitoring',
+  'observability',
+  'oauth',
+  'permissions',
+  'profile',
+  'profiles',
+  'rbac',
+  'role',
+  'roles',
+  'schema',
+  'schemas',
+  'settings',
+  'signin',
+  'signup',
+  'table',
+  'tables',
+  'telemetry',
+]);
+
+const CAPABILITY_STOP_WORDS = new Set([
+  'about',
+  'across',
+  'after',
+  'alle',
+  'allows',
+  'application',
+  'applications',
+  'browser',
+  'browsers',
+  'build',
+  'builder',
+  'can',
+  'classic',
+  'clear',
+  'damit',
+  'deliver',
+  'delivers',
+  'eine',
+  'einem',
+  'einen',
+  'einer',
+  'eines',
+  'enable',
+  'enables',
+  'experience',
+  'experiences',
+  'feature',
+  'features',
+  'helps',
+  'important',
+  'includes',
+  'including',
+  'kann',
+  'klassisch',
+  'klassische',
+  'klassischen',
+  'koennen',
+  'können',
+  'lite',
+  'modern',
+  'muss',
+  'müssen',
+  'platform',
+  'platforms',
+  'product',
+  'products',
+  'project',
+  'projects',
+  'provide',
+  'provides',
+  'release',
+  'releases',
+  'service',
+  'services',
+  'solution',
+  'solutions',
+  'support',
+  'supports',
+  'system',
+  'systems',
+  'tool',
+  'tools',
+  'user',
+  'users',
+  'value',
+  'values',
+  'version',
+  'versions',
+  'web',
+  'werden',
+  'wird',
+  'will',
+  'with',
+  'workflow',
+  'workflows',
+]);
+
+const TIMELINE_STOP_WORDS = new Set([
+  'delivery',
+  'deliver',
+  'delivers',
+  'iteration',
+  'iterations',
+  'launch',
+  'milestone',
+  'milestones',
+  'phase',
+  'phases',
+  'release',
+  'releases',
+  'sprint',
+  'sprints',
+  'timeline',
+  'timelines',
+  'wave',
+  'waves',
+  'week',
+  'weeks',
+  'woche',
+  'wochen',
+  'zeitplan',
+  'meilenstein',
+  'meilensteine',
+]);
+
 const OUT_OF_SCOPE_FUTURE_LEAK_PATTERNS: RegExp[] = [
-  /\b(?:future|later|eventually|potential(?:ly)?|possible|possibly|may|might|could|optional|roadmap|planned|post-launch|next release)\b/i,
-  /\b(?:zukuenftig|zukünftig|spaeter|später|spätere|moeglich|möglich|koennte|könnte|optional|roadmap|spaeteren|späteren)\b/i,
+  /\b(?:future|later|eventually|roadmap|planned|post-launch|next release)\b/i,
+  /\b(?:zukuenftig|zukünftig|spaeter|später|spätere|roadmap|spaeteren|späteren)\b/i,
 ];
 
 const FEATURE_CORE_SEMANTIC_ANCHORS: Array<{ label: string; patterns: RegExp[] }> = [
@@ -221,13 +398,43 @@ const FEATURE_CORE_SEMANTIC_ANCHORS: Array<{ label: string; patterns: RegExp[] }
   { label: 'level progression', patterns: [/\blevel(?:ing| up)?\b/i, /\blevel-up\b/i] },
 ];
 
+// ÄNDERUNG 10.03.2026: Breite, global geteilte Auth-/Systembegriffe sollen
+// `feature_core_semantic_gap` nicht als vermeintlich fehlende Kernsemantik
+// triggern, wenn sie nur aus Vision-/Systemkontext in einzelne Features leaken.
+const FEATURE_CORE_DYNAMIC_ANCHOR_STOP_WORDS = new Set([
+  'configurable',
+  'factor',
+  'multi',
+  'password',
+  'reset',
+  'secure',
+  'sign',
+  'token',
+  'verification',
+]);
+
+const OUT_OF_SCOPE_CANONICAL_LEAK_PATTERNS: RegExp[] = [
+  /\b(?:future|later|eventually|roadmap|planned|post-launch|next release)\b/gi,
+  /\b(?:zukuenftig|zukünftig|spaeter|später|spätere|roadmap|spaeteren|späteren)\b/gi,
+];
+
 const COMPARATOR_MAX = /(?:<=|=<|\bat most\b|\bmax(?:imum)?\b|\bmaximal\b|\bhoechstens\b|\bunder\b|\bbelow\b|\bwithin\b)/i;
 const COMPARATOR_MIN = /(?:>=|=>|\bat least\b|\bmin(?:imum)?\b|\bmindestens\b|\babove\b|\bover\b)/i;
 const COMPARATOR_EXACT = /(?:=|\bexactly\b|\bequals?\b|\bset to\b|\bmust be\b|\bis\b|\bist\b|\bbetraegt\b)/i;
 const NUMERIC_VALUE = /(\d+(?:[.,]\d+)?)\s*(ms|milliseconds?|s|sec|seconds?|m|min|minutes?|h|hours?|d|days?|%|percent|rps|requests?\s*\/\s*s)?/i;
 
-function normalizeWhitespace(value: string): string {
+function normalizeWhitespace(value: string | null | undefined): string {
   return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+  return Array.from(new Set(values.map(value => normalizeWhitespace(value)).filter(Boolean)));
+}
+
+function titleCaseFragment(value: string): string {
+  const normalized = normalizeWhitespace(value);
+  if (!normalized) return '';
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
 function splitIdentifierParts(identifier: string): string[] {
@@ -240,9 +447,542 @@ function splitIdentifierParts(identifier: string): string[] {
     .filter(Boolean);
 }
 
+function tokenizeCapabilityText(value: string): string[] {
+  return normalizeForMatch(value)
+    .split(/\s+/)
+    .map(token => normalizeCapabilityToken(token))
+    .filter(token =>
+      token.length >= 4
+      && !CAPABILITY_STOP_WORDS.has(token)
+      && !SUPPORT_ENABLER_LEXICON.has(token)
+      && !IDENTIFIER_STOP_WORDS.has(token)
+    );
+}
+
+function extractAnchorSourceTexts(
+  structure: PRDStructure,
+  options: CollectSemanticIssuesOptions
+): string[] {
+  const sources: string[] = [];
+  if (options.contextHint) sources.push(options.contextHint);
+  if (structure.systemVision) sources.push(String(structure.systemVision));
+  if (structure.successCriteria) sources.push(String(structure.successCriteria));
+  if (options.baselineStructure?.systemVision) {
+    sources.push(String(options.baselineStructure.systemVision));
+  }
+  for (const feature of options.baselineStructure?.features || []) {
+    if (feature.name) sources.push(String(feature.name));
+    if (feature.purpose) sources.push(String(feature.purpose));
+  }
+  return sources.filter(Boolean);
+}
+
+function buildPrimaryCapabilityAnchors(
+  structure: PRDStructure,
+  options: CollectSemanticIssuesOptions
+): string[] {
+  const sourceTexts = extractAnchorSourceTexts(structure, options);
+  const weightedTokens = new Map<string, number>();
+
+  for (const [index, sourceText] of sourceTexts.entries()) {
+    const sourceWeight = index <= 1 ? 3 : 1;
+    const uniqueSourceTokens = new Set(tokenizeCapabilityText(sourceText));
+    for (const token of uniqueSourceTokens) {
+      weightedTokens.set(token, (weightedTokens.get(token) || 0) + sourceWeight);
+    }
+  }
+
+  return Array.from(weightedTokens.entries())
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 8)
+    .map(([token]) => token);
+}
+
+function hasSupportEnablerSignal(value: string): boolean {
+  const tokens = normalizeForMatch(value)
+    .split(/\s+/)
+    .map(token => normalizeCapabilityToken(token))
+    .filter(Boolean);
+  return tokens.some(token => SUPPORT_ENABLER_LEXICON.has(token));
+}
+
+function countAnchorHits(value: string, anchors: string[]): number {
+  const tokens = new Set(tokenizeCapabilityText(value));
+  return anchors.filter(anchor => tokens.has(anchor)).length;
+}
+
+function classifyFeaturePriority(
+  feature: FeatureSpec,
+  anchors: string[],
+): FeaturePriorityClass {
+  const coreSignalText = [
+    feature.purpose,
+    feature.trigger,
+    ...(Array.isArray(feature.mainFlow) ? feature.mainFlow.slice(0, 2) : []),
+  ].filter(Boolean).join('\n');
+  const secondarySignalText = [
+    feature.name,
+    feature.purpose,
+    feature.trigger,
+    feature.uiImpact,
+    feature.rawContent,
+  ].filter(Boolean).join('\n');
+  const coreAnchorHits = countAnchorHits(coreSignalText, anchors);
+  const secondaryAnchorHits = countAnchorHits(secondarySignalText, anchors);
+  const supportSignal = hasSupportEnablerSignal(secondarySignalText);
+
+  // ÄNDERUNG 10.03.2026: Auth-/Login-lastige Kernfaehigkeiten duerfen trotz
+  // Support-Signal als Core zaehlen, wenn sie mehrere Vision-Anker direkt tragen.
+  if (coreAnchorHits >= 2 || (coreAnchorHits >= 1 && secondaryAnchorHits >= 2)) {
+    return 'core_capability';
+  }
+  if (coreAnchorHits >= 1 && !supportSignal) return 'core_capability';
+  if (coreAnchorHits >= 1 && supportSignal) return 'supporting_capability';
+  if (secondaryAnchorHits >= 2 && !supportSignal) return 'core_capability';
+  if (secondaryAnchorHits >= 1 && supportSignal) return 'supporting_capability';
+  if (supportSignal) return 'implementation_enabler';
+  return 'unknown';
+}
+
+type CanonicalFeatureEntry = {
+  id: string;
+  name: string;
+  summary: string;
+  tokens: Set<string>;
+};
+
+type TimelineReferenceMismatchAnalysis = {
+  issues: DeterministicSemanticIssue[];
+  diagnostics: TimelineConsistencyDiagnostics;
+};
+
+function summarizeFeatureCapability(feature: FeatureSpec): string {
+  const firstMainFlowStep = Array.isArray(feature.mainFlow) ? feature.mainFlow[0] : '';
+  return [
+    String(feature.name || '').trim(),
+    String(feature.purpose || '').trim(),
+    String(feature.trigger || '').trim(),
+    String(firstMainFlowStep || '').trim(),
+  ].filter(Boolean).join(' ');
+}
+
+function buildWholeWordPattern(value: string): RegExp {
+  return new RegExp(`\\b${String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+}
+
+function buildFeatureSemanticClaimText(feature: FeatureSpec): string {
+  return [
+    String(feature.name || '').trim(),
+    String(feature.purpose || '').trim(),
+  ].filter(Boolean).join('\n');
+}
+
+function tokenizeTimelineReference(value: string): string[] {
+  return normalizeForMatch(value)
+    .replace(/\bf-\d+\b/g, ' ')
+    .split(/\s+/)
+    .map(token => normalizeCapabilityToken(token))
+    .filter(token =>
+      token.length >= 4
+      && !TIMELINE_STOP_WORDS.has(token)
+      && !CAPABILITY_STOP_WORDS.has(token)
+      && !IDENTIFIER_STOP_WORDS.has(token)
+    );
+}
+
+function buildCanonicalFeatureEntries(structure: PRDStructure): CanonicalFeatureEntry[] {
+  return (structure.features || [])
+    .map(feature => {
+      const id = String(feature.id || '').trim().toUpperCase();
+      if (!id) return null;
+      return {
+        id,
+        name: String(feature.name || '').trim() || id,
+        summary: summarizeFeatureCapability(feature),
+        tokens: new Set(tokenizeTimelineReference(summarizeFeatureCapability(feature))),
+      };
+    })
+    .filter((entry): entry is CanonicalFeatureEntry => Boolean(entry));
+}
+
+function extractTimelineReferenceSegments(timelineMilestones: string): Array<{ line: string; featureIds: string[] }> {
+  const source = String(timelineMilestones || '');
+  const rawLines = source
+    .split(/\r?\n/)
+    .map(line => normalizeWhitespace(line))
+    .filter(Boolean);
+
+  const lines = rawLines.length > 1
+    ? rawLines
+    : source
+      .split(/(?=\b(?:phase|milestone|sprint|week|woche)\b)/i)
+      .map(line => normalizeWhitespace(line))
+      .filter(Boolean);
+
+  return lines.flatMap(line => {
+    const featureMatches = Array.from(line.matchAll(/\bF-\d+\b/gi));
+    const featureIds = Array.from(new Set(
+      featureMatches
+        .map(match => String(match[0] || '').trim().toUpperCase())
+        .filter(Boolean)
+    ));
+
+    if (featureIds.length <= 1 || featureMatches.length <= 1) {
+      return featureIds.length > 0 ? [{ line, featureIds }] : [];
+    }
+
+    // ÄNDERUNG 10.03.2026: Mehrfach-Referenzzeilen werden lokal pro F-XX-Segment
+    // bewertet, damit Sammelzeilen nicht mit der Gesamtzeile gegen alle Features
+    // cross-mappen und false-positive Mismatches ausloesen.
+    const localSegments = featureMatches
+      .map((match, index) => {
+        const featureId = String(match[0] || '').trim().toUpperCase();
+        if (!featureId) return null;
+
+        const start = index === 0 ? 0 : (match.index ?? 0);
+        const end = index < featureMatches.length - 1
+          ? (featureMatches[index + 1].index ?? line.length)
+          : line.length;
+        const segmentLine = normalizeWhitespace(
+          line
+            .slice(start, end)
+            .replace(/^[,;:–—\-\s]+/, '')
+            .replace(/[,;:–—\-\s]+$/, '')
+        );
+
+        if (!segmentLine) return null;
+        return { line: segmentLine, featureIds: [featureId] };
+      })
+      .filter((entry): entry is { line: string; featureIds: string[] } => Boolean(entry));
+
+    return localSegments.length > 0 ? localSegments : [{ line, featureIds }];
+  });
+}
+
+function matchTimelineReferenceToFeature(
+  line: string,
+  referenceId: string,
+  canonicalFeatures: CanonicalFeatureEntry[]
+): { referencedScore: number; bestScore: number; bestMatch?: CanonicalFeatureEntry } {
+  const lineTokens = new Set(tokenizeTimelineReference(line));
+  const referencedFeature = canonicalFeatures.find(feature => feature.id === referenceId);
+  const referencedScore = referencedFeature
+    ? Array.from(referencedFeature.tokens).filter(token => lineTokens.has(token)).length
+    : 0;
+
+  let bestMatch: CanonicalFeatureEntry | undefined;
+  let bestScore = 0;
+  for (const feature of canonicalFeatures) {
+    const score = Array.from(feature.tokens).filter(token => lineTokens.has(token)).length;
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = feature;
+    }
+  }
+
+  return { referencedScore, bestScore, bestMatch };
+}
+
+function analyzeTimelineFeatureReferenceMismatch(structure: PRDStructure): TimelineReferenceMismatchAnalysis {
+  const canonicalFeatures = buildCanonicalFeatureEntries(structure);
+  const diagnostics: TimelineConsistencyDiagnostics = {
+    canonicalFeatureIds: canonicalFeatures.map(feature => feature.id),
+    timelineMismatchedFeatureIds: [],
+  };
+
+  if (!String(structure.timelineMilestones || '').trim() || canonicalFeatures.length === 0) {
+    return { issues: [], diagnostics };
+  }
+
+  const issues: DeterministicSemanticIssue[] = [];
+  const mismatchedFeatureIds = new Set<string>();
+  const seenIssueKeys = new Set<string>();
+
+  for (const segment of extractTimelineReferenceSegments(String(structure.timelineMilestones || ''))) {
+    for (const referenceId of segment.featureIds) {
+      const { referencedScore, bestScore, bestMatch } = matchTimelineReferenceToFeature(
+        segment.line,
+        referenceId,
+        canonicalFeatures
+      );
+      if (!bestMatch) continue;
+      if (bestMatch.id === referenceId) continue;
+      if (bestScore < 2) continue;
+      if (bestScore <= referencedScore) continue;
+
+      mismatchedFeatureIds.add(referenceId);
+      const issueKey = `${referenceId}|${bestMatch.id}|${segment.line.toLowerCase()}`;
+      if (seenIssueKeys.has(issueKey)) continue;
+      seenIssueKeys.add(issueKey);
+
+      issues.push({
+        code: 'timeline_feature_reference_mismatch',
+        message: `Timeline references ${referenceId} in a way that aligns more strongly with ${bestMatch.id}: ${bestMatch.name} than with the canonical feature ${referenceId}.`,
+        severity: 'error',
+        evidencePath: 'timelineMilestones',
+        evidenceSnippet: segment.line.slice(0, 220),
+        relatedPaths: [`feature:${referenceId}`, `feature:${bestMatch.id}`],
+      });
+    }
+  }
+
+  diagnostics.timelineMismatchedFeatureIds = Array.from(mismatchedFeatureIds).sort();
+  return { issues, diagnostics };
+}
+
+function extractTimelineLinePrefix(line: string): string {
+  const phaseMatch = line.match(/^(\s*(?:[-*•]\s+)?(?:Phase|Milestone|Sprint|Week|Woche)\s*[^:]*:\s*)/i);
+  if (phaseMatch?.[1]) return phaseMatch[1];
+  const bulletMatch = line.match(/^(\s*(?:[-*•]\s+))/);
+  return bulletMatch?.[1] || '';
+}
+
+function extractTimelineReferenceScaffold(line: string): string {
+  const phaseReferenceMatch = line.match(
+    /^(\s*(?:[-*â€¢]\s+)?(?:Phase|Milestone|Sprint|Week|Woche)\s*[A-Za-z0-9-]*(?:\s+(?:delivers?|covers?|includes?|ships?|targets?|contains?))?\s*)\bF-\d+\b/i
+  );
+  if (phaseReferenceMatch?.[1]) return phaseReferenceMatch[1];
+
+  const bulletReferenceMatch = line.match(/^(\s*(?:[-*â€¢]\s+)?)\bF-\d+\b/i);
+  if (bulletReferenceMatch?.[1]) return bulletReferenceMatch[1];
+
+  return extractTimelineLinePrefix(line);
+}
+
+export function rewriteTimelineMilestonesFromFeatureMap(
+  structure: PRDStructure,
+  _language: SupportedLanguage = 'en'
+): { content: string; changed: boolean; mismatchedFeatureIds: string[]; appliedLines: number } {
+  const analysis = analyzeTimelineFeatureReferenceMismatch(structure);
+  const mismatchedIds = new Set(analysis.diagnostics.timelineMismatchedFeatureIds);
+  const canonicalById = new Map(
+    buildCanonicalFeatureEntries(structure).map(feature => [feature.id, feature] as const)
+  );
+
+  if (mismatchedIds.size === 0 || !String(structure.timelineMilestones || '').trim()) {
+    return {
+      content: String(structure.timelineMilestones || '').trim(),
+      changed: false,
+      mismatchedFeatureIds: Array.from(mismatchedIds),
+      appliedLines: 0,
+    };
+  }
+
+  let appliedLines = 0;
+  const rewrittenLines = String(structure.timelineMilestones || '').split(/\r?\n/).map(rawLine => {
+    const line = String(rawLine || '');
+    const featureIds = Array.from(new Set(
+      (line.match(/\bF-\d+\b/gi) || [])
+        .map(value => String(value || '').trim().toUpperCase())
+        .filter(Boolean)
+    ));
+    if (featureIds.length === 0 || !featureIds.some(id => mismatchedIds.has(id))) {
+      return rawLine;
+    }
+
+    const rewrittenLine = rewriteTimelineReferenceLine(line, featureIds, canonicalById);
+    if (normalizeForMatch(rewrittenLine) !== normalizeForMatch(line)) {
+      appliedLines += 1;
+    }
+    return rewrittenLine;
+  });
+
+  const rewritten = rewrittenLines.join('\n').trim();
+  return {
+    content: rewritten,
+    changed: normalizeForMatch(rewritten) !== normalizeForMatch(String(structure.timelineMilestones || '')),
+    mismatchedFeatureIds: Array.from(mismatchedIds).sort(),
+    appliedLines,
+  };
+}
+
+function buildCanonicalTimelineReferenceList(
+  featureIds: string[],
+  canonicalById: Map<string, CanonicalFeatureEntry>
+): string[] {
+  return featureIds
+    .map(id => canonicalById.get(id))
+    .filter((entry): entry is CanonicalFeatureEntry => Boolean(entry))
+    .map(entry => `${entry.id} ${entry.name}`);
+}
+
+function rewriteTimelineTableRow(
+  line: string,
+  featureIds: string[],
+  canonicalById: Map<string, CanonicalFeatureEntry>
+): string {
+  const fxxPattern = /\bF-\d+\b/gi;
+  let touched = false;
+  const rewrittenCells = line.split('|').map(cell => {
+    const matches = Array.from(new Set(
+      (cell.match(fxxPattern) || [])
+        .map(value => String(value || '').trim().toUpperCase())
+        .filter(Boolean)
+    ));
+    if (matches.length === 0) return cell;
+
+    const refs = buildCanonicalTimelineReferenceList(matches, canonicalById);
+    if (refs.length === 0) return cell;
+
+    touched = true;
+
+    // ÄNDERUNG 10.03.2026: Tabellenzellen mit F-XX-Referenzen werden ab der
+    // ersten Referenz vollständig aus der kanonischen Feature-Map neu aufgebaut,
+    // damit veraltete Tabellenprosa sicher entfernt wird.
+    const firstReferenceIndex = cell.search(/\bF-\d+\b/i);
+    const leadingFragment = firstReferenceIndex >= 0 ? cell.slice(0, firstReferenceIndex) : '';
+    const trailingWhitespace = cell.match(/\s*$/)?.[0] || '';
+    return `${leadingFragment}${refs.join(', ')}${trailingWhitespace}`;
+  });
+
+  return touched ? rewrittenCells.join('|') : line;
+}
+
+function rewriteTimelineReferenceLine(
+  line: string,
+  featureIds: string[],
+  canonicalById: Map<string, CanonicalFeatureEntry>
+): string {
+  const refs = buildCanonicalTimelineReferenceList(featureIds, canonicalById);
+  if (refs.length === 0) return line;
+
+  if (/^\s*\|/.test(line) && /\|/.test(line.trim().slice(1))) {
+    return rewriteTimelineTableRow(line, featureIds, canonicalById);
+  }
+
+  const fxxPattern = /\bF-\d+\b/gi;
+  const matches = line.match(fxxPattern);
+  
+  if (!matches || matches.length === 0) {
+    const prefix = extractTimelineReferenceScaffold(line);
+    return `${prefix || '- '}${refs.join(', ')}`.trimEnd();
+  }
+
+  // Build a map of F-XX to ref replacements
+  const refMap = new Map<string, string>();
+  for (const match of matches) {
+    const refEntry = refs.find(r => r.startsWith(match));
+    if (refEntry) {
+      refMap.set(match, refEntry);
+    }
+  }
+
+  // Replace each F-XX token in-place with its replacement
+  let result = line;
+  for (const [match, replacement] of refMap) {
+    result = result.replace(new RegExp(`\\b${match}\\b`, 'i'), replacement);
+  }
+
+  return result.trimEnd();
+}
+
+function collectVisionFirstCoverageIssues(
+  structure: PRDStructure,
+  options: CollectSemanticIssuesOptions
+): {
+  issues: DeterministicSemanticIssue[];
+  diagnostics: VisionFirstCoverageDiagnostics;
+} {
+  const issues: DeterministicSemanticIssue[] = [];
+  const anchors = buildPrimaryCapabilityAnchors(structure, options);
+  const features = structure.features || [];
+  const featurePriorityWindowSize = Math.max(3, Math.min(5, Math.ceil(features.length * 0.35)));
+  const featurePriorityWindow = features
+    .slice(0, featurePriorityWindowSize)
+    .map(feature => String(feature.id || '').trim())
+    .filter(Boolean);
+
+  if (anchors.length === 0 || features.length < 3) {
+    return {
+      issues,
+      diagnostics: {
+        primaryCapabilityAnchors: anchors,
+        featurePriorityWindow,
+        coreFeatureIds: [],
+        supportFeatureIds: [],
+      },
+    };
+  }
+
+  const classified = features.map(feature => ({
+    id: String(feature.id || '').trim(),
+    classification: classifyFeaturePriority(feature, anchors),
+  }));
+  const coreFeatureIds = classified
+    .filter(entry => entry.classification === 'core_capability')
+    .map(entry => entry.id)
+    .filter(Boolean);
+  const supportFeatureIds = classified
+    .filter(entry => entry.classification === 'supporting_capability' || entry.classification === 'implementation_enabler')
+    .map(entry => entry.id)
+    .filter(Boolean);
+  const leading = classified.slice(0, featurePriorityWindowSize);
+  const leadingCoreIds = leading
+    .filter(entry => entry.classification === 'core_capability')
+    .map(entry => entry.id)
+    .filter(Boolean);
+  const leadingSupportIds = leading
+    .filter(entry => entry.classification === 'supporting_capability' || entry.classification === 'implementation_enabler')
+    .map(entry => entry.id)
+    .filter(Boolean);
+  const requiredCoreCount = features.length >= 5 ? 2 : 1;
+
+  if (leadingCoreIds.length < requiredCoreCount) {
+    // ÄNDERUNG 09.03.2026: Wenn Core-Capability-Features global im Set existieren
+    // (nur falsch platziert), ist dies ein Ordering-Problem (warning), kein
+    // Coverage-Problem (error). Nur wenn Core-Features nirgends existieren → error.
+    const globalCoreCount = coreFeatureIds.length;
+    const isTrulyMissing = globalCoreCount < requiredCoreCount;
+    issues.push({
+      code: 'vision_capability_coverage_missing',
+      message: isTrulyMissing
+        ? 'Primary product capabilities from the vision are not represented clearly enough in the leading feature set.'
+        : `Primary product capabilities from the vision (${coreFeatureIds.join(', ')}) exist but are not positioned in the leading feature set.`,
+      severity: 'warning',
+      evidencePath: featurePriorityWindow[0] ? `feature:${featurePriorityWindow[0]}` : 'systemVision',
+      evidenceSnippet: uniqueStrings([
+        structure.systemVision,
+        ...featurePriorityWindow.slice(0, 3).map(featureId => {
+          const feature = features.find(entry => entry.id === featureId);
+          return feature ? `${feature.id}: ${feature.name}` : featureId;
+        }),
+      ]).join(' | ').slice(0, 220),
+      relatedPaths: featurePriorityWindow.map(featureId => `feature:${featureId}`),
+    });
+  }
+
+  if (leadingSupportIds.length > leadingCoreIds.length && leadingSupportIds.length > 0) {
+    issues.push({
+      code: 'support_features_overweight',
+      message: 'Support or implementation-enabler features dominate the leading feature window ahead of primary user-value capabilities.',
+      severity: 'warning',
+      evidencePath: leadingSupportIds[0] ? `feature:${leadingSupportIds[0]}` : 'systemVision',
+      evidenceSnippet: leadingSupportIds
+        .map(featureId => {
+          const feature = features.find(entry => entry.id === featureId);
+          return feature ? `${feature.id}: ${feature.name}` : featureId;
+        })
+        .join(' | ')
+        .slice(0, 220),
+      relatedPaths: leadingSupportIds.map(featureId => `feature:${featureId}`),
+    });
+  }
+
+  return {
+    issues,
+    diagnostics: {
+      primaryCapabilityAnchors: anchors,
+      featurePriorityWindow,
+      coreFeatureIds,
+      supportFeatureIds,
+    },
+  };
+}
+
 function singularizeIdentifierPart(part: string): string {
   const normalized = String(part || '').toLowerCase();
   if (normalized === 'ids') return 'id';
+  if (normalized.endsWith('is')) return normalized;
   if (normalized.endsWith('ies') && normalized.length > 4) return `${normalized.slice(0, -3)}y`;
   if (normalized.endsWith('es') && normalized.length > 4 && /(?:ches|shes|sses|xes|zes)$/.test(normalized)) {
     return normalized.slice(0, -2);
@@ -251,6 +991,10 @@ function singularizeIdentifierPart(part: string): string {
     return normalized.slice(0, -1);
   }
   return normalized;
+}
+
+function normalizeCapabilityToken(token: string): string {
+  return singularizeIdentifierPart(String(token || '').toLowerCase().trim());
 }
 
 function buildIdentifierRawKey(parts: string[]): string {
@@ -356,6 +1100,9 @@ function extractIdentifierOccurrences(scopes: TextScope[]): IdentifierOccurrence
 
   for (const scope of scopes) {
     for (const identifier of extractCodeIdentifiers(scope.value)) {
+      if (scope.path !== 'domainModel' && isLikelyStorageArtifactIdentifier(scope.value, identifier)) {
+        continue;
+      }
       const parts = splitIdentifierParts(identifier);
       if (parts.length < 2) continue;
       occurrences.push({
@@ -371,6 +1118,17 @@ function extractIdentifierOccurrences(scopes: TextScope[]): IdentifierOccurrence
   }
 
   return occurrences;
+}
+
+function isLikelyStorageArtifactIdentifier(scopeValue: string, identifier: string): boolean {
+  const normalizedIdentifier = String(identifier || '').trim();
+  if (!normalizedIdentifier) return false;
+  if (!/^[a-z]+(?:_[a-z0-9]+)+$/.test(normalizedIdentifier)) return false;
+
+  const source = String(scopeValue || '');
+  const lines = source.split(/\r?\n/);
+  const matchingLine = lines.find(line => line.includes(normalizedIdentifier)) || source;
+  return /\b(?:table|tables|tabelle|tabellen|sql|select|from|join|into|insert|update|delete|query|abfrage|read-only|readonly|lookup|cache|database|datenbank)\b/i.test(matchingLine);
 }
 
 function parseDomainEntitySchemas(domainModel: string): DomainEntitySchema[] {
@@ -523,7 +1281,7 @@ function extractRuleSchemaPropertyCoverageIssues(structure: PRDStructure): Deter
       issues.push({
         code: 'rule_schema_property_coverage_missing',
         message: `Business rules reference property "${token}" but the Domain Model does not declare or describe it.`,
-        severity: 'error',
+        severity: 'warning',
         evidencePath: 'globalBusinessRules',
         evidenceSnippet: line.slice(0, 220),
       });
@@ -533,46 +1291,78 @@ function extractRuleSchemaPropertyCoverageIssues(structure: PRDStructure): Deter
   return issues;
 }
 
-function extractFeatureCoreSemanticGapIssues(structure: PRDStructure): DeterministicSemanticIssue[] {
+function extractFeatureCoreSemanticGapIssues(
+  structure: PRDStructure,
+  options: CollectSemanticIssuesOptions,
+  dynamicAnchors: string[]
+): DeterministicSemanticIssue[] {
   const issues: DeterministicSemanticIssue[] = [];
+  const features = structure.features || [];
   const systemContext = [
+    String(options.contextHint || '').trim(),
     String(structure.systemVision || '').trim(),
     String(structure.globalBusinessRules || '').trim(),
     String(structure.domainModel || '').trim(),
   ].filter(Boolean).join('\n');
+  const dynamicAnchorFeatureMentions = new Map(
+    dynamicAnchors.map(anchor => {
+      const anchorPattern = buildWholeWordPattern(anchor);
+      const featureMentionCount = features.filter(feature => anchorPattern.test(buildFeatureSemanticClaimText(feature))).length;
+      return [anchor, featureMentionCount] as const;
+    })
+  );
 
-  for (const feature of structure.features || []) {
+  for (const feature of features) {
     const featureId = String(feature.id || '').trim();
     if (!featureId) continue;
 
-    const summaryText = [
-      feature.name,
-      feature.purpose,
-      feature.rawContent,
-      feature.uiImpact,
-    ].map(value => String(value || '').trim()).filter(Boolean).join('\n');
+    const claimText = buildFeatureSemanticClaimText(feature);
+    const featureNameText = String(feature.name || '').trim();
     const coreFieldText = [
+      feature.trigger,
       feature.preconditions,
+      ...(Array.isArray(feature.mainFlow) ? feature.mainFlow : []),
       feature.postconditions,
       feature.dataImpact,
+      ...(Array.isArray(feature.acceptanceCriteria) ? feature.acceptanceCriteria : []),
     ].map(value => String(value || '').trim()).filter(Boolean).join('\n');
 
-    if (!summaryText || !coreFieldText) continue;
+    if (!claimText || !coreFieldText) continue;
 
-    const missingAnchors = FEATURE_CORE_SEMANTIC_ANCHORS
-      .filter(anchor => anchor.patterns.some(pattern => pattern.test(systemContext) || pattern.test(summaryText)))
-      .filter(anchor => anchor.patterns.some(pattern => pattern.test(summaryText)))
+    const claimedDynamicAnchors = dynamicAnchors.filter(anchor => {
+      if (FEATURE_CORE_DYNAMIC_ANCHOR_STOP_WORDS.has(anchor)) return false;
+      const anchorPattern = buildWholeWordPattern(anchor);
+      const featureMentionCount = dynamicAnchorFeatureMentions.get(anchor) || 0;
+      const isFeatureSpecific = featureMentionCount <= 1 || anchorPattern.test(featureNameText);
+      return anchorPattern.test(claimText) && anchorPattern.test(systemContext) && isFeatureSpecific;
+    });
+
+    const missingDynamicAnchors = claimedDynamicAnchors
+      .filter(anchor => {
+        const anchorPattern = buildWholeWordPattern(anchor);
+        return !anchorPattern.test(coreFieldText);
+      })
+      .map(anchor => anchor);
+
+    const missingStaticAnchors = FEATURE_CORE_SEMANTIC_ANCHORS
+      .filter(anchor => anchor.patterns.some(pattern => pattern.test(systemContext) || pattern.test(claimText)))
+      .filter(anchor => anchor.patterns.some(pattern => pattern.test(claimText)))
       .filter(anchor => !anchor.patterns.some(pattern => pattern.test(coreFieldText)))
       .map(anchor => anchor.label);
+
+    const missingAnchors = uniqueStrings([
+      ...missingDynamicAnchors,
+      ...missingStaticAnchors,
+    ]);
 
     if (missingAnchors.length === 0) continue;
 
     issues.push({
       code: 'feature_core_semantic_gap',
       message: `Feature "${featureId}: ${String(feature.name || '').trim()}" mentions ${missingAnchors.join(', ')} but Preconditions, Postconditions, or Data Impact do not encode it consistently.`,
-      severity: 'error',
-      evidencePath: `feature:${featureId}.preconditions`,
-      evidenceSnippet: normalizeWhitespace(summaryText).slice(0, 220),
+      severity: 'warning',
+      evidencePath: `feature:${featureId}.purpose`,
+      evidenceSnippet: normalizeWhitespace(claimText).slice(0, 220),
     });
   }
 
@@ -598,6 +1388,61 @@ function extractOutOfScopeFutureLeakageIssues(outOfScope: string): Deterministic
   }
 
   return issues;
+}
+
+export function normalizeOutOfScopeStrictExclusions(
+  outOfScope: string,
+  language: SupportedLanguage = 'en'
+): { content: string; changed: boolean } {
+  const lines = String(outOfScope || '')
+    .split(/\r?\n/)
+    .map(line => normalizeWhitespace(line))
+    .filter(Boolean);
+  const normalizedLines: string[] = [];
+
+  for (const rawLine of lines) {
+    const withoutBullet = rawLine.replace(/^[-*•]\s*/, '').trim();
+    if (!withoutBullet) continue;
+
+    let subject = withoutBullet
+      .replace(/\([^)]*\)/g, ' ')
+      .replace(/\b(?:but|however|jedoch|aber)\b[\s\S]*$/i, ' ')
+      .replace(/\b(?:in this release|for this release|for this version|in dieser version|in diesem release)\b/gi, ' ')
+      .replace(/\b(?:is|are|remains?|werden|ist|sind)\s+(?:explicitly\s+)?(?:out of scope|excluded|deferred|not included|ausgeschlossen|verschoben)\b[\s\S]*$/i, ' ')
+      .trim();
+
+    subject = subject.replace(
+      /\b(?:planned|roadmap|future|later|eventually|zukuenftig|zukünftig|spaeter|später)\b[\s\S]*$/i,
+      ' '
+    );
+
+    for (const pattern of OUT_OF_SCOPE_CANONICAL_LEAK_PATTERNS) {
+      subject = subject.replace(pattern, ' ');
+    }
+
+    const leadingNegative = subject.match(/^(?:no|without|kein(?:e|er|es|em|en)?|ohne)\s+(.+)$/i);
+    if (leadingNegative?.[1]) {
+      subject = leadingNegative[1];
+    }
+
+    subject = normalizeWhitespace(subject)
+      .replace(/[,:;.-]+$/g, '')
+      .trim();
+
+    if (!subject) continue;
+
+    const canonical = language === 'de'
+      ? `- ${titleCaseFragment(subject)} ist in diesem Release ausgeschlossen.`
+      : `- ${titleCaseFragment(subject)} is excluded from this release.`;
+    normalizedLines.push(canonical);
+  }
+
+  const normalizedContent = normalizedLines.join('\n').trim();
+  const changed = normalizeForMatch(normalizedContent) !== normalizeForMatch(outOfScope);
+  return {
+    content: normalizedContent || String(outOfScope || '').trim(),
+    changed,
+  };
 }
 
 function normalizeConstraintValue(rawValue: string, rawUnit?: string): { value: number; unitGroup: ConstraintUnitGroup } {
@@ -690,10 +1535,39 @@ function constraintsConflict(base: NumericConstraint, other: NumericConstraint):
 }
 
 function tokenizeScopeValue(value: string): string[] {
-  return normalizeForMatch(value)
+  const expanded = new Set<string>();
+  const tokens = normalizeForMatch(value)
     .split(/\s+/)
     .filter(token => token.length >= 3)
     .filter(token => !SCOPE_STOP_WORDS.has(token));
+
+  for (const token of tokens) {
+    const normalized = singularizeIdentifierPart(token);
+    if (!SCOPE_STOP_WORDS.has(normalized)) {
+      expanded.add(normalized);
+    }
+    if ([
+      'mehrspieler',
+      'multiplayer',
+      'multiplayermodus',
+      'mehrspielermodus',
+    ].includes(normalized)) {
+      expanded.add('multiplayer');
+    }
+    if ([
+      'einzelspieler',
+      'singleplayer',
+      'singleplayermodus',
+      'einzelspielermodus',
+    ].includes(normalized)) {
+      expanded.add('singleplayer');
+    }
+    if (['kooperativ', 'cooperative', 'coop'].includes(normalized)) {
+      expanded.add('coop');
+    }
+  }
+
+  return Array.from(expanded);
 }
 
 function parseScopeExclusions(outOfScope: string): ScopeExclusion[] {
@@ -714,8 +1588,18 @@ function parseScopeExclusions(outOfScope: string): ScopeExclusion[] {
       const trailingNegative = line.match(/^(.+?)\s+(?:are|is|remain|remains|werden|ist|sind)\s+(?:explicitly\s+)?(?:out of scope|excluded|deferred|not included|ausgeschlossen|verschoben)\b/i);
       if (trailingNegative?.[1]) {
         rawItems = trailingNegative[1].split(/\s*,\s*|\s+(?:and|und)\s+/i);
-      } else if (NEGATION_MARKERS.some(marker => normalized.includes(marker))) {
-        rawItems = [line];
+      } else {
+        const dashedNotPartMatch = line.match(/^(.+?)\s+[—–-]\s*(?:not\s+part|nicht\s+teil)\b/i);
+        if (dashedNotPartMatch?.[1]) {
+          rawItems = dashedNotPartMatch[1].split(/\s*,\s*|\s+(?:and|und)\s+/i);
+        } else {
+          const notPartMatch = line.match(/^(.+?)\s+(?:are|is|werden|ist|sind)\s+(?:not\s+part|nicht\s+teil)\b/i);
+          if (notPartMatch?.[1]) {
+            rawItems = notPartMatch[1].split(/\s*,\s*|\s+(?:and|und)\s+/i);
+          } else if (NEGATION_MARKERS.some(marker => normalized.includes(marker))) {
+            rawItems = [line];
+          }
+        }
       }
     }
 
@@ -726,7 +1610,8 @@ function parseScopeExclusions(outOfScope: string): ScopeExclusion[] {
       const tokens = tokenizeScopeValue(label)
         .filter(token => !NEGATION_MARKERS.includes(token))
         .filter(token => !SCOPE_STOP_WORDS.has(token));
-      if (tokens.length < 2) continue;
+      const hasHighSignalToken = tokens.some(token => HIGH_SIGNAL_SCOPE_TOKENS.has(token));
+      if (tokens.length < 2 && !hasHighSignalToken) continue;
       exclusions.push({
         label,
         tokens: Array.from(new Set(tokens)),
@@ -757,7 +1642,7 @@ function targetScopesForScopeChecks(structure: PRDStructure): TextScope[] {
 
   targets.push(...featureScopes);
 
-  for (const key of ['timelineMilestones', 'successCriteria', 'definitionOfDone'] as const) {
+  for (const key of ['systemVision', 'systemBoundaries', 'deployment', 'timelineMilestones', 'successCriteria', 'definitionOfDone'] as const) {
     const value = String((structure as any)[key] || '').trim();
     if (!value) continue;
     targets.push({
@@ -783,6 +1668,40 @@ function tokenOverlapRatio(tokens: string[], otherTokens: string[]): number {
   return overlap / Math.min(left.size, right.size);
 }
 
+function extractDeploymentRuntimeContradictionIssues(structure: PRDStructure): DeterministicSemanticIssue[] {
+  const issues: DeterministicSemanticIssue[] = [];
+  const boundaries = normalizeForMatch(String(structure.systemBoundaries || ''));
+  const deployment = normalizeForMatch(String(structure.deployment || ''));
+  if (!boundaries || !deployment) return issues;
+
+  const containerLike = /\b(?:ecs|fargate|container|containers|kubernetes|docker|pods?)\b/i;
+  const serverlessLike = /\b(?:lambda|api gateway|serverless|cloud function|functions as a service|faas)\b/i;
+
+  const boundariesContainer = containerLike.test(boundaries);
+  const boundariesServerless = serverlessLike.test(boundaries);
+  const deploymentContainer = containerLike.test(deployment);
+  const deploymentServerless = serverlessLike.test(deployment);
+
+  const contradictsContainerBaseline =
+    boundariesContainer && deploymentServerless && !deploymentContainer;
+  const contradictsServerlessBaseline =
+    boundariesServerless && deploymentContainer && !deploymentServerless;
+
+  if (!contradictsContainerBaseline && !contradictsServerlessBaseline) {
+    return issues;
+  }
+
+  issues.push({
+    code: 'deployment_runtime_contradiction',
+    message: 'System Boundaries and Deployment & Infrastructure describe contradictory runtime/deployment models.',
+    severity: 'error',
+    evidencePath: 'deployment',
+    evidenceSnippet: normalizeWhitespace(String(structure.deployment || '')).slice(0, 220),
+  });
+
+  return issues;
+}
+
 function isCompilerFilledScope(sectionKey: string, knownFallbackSections: Set<string>): boolean {
   if (sectionKey.startsWith('feature:')) return false;
   return isCompilerFilledSection(sectionKey, knownFallbackSections);
@@ -794,6 +1713,8 @@ export function collectDeterministicSemanticIssues(
 ): DeterministicSemanticIssue[] {
   const issues: DeterministicSemanticIssue[] = [];
   const knownFallbackSections = new Set(options.fallbackSections || []);
+  const systemBoundariesAreFallback = isCompilerFilledScope('systemBoundaries', knownFallbackSections);
+  const deploymentIsFallback = isCompilerFilledScope('deployment', knownFallbackSections);
   const allScopes = gatherTextScopes(structure);
   const domainModelIsFallback = isCompilerFilledScope('domainModel', knownFallbackSections);
   const businessRulesAreFallback = isCompilerFilledScope('globalBusinessRules', knownFallbackSections);
@@ -886,6 +1807,7 @@ export function collectDeterministicSemanticIssues(
         severity: 'error',
         evidencePath: rawVariants[0].path,
         evidenceSnippet: rawVariants[0].snippet,
+        relatedPaths: rawVariants.map(occurrence => occurrence.path),
       });
     }
   }
@@ -925,12 +1847,16 @@ export function collectDeterministicSemanticIssues(
       for (const target of targets) {
         const targetTokens = tokenizeScopeValue(target.value);
         const overlap = tokenOverlapRatio(exclusion.tokens, targetTokens);
-        if (overlap < 0.75 || exclusion.tokens.length < 2) continue;
+        const hasHighSignalTokenOverlap = exclusion.tokens.some(token =>
+          HIGH_SIGNAL_SCOPE_TOKENS.has(token) && targetTokens.includes(token)
+        );
+        if ((overlap < 0.75 || exclusion.tokens.length < 2) && !hasHighSignalTokenOverlap) continue;
 
         const sharedMeaningful = exclusion.tokens.filter(token =>
           targetTokens.includes(token) && !IDENTIFIER_STOP_WORDS.has(token)
         );
-        if (sharedMeaningful.length < 2) continue;
+        const hasHighSignalOverlap = sharedMeaningful.some(token => HIGH_SIGNAL_SCOPE_TOKENS.has(token));
+        if (sharedMeaningful.length < 2 && !hasHighSignalOverlap) continue;
 
         const issueKey = `${exclusion.label.toLowerCase()}|${target.path}`;
         if (issueKeys.has(issueKey)) continue;
@@ -951,11 +1877,36 @@ export function collectDeterministicSemanticIssues(
     issues.push(...extractRuleSchemaPropertyCoverageIssues(structure));
   }
 
-  issues.push(...extractFeatureCoreSemanticGapIssues(structure));
+  issues.push(...analyzeTimelineFeatureReferenceMismatch(structure).issues);
+
+  const visionFirst = collectVisionFirstCoverageIssues(structure, options);
+  issues.push(...visionFirst.issues);
+  issues.push(...extractFeatureCoreSemanticGapIssues(
+    structure,
+    options,
+    visionFirst.diagnostics.primaryCapabilityAnchors,
+  ));
 
   if (!outOfScopeIsFallback) {
     issues.push(...extractOutOfScopeFutureLeakageIssues(String(structure.outOfScope || '')));
   }
 
+  if (!systemBoundariesAreFallback && !deploymentIsFallback) {
+    issues.push(...extractDeploymentRuntimeContradictionIssues(structure));
+  }
+
   return issues;
+}
+
+export function collectVisionFirstCoverageDiagnostics(
+  structure: PRDStructure,
+  options: CollectSemanticIssuesOptions = {}
+): VisionFirstCoverageDiagnostics {
+  return collectVisionFirstCoverageIssues(structure, options).diagnostics;
+}
+
+export function collectTimelineConsistencyDiagnostics(
+  structure: PRDStructure
+): TimelineConsistencyDiagnostics {
+  return analyzeTimelineFeatureReferenceMismatch(structure).diagnostics;
 }

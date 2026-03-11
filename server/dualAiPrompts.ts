@@ -31,7 +31,9 @@ export function getLanguageInstruction(language: string | null | undefined): str
 export const FEATURE_SPEC_TEMPLATE = `
 FEATURE SPEC TEMPLATE (MANDATORY for each feature in the Functional Feature Catalogue):
 
-Feature ID: F-XX
+### F-01: [Descriptive name]
+
+Feature ID: F-01
 Feature Name: [Descriptive name]
 
 1. Purpose — What capability this feature provides to the user
@@ -44,6 +46,13 @@ Feature Name: [Descriptive name]
 8. Data Impact — What data is created, modified, or deleted
 9. UI Impact — Interface changes caused by the feature (screens, components, states)
 10. Acceptance Criteria — Testable, observable conditions that confirm the feature works correctly
+
+CANONICAL FEATURE SYNTAX RULES:
+- ALWAYS use canonical feature IDs in the form F-01, F-02, F-10
+- ALWAYS render feature headings as: ### F-01: Feature Name
+- ALWAYS render the body ID line as: Feature ID: F-01
+- NEVER output non-canonical IDs such as F001 or F01
+- NEVER use en-dash heading variants such as "### F001 – Feature Name" as canonical output
 `;
 
 export const GENERATOR_SYSTEM_PROMPT = `You are an experienced Product Manager and PRD expert specializing in FEATURE-ORIENTED REQUIREMENTS that are implementation-ready for developers and no-code/code-generation tools.
@@ -201,6 +210,7 @@ CRITICAL RULE - CONTENT PRESERVATION:
 - Do NOT remove or replace existing content unless it contradicts the feedback
 - The improved PRD should be an EXPANSION, not a replacement
 - PRESERVE all existing F-XX Feature Specs — expand them, do not delete or replace
+- KEEP every existing feature ID in canonical form F-01 and preserve that exact ID through every rewrite
 
 Your task is to IMPROVE the PRD and close ALL identified gaps:
 
@@ -273,6 +283,7 @@ CRITICAL RULES FOR CONTENT PRESERVATION:
 - Only REMOVE content if explicitly contradicted by new requirements
 - Each iteration should EXPAND the PRD, not restart it
 - PRESERVE all existing F-XX Feature Specs — expand them, do not delete or replace
+- KEEP every existing feature ID in canonical form F-01 and preserve that exact ID through every rewrite
 
 MANDATORY SECTIONS — the PRD must contain ALL of these H2 headings (add missing ones):
 - System Vision (purpose, executive summary, problem statement, goals with KPIs)
@@ -366,6 +377,7 @@ CRITICAL IMPROVE-MODE RULES:
 - You MUST preserve the existing PRD structure, section intent, and baseline feature catalogue
 - You MUST NOT invent new F-XX features in improve mode
 - You MUST NOT rename, renumber, or replace baseline features unless the user explicitly requested that exact change
+- You MUST keep every existing feature ID in canonical form F-01 and preserve that exact ID in headings and body lines
 - You MUST NOT introduce new personas, target audiences, deployment/runtime models, infrastructure domains, or integration families unless the user explicitly requested them
 - You MUST keep the product anchored to the baseline System Vision, System Boundaries, Domain Model, Global Business Rules, and Out of Scope
 - If a requested improvement suggests a new feature family, convert it into a clarifying question instead of adding PRD content
@@ -684,6 +696,18 @@ interface CompilerDiagnostics {
   contentReviewIssueCodes?: string[];
   semanticVerifierVerdict?: 'pass' | 'fail';
   primaryGateReason?: string;
+  structuralParseReason?: string;
+  rawFeatureHeadingSamples?: string[];
+  normalizationApplied?: boolean;
+  normalizedFeatureCountRecovered?: number;
+  primaryCapabilityAnchors?: string[];
+  featurePriorityWindow?: string[];
+  coreFeatureIds?: string[];
+  supportFeatureIds?: string[];
+  canonicalFeatureIds?: string[];
+  timelineMismatchedFeatureIds?: string[];
+  timelineRewrittenFromFeatureMap?: boolean;
+  timelineRewriteAppliedLines?: number;
   semanticBlockingCodes?: string[];
   semanticBlockingIssues?: CompilerDiagnosticIssue[];
   initialSemanticBlockingIssues?: CompilerDiagnosticIssue[];
@@ -694,8 +718,30 @@ interface CompilerDiagnostics {
   semanticRepairIssueCodes?: string[];
   semanticRepairSectionKeys?: string[];
   semanticRepairTruncated?: boolean;
-  repairGapReason?: 'emergent_issue_after_repair' | 'same_issues_persisted' | 'repair_no_structural_change' | 'repair_budget_exhausted';
+  repairGapReason?: 'emergent_issue_after_repair' | 'same_issues_persisted' | 'repair_no_structural_change' | 'repair_no_substantive_change' | 'repair_budget_exhausted';
   repairCycleCount?: number;
+  compilerRepairTruncationCount?: number;
+  compilerRepairFinishReasons?: string[];
+  repairRejected?: boolean;
+  repairRejectedReason?: string;
+  repairDegradationSignals?: string[];
+  degradedCandidateAvailable?: boolean;
+  degradedCandidateSource?: 'pre_repair_best' | 'post_targeted_repair';
+  displayedCandidateSource?: 'passed' | 'pre_repair_best' | 'post_targeted_repair';
+  diagnosticsAlignedWithDisplayedCandidate?: boolean;
+  collapsedFeatureNameIds?: string[];
+  placeholderFeatureIds?: string[];
+  acceptanceBoilerplateFeatureIds?: string[];
+  featureQualityFloorFeatureIds?: string[];
+  featureQualityFloorFailedFeatureIds?: string[];
+  featureQualityFloorPassed?: boolean;
+  primaryFeatureQualityReason?: string;
+  emptyMainFlowFeatureIds?: string[];
+  placeholderPurposeFeatureIds?: string[];
+  placeholderAlternateFlowFeatureIds?: string[];
+  thinAcceptanceCriteriaFeatureIds?: string[];
+  semanticRepairChangedSections?: string[];
+  semanticRepairStructuralChange?: boolean;
   semanticVerifierSameFamilyFallback?: boolean;
   semanticVerifierBlockedFamilies?: string[];
   earlyDriftDetected?: boolean;
@@ -706,6 +752,16 @@ interface CompilerDiagnostics {
   earlyRepairAttempted?: boolean;
   earlyRepairApplied?: boolean;
   primaryEarlyDriftReason?: string;
+  runtimeFailureCode?: 'provider_exhaustion' | 'provider_auth' | 'provider_unavailable';
+  providerFailureSummary?: string;
+  providerFailureCounts?: {
+    rateLimited: number;
+    timedOut: number;
+    provider4xx: number;
+    emptyResponse: number;
+  };
+  providerFailedModels?: string[];
+  providerFailureStage?: 'compiler_repair' | 'content_review' | 'semantic_repair' | 'semantic_verification' | 'final_review';
   activePhase?: string;
   lastProgressEvent?: string;
   lastModelAttempt?: {
