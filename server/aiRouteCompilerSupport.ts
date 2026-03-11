@@ -5,6 +5,8 @@ Version: 1.0
 Beschreibung: Compiler- und Persistenz-Helfer fuer KI-Routen mit Storage-/DB-Kopplung.
 */
 
+import fs from 'fs';
+import path from 'path';
 import { persistCompilerRunArtifact } from './compilerRunArtifactPersistence';
 import { logger } from './logger';
 import { compilePrdDocument } from './prdCompiler';
@@ -98,5 +100,21 @@ export async function persistCompilerRunArtifactBestEffort(params: {
     console.error(
       `[COMPILER-ARTIFACT-FAIL] ${params.workflow}/${params.routeKey}: ${error instanceof Error ? error.message : String(error)}`
     );
+    // Minimales Fehler-Artefakt als letzte Rettung — damit immer eine Datei auf Disk landet
+    try {
+      const fallbackDir = path.join(process.cwd(), 'documentation', 'compiler_runs');
+      await fs.promises.mkdir(fallbackDir, { recursive: true });
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const fallbackPath = path.join(fallbackDir, `compiler_run_error_${ts}.json`);
+      await fs.promises.writeFile(fallbackPath, JSON.stringify({
+        _error: true,
+        timestamp: new Date().toISOString(),
+        workflow: params.workflow,
+        routeKey: params.routeKey,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
+        cwd: process.cwd(),
+      }, null, 2) + '\n', 'utf8');
+    } catch { /* absolute last resort — nothing more we can do */ }
   }
 }

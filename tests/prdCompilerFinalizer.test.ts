@@ -88,6 +88,56 @@ function replaceSectionBody(content: string, heading: string, body: string): str
   return `${prefix}${marker}\n\n${body.trim()}\n${suffix}`;
 }
 
+function makeFeature(
+  id: string,
+  name: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    id,
+    name,
+    rawContent: `Structured content for ${id}`,
+    purpose: `${name} gives users a concrete, user-visible workflow with deterministic system behavior and durable state changes.`,
+    actors: 'Authenticated user',
+    trigger: `The user starts ${name.toLowerCase()}.`,
+    preconditions: 'The user is signed in and the workspace is available.',
+    mainFlow: [
+      `The user opens ${name.toLowerCase()}.`,
+      'The system validates the action.',
+      'The system persists the change and updates the UI.',
+    ],
+    alternateFlows: [
+      'If validation fails, the system shows a recoverable error with next steps.',
+    ],
+    postconditions: `${name} completes with updated state visible to the user.`,
+    dataImpact: `Updates records related to ${name.toLowerCase()} and stores the latest workflow state.`,
+    uiImpact: `${name} updates the active workspace view immediately.`,
+    acceptanceCriteria: [
+      `${name} completes successfully and exposes the updated state to the user.`,
+      `Validation failures during ${name.toLowerCase()} return actionable feedback without corrupting persisted data.`,
+    ],
+    ...overrides,
+  };
+}
+
+function makeCompiledResult(features: Array<Record<string, unknown>>): CompilePrdResult {
+  return {
+    content: 'Compiled PRD content',
+    structure: {
+      systemVision: 'A collaborative product helps teams capture, prioritize, and complete work with clear user-visible outcomes.',
+      features: features as any,
+      otherSections: {},
+    },
+    quality: {
+      valid: true,
+      truncatedLikely: false,
+      missingSections: [],
+      featureCount: features.length,
+      issues: [],
+    },
+  } as CompilePrdResult;
+}
+
 describe('prdCompilerFinalizer', () => {
   it('returns compiled output without repair when quality gates pass', async () => {
     const initial = buildSemanticVerifierPrd(
@@ -116,6 +166,145 @@ describe('prdCompilerFinalizer', () => {
     expect(result.repairAttempts).toHaveLength(0);
     expect(repairReviewer).not.toHaveBeenCalled();
     expect(result.content).toContain('## Timeline & Milestones');
+  });
+
+  it('keeps inspected feature IDs separate from failed IDs when the floor passes', async () => {
+    const compiled = makeCompiledResult([
+      makeFeature('F-01', 'Task Capture'),
+      makeFeature('F-02', 'Priority Planning'),
+      makeFeature('F-03', 'Board Coordination'),
+      makeFeature('F-04', 'Report Export', {
+        purpose: 'TODO',
+        actors: '',
+        trigger: '',
+        preconditions: '',
+        mainFlow: [],
+        alternateFlows: [],
+        postconditions: '',
+        dataImpact: '',
+        uiImpact: '',
+        acceptanceCriteria: [],
+      }),
+    ]);
+    const compileDocument = vi.fn(() => compiled);
+
+    const result = await finalizeWithCompilerGates({
+      initialResult: {
+        content: 'initial',
+        model: 'mock/initial',
+        usage: usage(24),
+      },
+      mode: 'generate',
+      language: 'en',
+      originalRequest: 'Generate a feature-complete PRD.',
+      maxRepairPasses: 0,
+      repairReviewer: async () => ({
+        content: 'unused',
+        model: 'mock/repair',
+        usage: usage(10),
+      }),
+      compileDocument,
+      enableContentReview: false,
+    });
+
+    expect(result.featureQualityFloorPassed).toBe(true);
+    expect(result.featureQualityFloorFeatureIds).toEqual(['F-01', 'F-02', 'F-03', 'F-04']);
+    expect(result.featureQualityFloorFailedFeatureIds).toEqual([]);
+  });
+
+  it('reports only the tripping leading placeholder-purpose IDs as floor failures', async () => {
+    const compiled = makeCompiledResult([
+      makeFeature('F-01', 'Task Capture', { purpose: 'Feature ID: F-01' }),
+      makeFeature('F-02', 'Priority Planning', { purpose: 'Feature ID: F-02' }),
+      makeFeature('F-03', 'Board Coordination'),
+    ]);
+    const compileDocument = vi.fn(() => compiled);
+
+    let capturedError: unknown;
+    try {
+      await finalizeWithCompilerGates({
+        initialResult: {
+          content: 'initial',
+          model: 'mock/initial',
+          usage: usage(24),
+        },
+        mode: 'generate',
+        language: 'en',
+        originalRequest: 'Generate a feature-complete PRD.',
+        maxRepairPasses: 0,
+        repairReviewer: async () => ({
+          content: 'unused',
+          model: 'mock/repair',
+          usage: usage(10),
+        }),
+        compileDocument,
+        enableContentReview: false,
+      });
+    } catch (error) {
+      capturedError = error;
+    }
+
+    expect(capturedError).toBeInstanceOf(PrdCompilerQualityError);
+    const qualityError = capturedError as PrdCompilerQualityError;
+    expect(qualityError.featureQualityFloorPassed).toBe(false);
+    expect(qualityError.featureQualityFloorFeatureIds).toEqual(['F-01', 'F-02', 'F-03']);
+    expect(qualityError.featureQualityFloorFailedFeatureIds).toEqual(['F-01', 'F-02']);
+    expect(qualityError.primaryFeatureQualityReason).toContain('placeholder or ID-echo purpose text');
+  });
+
+  it('uses only the broad low-substance IDs that trip the fallback floor failure', async () => {
+    const lowSubstanceFeature = (id: string, name: string) =>
+      makeFeature(id, name, {
+        purpose: 'TODO',
+        actors: '',
+        trigger: '',
+        preconditions: '',
+        mainFlow: [],
+        alternateFlows: [],
+        postconditions: '',
+        dataImpact: '',
+        uiImpact: '',
+        acceptanceCriteria: [],
+      });
+    const compiled = makeCompiledResult([
+      makeFeature('F-01', 'Task Capture'),
+      makeFeature('F-02', 'Priority Planning'),
+      lowSubstanceFeature('F-03', 'Board Coordination'),
+      lowSubstanceFeature('F-04', 'Report Export'),
+      lowSubstanceFeature('F-05', 'Audit Trail'),
+    ]);
+    const compileDocument = vi.fn(() => compiled);
+
+    let capturedError: unknown;
+    try {
+      await finalizeWithCompilerGates({
+        initialResult: {
+          content: 'initial',
+          model: 'mock/initial',
+          usage: usage(24),
+        },
+        mode: 'generate',
+        language: 'en',
+        originalRequest: 'Generate a feature-complete PRD.',
+        maxRepairPasses: 0,
+        repairReviewer: async () => ({
+          content: 'unused',
+          model: 'mock/repair',
+          usage: usage(10),
+        }),
+        compileDocument,
+        enableContentReview: false,
+      });
+    } catch (error) {
+      capturedError = error;
+    }
+
+    expect(capturedError).toBeInstanceOf(PrdCompilerQualityError);
+    const qualityError = capturedError as PrdCompilerQualityError;
+    expect(qualityError.featureQualityFloorPassed).toBe(false);
+    expect(qualityError.featureQualityFloorFeatureIds).toEqual(['F-01', 'F-02', 'F-03', 'F-04', 'F-05']);
+    expect(qualityError.featureQualityFloorFailedFeatureIds).toEqual(['F-03', 'F-04', 'F-05']);
+    expect(qualityError.primaryFeatureQualityReason).toContain('Feature substance is too thin across the leading feature set');
   });
 
   it('recovers truncated generate output when deterministic completion yields a valid PRD', async () => {

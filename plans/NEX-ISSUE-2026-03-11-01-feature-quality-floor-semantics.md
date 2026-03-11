@@ -6,36 +6,62 @@ Separate attempted/relevant feature-quality-floor IDs from actual floor-failure 
 
 ## Context
 
-`server/prdCompilerFinalizer.ts` currently derives a broad `qualityFloorIds` signal bucket and uses it for both `featureQualityFloorFeatureIds` and `featureQualityFloorFailedFeatureIds`.
+Verified against the current code on March 11, 2026:
 
-That collapses two different semantics:
+- `server/prdCompilerFinalizer.ts` already emits two distinct public signals from `buildFeatureQualityDiagnostics(...)`.
+- `featureQualityFloorFeatureIds` is the broader inspected/relevant set.
+- `featureQualityFloorFailedFeatureIds` is the narrower tripping/causal set.
+- The old ambiguity now lives only in the internal helper concept that used to be described as `qualityFloorIds`; in code this is now the internal helper `qualityFloorRelevantIds`.
 
-- `featureQualityFloorFeatureIds` should represent the feature IDs that were relevant to, or inspected by, the feature-quality-floor check.
-- `featureQualityFloorFailedFeatureIds` should represent only the feature IDs that actually caused the floor to fail and should therefore affect penalties, failure diagnostics, and user-visible failure state.
-
-The current duplication makes it impossible to distinguish:
-
-- a floor that passed even though some lower-priority features were thin
-- a floor that failed because specific leading features tripped the gate
-- a degraded repair path where repaired/restored features should be tracked separately from base floor failures
+The remaining work is to keep the terminology, tests, and consumer expectations aligned with those verified semantics.
 
 ## Symbols
 
 - `featureQualityFloorFeatureIds`
 - `featureQualityFloorFailedFeatureIds`
-- `qualityFloorIds`
+- `featurePriorityWindow`
+- `qualityFloorRelevantIds` (internal helper; previously discussed as `qualityFloorIds`)
 
 ## Expected Semantics
 
 - `featureQualityFloorFeatureIds`
   - Contains the feature IDs that were inspected or are otherwise relevant to the floor decision.
-  - Today that likely means the `featurePriorityWindow` plus any extra IDs surfaced by broader floor-related heuristics.
+  - In the current implementation this is `sort(unique(featurePriorityWindow + qualityFloorRelevantIds))`.
+  - This set may stay non-empty even when `featureQualityFloorPassed === true`.
 - `featureQualityFloorFailedFeatureIds`
   - Contains only the IDs that satisfy the active failure condition.
   - This set should be empty when `featureQualityFloorPassed === true`.
-- `qualityFloorIds`
-  - Broad aggregate of floor-related signals.
-  - This may remain an internal helper, but if it continues to back `featureQualityFloorFeatureIds`, the naming should be reviewed so the distinction stays explicit.
+- `featurePriorityWindow`
+  - The leading top-N feature IDs considered first by the floor check.
+  - If `quality.featurePriorityWindow` is already present, that exact deduplicated ordered set is reused after filtering to IDs that still exist in the structure.
+  - Otherwise the window is derived from structure order as the first `N = max(3, min(5, ceil(featureCount * 0.35)))` feature IDs.
+- `qualityFloorRelevantIds`
+  - Internal helper only.
+  - Precise relationship: it is a subset operand used when deriving `featureQualityFloorFeatureIds`, not an alias for the public field and not a replacement for `featureQualityFloorFailedFeatureIds`.
+  - As of March 11, 2026 it is not emitted in `CompilerRunDiagnostics`, iteration-log markers, or public error payloads.
+
+## Term Definitions
+
+- `leading feature`
+  - Any feature whose ID is a member of `featurePriorityWindow`.
+  - Example: if `featurePriorityWindow = ["F-01", "F-02", "F-03"]`, then `F-04` is not a leading feature even if it is low-substance.
+- `bare ID`
+  - A feature name that collapses to the normalized feature ID after markdown stripping and alphanumeric normalization, or is empty/placeholder-like.
+  - Canonical implementation: `isFeatureNameCollapsed(...)` in `server/prdCompilerFinalizer.ts`.
+  - Examples: `name = "F-01"`, `name = "Feature ID: F-01"`, or `name = ""`.
+- `placeholder purpose text`
+  - Any `purpose` value that fails `hasMeaningfulScalarValue(purpose, 30)`.
+  - That includes literal placeholders and ID-echo text, not just the exact string `TODO`.
+  - Canonical implementation: `hasMeaningfulScalarValue(...)` and `isPlaceholderLikeText(...)` in `server/prdCompilerFinalizer.ts`.
+  - Examples: `purpose = "TODO"`, `purpose = "Purpose"`, `purpose = "Feature ID: F-02"`.
+- `low-substance IDs`
+  - Feature IDs whose `countSubstantialFeatureFields(feature)` result is `< 4`.
+  - Canonical implementation: `countSubstantialFeatureFields(...)` and `snapshotFeatureQuality(...)` in `server/prdCompilerFinalizer.ts`.
+  - The metric counts only substantive feature fields:
+    - scalar fields must be non-placeholder and meet the minimum length threshold (`purpose >= 30`, most others `>= 20`)
+    - `mainFlow` needs at least 3 meaningful steps
+    - other array fields need at least 1 meaningful item
+    - acceptance criteria must satisfy `hasSubstantiveAcceptanceCriteria(...)`
 
 ## Failure Conditions To Preserve
 
@@ -44,26 +70,33 @@ The current duplication makes it impossible to distinguish:
 - If empty main flows trip the floor, only those leading IDs belong in `featureQualityFloorFailedFeatureIds`.
 - If thin acceptance criteria trip the floor, only those leading IDs belong in `featureQualityFloorFailedFeatureIds`.
 - If the broad low-substance fallback trips the floor, the failing set should contain the low-substance IDs responsible for that broad failure.
+  - Current rule: the floor fails when either `lowSubstantialLeadingIds.length >= 2` or `snapshot.lowSubstantialFeatureIds.length >= max(3, ceil(featureCount * 0.2))`.
+  - When the broad fallback branch is the tripping branch, `featureQualityFloorFailedFeatureIds` should be `snapshot.lowSubstantialFeatureIds`, not merely the leading subset.
 - When the floor passes, `featureQualityFloorFailedFeatureIds` must remain empty even if `featureQualityFloorFeatureIds` still records inspected or lower-severity IDs.
 
 ## Follow-Up Work
 
-1. Audit the rejected-repair path in `server/prdCompilerFinalizer.ts` to confirm restored feature IDs belong in both collections, or only in the failed set, for rejected repair candidates.
-2. Revisit UI labels and artifact naming if `featureQualityFloorFeatureIds` is meant to mean "inspected" rather than "failed".
-3. Consider renaming `qualityFloorIds` if the broader signal bucket remains part of the public diagnostic shape.
+1. Keep the rejected-repair path aligned with the displayed candidate semantics: if the displayed candidate passed the floor, `featureQualityFloorFailedFeatureIds` must stay empty even when rejected repair diagnostics mention restored feature IDs.
+2. Revisit UI labels and artifact naming if `featureQualityFloorFeatureIds` is displayed to users; the field now means "inspected/relevant", not "failed".
+3. If a legacy/public `qualityFloorIds` field is ever reintroduced, define it explicitly as either:
+   - an alias of `featureQualityFloorFeatureIds`, or
+   - a separate internal-helper export with a documented containment contract.
 
 ## Test Plan
 
-1. Add a unit or finalizer regression where `featureQualityFloorPassed === true` and assert:
+1. Add or keep a finalizer regression where `featureQualityFloorPassed === true` and assert:
    - `featureQualityFloorFeatureIds` is non-empty for the inspected feature window.
    - `featureQualityFloorFailedFeatureIds` is empty.
-2. Add a regression where the floor fails because leading placeholder-purpose IDs cross the threshold and assert:
+2. Add or keep a regression where the floor fails because leading placeholder-purpose IDs cross the threshold and assert:
    - `featureQualityFloorFeatureIds` includes the inspected feature window.
    - `featureQualityFloorFailedFeatureIds` contains only the failing placeholder-purpose IDs.
-3. Add a regression where the broad low-substance fallback fails and assert:
+3. Add or keep a regression where the broad low-substance fallback fails and assert:
    - `featureQualityFloorFailedFeatureIds` contains the low-substance IDs that triggered the broad failure.
-   - the scoring penalty uses only that failed set.
-4. Add or update repair-rejection coverage to assert the degraded repair path does not silently repopulate `featureQualityFloorFailedFeatureIds` when the displayed candidate passed the floor.
+   - downstream penalties continue to read only `featureQualityFloorFailedFeatureIds`.
+4. Add or keep repair-rejection coverage to assert the degraded repair path does not silently repopulate `featureQualityFloorFailedFeatureIds` when the displayed candidate passed the floor.
+5. Conditional backward-compatibility test only if a public `qualityFloorIds` field exists.
+   - Current verified status: no public `qualityFloorIds` field is emitted, so no compatibility test is required today.
+   - If such a field is reintroduced, assert that existing consumers reading `qualityFloorIds` behave identically to the prior API and that the field's relationship to `featureQualityFloorFeatureIds` is documented exactly.
 
 ## Tracking Note
 

@@ -1707,6 +1707,54 @@ function isCompilerFilledScope(sectionKey: string, knownFallbackSections: Set<st
   return isCompilerFilledSection(sectionKey, knownFallbackSections);
 }
 
+const DEGENERATE_SECTION_KEYS: { key: keyof PRDStructure; label: string }[] = [
+  { key: 'outOfScope', label: 'Out of Scope' },
+  { key: 'nonFunctional', label: 'Non-Functional Requirements' },
+  { key: 'deployment', label: 'Deployment' },
+  { key: 'definitionOfDone', label: 'Definition of Done' },
+  { key: 'successCriteria', label: 'Success Criteria' },
+  { key: 'timelineMilestones', label: 'Timeline & Milestones' },
+];
+
+function collectDegenerateSectionIssues(
+  structure: PRDStructure,
+  knownFallbackSections: Set<string>
+): DeterministicSemanticIssue[] {
+  const issues: DeterministicSemanticIssue[] = [];
+
+  for (const { key, label } of DEGENERATE_SECTION_KEYS) {
+    if (isCompilerFilledScope(key, knownFallbackSections)) continue;
+    const text = String(structure[key] || '').trim();
+    if (!text) continue;
+
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+    // Muster 1: Heading innerhalb einer Liste ("- ### ...")
+    const headingInList = lines.some(l => /^-\s*#{1,4}\s/.test(l));
+
+    // Muster 2: Selbstreferenzielle Leer-Saetze — gesamte Section ist nur 1 Zeile
+    // und enthaelt kaum substantiven Inhalt, z.B.:
+    //   "Ausgeschlossene Features ist in diesem Release ausgeschlossen."
+    // Nicht triggern bei konkreten Ausschluessen wie "Native mobile apps are excluded."
+    const selfReferential = lines.length === 1 && lines[0].length < 100 && (
+      /\b(ausgeschlossene?\s+features?\b|excluded\s+features?\b)/i.test(lines[0]) ||
+      /\b(out\s+of\s+scope.*not\s+in\s+scope|nicht\s+im\s+scope.*ausgeschlossen)\b/i.test(lines[0])
+    );
+
+    if (headingInList || selfReferential) {
+      issues.push({
+        code: 'section_content_degenerate',
+        message: `Section "${label}" contains degenerate content: ${headingInList ? 'heading inside list item' : 'self-referential placeholder sentence'}.`,
+        severity: 'error',
+        evidencePath: key,
+        evidenceSnippet: text.slice(0, 200),
+      });
+    }
+  }
+
+  return issues;
+}
+
 export function collectDeterministicSemanticIssues(
   structure: PRDStructure,
   options: CollectSemanticIssuesOptions = {}
@@ -1894,6 +1942,8 @@ export function collectDeterministicSemanticIssues(
   if (!systemBoundariesAreFallback && !deploymentIsFallback) {
     issues.push(...extractDeploymentRuntimeContradictionIssues(structure));
   }
+
+  issues.push(...collectDegenerateSectionIssues(structure, knownFallbackSections));
 
   return issues;
 }

@@ -2248,7 +2248,45 @@ Your task:
       },
     ];
 
-    const serialized = JSON.stringify(payload, null, 2) + '\n';
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(payload, null, 2) + '\n';
+    } catch (error) {
+      logger.error('Dual AI iterative artifact payload serialization failed', {
+        error,
+      });
+      try {
+        const seen = new WeakSet<object>();
+        serialized = JSON.stringify(payload, (_key, value) => {
+          if (typeof value === 'bigint') {
+            return value.toString();
+          }
+          if (value instanceof Error) {
+            return {
+              name: value.name,
+              message: value.message,
+              stack: value.stack,
+            };
+          }
+          if (value && typeof value === 'object') {
+            const objectValue = value as object;
+            if (seen.has(objectValue)) {
+              return '[Circular]';
+            }
+            seen.add(objectValue);
+          }
+          return value;
+        }, 2) + '\n';
+      } catch (fallbackError) {
+        logger.error('Dual AI iterative artifact fallback serialization failed', {
+          error: fallbackError,
+        });
+        serialized = JSON.stringify({
+          _serializationFailed: true,
+          error: error instanceof Error ? error.message : String(error),
+        }, null, 2) + '\n';
+      }
+    }
 
     await Promise.all(
       artifacts.map(async ({ timestampedPath, latestAliasPath }) => {

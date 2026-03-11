@@ -74,6 +74,17 @@ function throwIfAborted(abortSignal: AbortSignal | undefined, message: string): 
   throw toAbortError(undefined, message);
 }
 
+function normalizeFeatures(features: FeatureSpec[]): FeatureSpec[] {
+  return features
+    .map((feature) => {
+      const rawId = String(feature.id || '').trim();
+      const canonicalId = normalizeFeatureId(feature.id) || rawId.toUpperCase();
+      if (!canonicalId) return null;
+      return { ...feature, id: canonicalId };
+    })
+    .filter((feature): feature is FeatureSpec => Boolean(feature));
+}
+
 export interface FeatureExpansionResult {
   enrichedStructure: PRDStructure | undefined;
   assembledContent: string | undefined;
@@ -89,8 +100,17 @@ function buildFeatureListFromStructureFeatures(features: FeatureSpec[]): string 
   let currentParentKey = '__NONE__';
 
   for (const feature of features) {
-    const safeId = normalizeFeatureId(feature.id) || String(feature.id || '').trim().toUpperCase();
-    const safeName = String(feature.name || safeId || 'Feature').trim() || safeId || 'Feature';
+    const rawId = String(feature.id || '').trim();
+    const normalizedId = normalizeFeatureId(feature.id);
+    const safeId = normalizedId || rawId.toUpperCase();
+    const rawName = String(feature.name || '').trim();
+    let safeName = rawName;
+    if (!safeName) {
+      safeName = safeId;
+    }
+    if (!safeName) {
+      safeName = 'Feature';
+    }
     const summarySource =
       String(feature.purpose || '').trim()
       || String(feature.trigger || '').trim()
@@ -207,20 +227,8 @@ export async function runFeatureExpansionPipeline(params: {
 
     if (!allowFeatureDiscovery) {
       const baseStructure = parsePRDToStructure(draftContent);
-      const normalizedSeedFeatures = (params.seedFeatures || [])
-        .map((feature) => {
-          const canonicalId = normalizeFeatureId(feature.id) || String(feature.id || '').trim().toUpperCase();
-          if (!canonicalId) return null;
-          return { ...feature, id: canonicalId };
-        })
-        .filter((feature): feature is FeatureSpec => Boolean(feature));
-      const normalizedDraftFeatures = (baseStructure.features || [])
-        .map((feature) => {
-          const canonicalId = normalizeFeatureId(feature.id) || String(feature.id || '').trim().toUpperCase();
-          if (!canonicalId) return null;
-          return { ...feature, id: canonicalId };
-        })
-        .filter((feature): feature is FeatureSpec => Boolean(feature));
+      const normalizedSeedFeatures = normalizeFeatures(params.seedFeatures || []);
+      const normalizedDraftFeatures = normalizeFeatures(baseStructure.features || []);
       const featureSource = normalizedSeedFeatures.length > 0 ? normalizedSeedFeatures : normalizedDraftFeatures;
       blockedFeatureIds = featureSource
         .filter(feature => allowedFeatureIds.size > 0 && !allowedFeatureIds.has(feature.id))

@@ -422,6 +422,7 @@ const TARGETED_DETERMINISTIC_REPAIR_CODES = new Set([
   'out_of_scope_future_leakage',
   'rule_schema_property_coverage_missing',
   'deployment_runtime_contradiction',
+  'section_content_degenerate',
 ]);
 
 function isBroadStructuralRepairCase(quality: PrdQualityReport): boolean {
@@ -967,7 +968,7 @@ function buildFeatureQualityDiagnostics(
     primaryFeatureQualityReason = `Feature substance is too thin across the leading feature set: ${lowSubstantialLeadingIds.length > 0 ? lowSubstantialLeadingIds.join(', ') : snapshot.lowSubstantialFeatureIds.slice(0, 5).join(', ')}.`;
   }
 
-  const qualityFloorIds = Array.from(new Set([
+  const qualityFloorRelevantIds = Array.from(new Set([
     ...snapshot.lowSubstantialFeatureIds,
     ...snapshot.collapsedNameFeatureIds,
     ...snapshot.placeholderPurposeFeatureIds,
@@ -990,7 +991,7 @@ function buildFeatureQualityDiagnostics(
               : [];
   const qualityFloorFeatureIds = Array.from(new Set([
     ...featurePriorityWindow,
-    ...qualityFloorIds,
+    ...qualityFloorRelevantIds,
   ])).sort();
 
   return {
@@ -1002,8 +1003,8 @@ function buildFeatureQualityDiagnostics(
       ...snapshot.placeholderAlternateFlowFeatureIds,
     ])).sort(),
     acceptanceBoilerplateFeatureIds: snapshot.repeatedAcceptanceFeatureIds,
-    // TODO(NEX-ISSUE-2026-03-11-01): Decide whether `qualityFloorIds` should remain the
-    // broader "relevant/inspected" bucket for `featureQualityFloorFeatureIds` or be renamed.
+    // `featureQualityFloorFeatureIds` records the inspected/relevant floor scope,
+    // while `featureQualityFloorFailedFeatureIds` stays limited to the tripping IDs.
     featureQualityFloorFeatureIds: qualityFloorFeatureIds,
     featureQualityFloorFailedFeatureIds: qualityFloorFailedFeatureIds,
     featureQualityFloorPassed,
@@ -1312,6 +1313,18 @@ function toDeterministicContentIssues(
       pushIssue({
         code: issue.code,
         sectionKey: 'deployment',
+        message: issue.message,
+        severity: 'error',
+        suggestedAction: 'rewrite',
+      });
+      continue;
+    }
+
+    if (issue.code === 'section_content_degenerate') {
+      const sectionKey = sectionKeyFromPath || 'outOfScope';
+      pushIssue({
+        code: issue.code,
+        sectionKey,
         message: issue.message,
         severity: 'error',
         suggestedAction: 'rewrite',

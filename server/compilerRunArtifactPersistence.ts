@@ -10,6 +10,7 @@ import path from 'path';
 import type { PrdQualityReport } from './prdCompiler';
 import type { PRDStructure } from './prdStructure';
 import type { CompilerRunDiagnostics, PrdFinalizationStage, PrdQualityStatus } from './prdRunQuality';
+import { logger } from './logger';
 
 export interface PersistCompilerRunArtifactInput {
   baseDir: string;
@@ -79,14 +80,49 @@ export async function persistCompilerRunArtifact(
   let serialized: string;
   try {
     serialized = JSON.stringify(payload, null, 2) + '\n';
-  } catch {
+  } catch (error) {
+    logger.error('Compiler run artifact payload serialization failed', {
+      workflow: input.workflow,
+      routeKey: input.routeKey,
+      error,
+    });
     // Fallback: stageData weglassen (haeufigste Quelle fuer zirkulaere Referenzen)
     const safePayload = { ...payload, stageData: { _serializationFailed: true } };
-    serialized = JSON.stringify(safePayload, null, 2) + '\n';
+    try {
+      serialized = JSON.stringify(safePayload, null, 2) + '\n';
+    } catch (safeError) {
+      logger.error('Compiler run artifact safe payload serialization failed', {
+        workflow: input.workflow,
+        routeKey: input.routeKey,
+        error: safeError,
+      });
+      serialized = JSON.stringify({
+        timestamp,
+        workflow: input.workflow,
+        routeKey: input.routeKey,
+        qualityStatus: input.qualityStatus,
+        finalizationStage: input.finalizationStage,
+        _serializationFailed: true,
+      }, null, 2) + '\n';
+    }
   }
 
-  await fs.promises.writeFile(timestampedArtifactPath, serialized, 'utf8');
-  await fs.promises.writeFile(latestArtifactPath, serialized, 'utf8');
+  try {
+    await fs.promises.writeFile(timestampedArtifactPath, serialized, 'utf8');
+  } catch (writeError) {
+    logger.error('Compiler run artifact timestamped write failed', {
+      path: timestampedArtifactPath,
+      error: writeError,
+    });
+  }
+  try {
+    await fs.promises.writeFile(latestArtifactPath, serialized, 'utf8');
+  } catch (writeError) {
+    logger.error('Compiler run artifact latest write failed', {
+      path: latestArtifactPath,
+      error: writeError,
+    });
+  }
 
   return {
     reportDir,

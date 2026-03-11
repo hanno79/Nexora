@@ -72,7 +72,8 @@ export class ClientDisconnectError extends Error {
 
   constructor(message = 'Provider request aborted by caller') {
     super(message);
-    this.name = 'AbortError';
+    Object.setPrototypeOf(this, ClientDisconnectError.prototype);
+    this.name = 'ClientDisconnectError';
   }
 }
 
