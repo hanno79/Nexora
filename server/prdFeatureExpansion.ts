@@ -43,9 +43,35 @@ function isStructurallyComplete(assembled: string, draftContent: string): boolea
   const missingHeadings = draftHeadings.filter(h => !assembledSet.has(h));
 
   // Erlaube maximal 20% fehlende Überschriften (für optionale/gemergte Abschnitte)
-  // Mindestens 1 erlaubte Abweichung für kleine Dokumente
-  const threshold = Math.max(1, Math.ceil(draftHeadings.length * 0.2));
+  // Mindestens eine Überschrift muss auch bei kleinen Dokumenten erhalten bleiben
+  const threshold = Math.min(
+    Math.max(1, Math.ceil(draftHeadings.length * 0.2)),
+    draftHeadings.length - 1,
+  );
   return missingHeadings.length <= threshold;
+}
+
+function isAbortError(error: any, abortSignal?: AbortSignal): boolean {
+  return Boolean(
+    abortSignal?.aborted
+    || error?.name === 'AbortError'
+    || error?.code === 'ERR_CLIENT_DISCONNECT'
+  );
+}
+
+function toAbortError(error: any, message: string): Error {
+  if (error?.name === 'AbortError' || error?.code === 'ERR_CLIENT_DISCONNECT') {
+    return error;
+  }
+  const abortError: any = new Error(message);
+  abortError.name = 'AbortError';
+  abortError.code = 'ERR_CLIENT_DISCONNECT';
+  return abortError;
+}
+
+function throwIfAborted(abortSignal: AbortSignal | undefined, message: string): void {
+  if (!abortSignal?.aborted) return;
+  throw toAbortError(undefined, message);
 }
 
 export interface FeatureExpansionResult {
@@ -160,6 +186,7 @@ export async function runFeatureExpansionPipeline(params: {
   };
 
   try {
+    throwIfAborted(params.abortSignal, 'Feature expansion aborted before identification.');
     logFn('🧩 Feature Identification Layer: Extracting atomic features...');
     const vision = extractVisionFromContent(draftContent);
     // Extract existing domain context to help feature identification produce more features
@@ -194,10 +221,10 @@ export async function runFeatureExpansionPipeline(params: {
           return { ...feature, id: canonicalId };
         })
         .filter((feature): feature is FeatureSpec => Boolean(feature));
-      blockedFeatureIds = normalizedDraftFeatures
+      const featureSource = normalizedSeedFeatures.length > 0 ? normalizedSeedFeatures : normalizedDraftFeatures;
+      blockedFeatureIds = featureSource
         .filter(feature => allowedFeatureIds.size > 0 && !allowedFeatureIds.has(feature.id))
         .map(feature => `${feature.id}: ${feature.name}`);
-      const featureSource = normalizedSeedFeatures.length > 0 ? normalizedSeedFeatures : normalizedDraftFeatures;
       const eligibleFeatures = featureSource.filter(feature =>
         allowedFeatureIds.size === 0 || allowedFeatureIds.has(feature.id)
       );
@@ -211,9 +238,16 @@ export async function runFeatureExpansionPipeline(params: {
         retried: false,
       };
     } else {
-      featureResult = await generateFeatureList(inputText, vision, client, featureContext, params.abortSignal);
+      try {
+        featureResult = await generateFeatureList(inputText, vision, client, featureContext, params.abortSignal);
+      } catch (error: any) {
+        if (isAbortError(error, params.abortSignal)) {
+          throw toAbortError(error, 'Feature identification aborted by caller.');
+        }
+        throw error;
+      }
     }
-    if (params.abortSignal?.aborted) return { ...empty, blockedFeatureIds };
+    throwIfAborted(params.abortSignal, 'Feature identification aborted by caller.');
     const mainTaskCount = featureResult.featureList
       .split('\n')
       .filter((line) => /^\s*Main Task\s*:/i.test(line.trim()))
@@ -229,14 +263,23 @@ export async function runFeatureExpansionPipeline(params: {
 
     try {
       logFn('🏗️ Feature Expansion Engine: Starting modular expansion...');
-      const expansionResult = await expandAllFeatures(
-        inputText,
-        vision,
-        featureResult.featureList,
-        client,
-        language,
-        params.abortSignal,
-      );
+      let expansionResult;
+      try {
+        expansionResult = await expandAllFeatures(
+          inputText,
+          vision,
+          featureResult.featureList,
+          client,
+          language,
+          params.abortSignal,
+        );
+      } catch (error: any) {
+        if (isAbortError(error, params.abortSignal)) {
+          throw toAbortError(error, 'Feature expansion aborted by caller.');
+        }
+        throw error;
+      }
+      throwIfAborted(params.abortSignal, 'Feature expansion aborted by caller.');
       logFn(`🏗️ Feature Expansion complete: ${expansionResult.expandedFeatures.length} features, ${expansionResult.totalTokens} tokens`);
 
       if (expansionResult.expandedFeatures.length === 0) {
@@ -270,10 +313,16 @@ export async function runFeatureExpansionPipeline(params: {
         blockedFeatureIds,
       };
     } catch (expansionError: any) {
+      if (isAbortError(expansionError, params.abortSignal)) {
+        throw toAbortError(expansionError, 'Feature expansion aborted by caller.');
+      }
       warnFn('⚠️ Feature Expansion Engine failed (non-blocking): ' + expansionError.message);
       return { ...empty, featureListModel: featureResult.model, blockedFeatureIds };
     }
   } catch (error: any) {
+    if (isAbortError(error, params.abortSignal)) {
+      throw toAbortError(error, 'Feature expansion aborted by caller.');
+    }
     warnFn('⚠️ Feature Identification Layer failed (non-blocking): ' + error.message);
     return empty;
   }

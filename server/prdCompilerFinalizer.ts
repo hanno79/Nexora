@@ -975,6 +975,23 @@ function buildFeatureQualityDiagnostics(
     ...snapshot.placeholderAlternateFlowFeatureIds,
     ...snapshot.thinAcceptanceCriteriaFeatureIds,
   ])).sort();
+  const qualityFloorFailedFeatureIds = collapsedLeadingIds.length > 0
+    ? collapsedLeadingIds
+    : placeholderPurposeLeadingIds.length >= minLeadThreshold
+      ? placeholderPurposeLeadingIds
+      : emptyMainFlowLeadingIds.length >= minLeadThreshold
+        ? emptyMainFlowLeadingIds
+        : thinAcceptanceLeadingIds.length >= minLeadThreshold
+          ? thinAcceptanceLeadingIds
+          : lowSubstantialLeadingIds.length >= minLeadThreshold
+            ? lowSubstantialLeadingIds
+            : snapshot.lowSubstantialFeatureIds.length >= broadFeatureThreshold
+              ? snapshot.lowSubstantialFeatureIds
+              : [];
+  const qualityFloorFeatureIds = Array.from(new Set([
+    ...featurePriorityWindow,
+    ...qualityFloorIds,
+  ])).sort();
 
   return {
     collapsedFeatureNameIds: snapshot.collapsedNameFeatureIds,
@@ -985,9 +1002,10 @@ function buildFeatureQualityDiagnostics(
       ...snapshot.placeholderAlternateFlowFeatureIds,
     ])).sort(),
     acceptanceBoilerplateFeatureIds: snapshot.repeatedAcceptanceFeatureIds,
-    // TODO: differentiate these if "attempted" vs "failed" semantics are needed
-    featureQualityFloorFeatureIds: qualityFloorIds,
-    featureQualityFloorFailedFeatureIds: qualityFloorIds,
+    // TODO(NEX-ISSUE-2026-03-11-01): Decide whether `qualityFloorIds` should remain the
+    // broader "relevant/inspected" bucket for `featureQualityFloorFeatureIds` or be renamed.
+    featureQualityFloorFeatureIds: qualityFloorFeatureIds,
+    featureQualityFloorFailedFeatureIds: qualityFloorFailedFeatureIds,
     featureQualityFloorPassed,
     primaryFeatureQualityReason,
     emptyMainFlowFeatureIds: snapshot.dummyMainFlowFeatureIds,
@@ -1417,6 +1435,19 @@ function determineRepairGapReason(params: {
   }
 
   return 'same_issues_persisted';
+}
+
+const ENRICHMENT_ONLY_FIELDS: ReadonlySet<string> = new Set([
+  'uiImpact', 'trigger', 'alternateFlows', 'preconditions', 'postconditions',
+]);
+
+function areAllIssuesEnrichmentOnly(issues: SemanticBlockingIssue[]): boolean {
+  return issues.length > 0 && issues.every(issue => {
+    if (issue.code !== 'feature_section_semantic_mismatch') return false;
+    if (!issue.sectionKey?.startsWith('feature:')) return false;
+    if (!issue.targetFields?.length) return false;
+    return issue.targetFields.every(field => ENRICHMENT_ONLY_FIELDS.has(field));
+  });
 }
 
 function hasSubstantiveCandidateImprovement(
@@ -2301,6 +2332,57 @@ export async function finalizeWithCompilerGates(
     }
 
     if (verification.verdict === 'fail' && verification.blockingIssues.length > 0) {
+      // Wenn alle finalen Issues nur Enrichment-Felder betreffen (z.B. fehlende
+      // uiImpact/trigger), den Candidate durchlassen statt zu blockieren.
+      if (areAllIssuesEnrichmentOnly(verification.blockingIssues)) {
+        const displayedDegraded = alignDisplayedCandidate(bestSubstantiveCurrent, bestSubstantiveCandidateSource);
+        return {
+          content: displayedDegraded.evaluation.compiled.content,
+          structure: displayedDegraded.evaluation.compiled.structure,
+          quality: withSyntheticQualityIssue(displayedDegraded.evaluation.compiled.quality, {
+            code: 'semantic_verifier_enrichment_only',
+            message: `Verifier reported only enrichment gaps (${verification.blockingIssues.map(i => i.sectionKey).join(', ')}). Accepting as degraded.`,
+            severity: 'warning',
+          }),
+          qualityScore: bestScore,
+          repairAttempts,
+          reviewerAttempts,
+          contentReview,
+          contentRefined,
+          semanticVerification: verification,
+          semanticVerificationHistory,
+          semanticRepairApplied,
+          semanticRepairAttempted,
+          semanticRepairIssueCodes,
+          semanticRepairSectionKeys,
+          semanticRepairTruncated,
+          initialSemanticBlockingIssues,
+          postRepairSemanticBlockingIssues,
+          finalSemanticBlockingIssues,
+          repairGapReason,
+          repairCycleCount,
+          primaryCapabilityAnchors: displayedDegraded.evaluation.compiled.quality.primaryCapabilityAnchors,
+          featurePriorityWindow: displayedDegraded.evaluation.compiled.quality.featurePriorityWindow,
+          coreFeatureIds: displayedDegraded.evaluation.compiled.quality.coreFeatureIds,
+          supportFeatureIds: displayedDegraded.evaluation.compiled.quality.supportFeatureIds,
+          canonicalFeatureIds: displayedDegraded.evaluation.compiled.quality.canonicalFeatureIds || canonicalFeatureIds,
+          timelineMismatchedFeatureIds: displayedDegraded.evaluation.compiled.quality.timelineMismatchedFeatureIds || timelineMismatchedFeatureIds,
+          timelineRewrittenFromFeatureMap,
+          timelineRewriteAppliedLines,
+          compilerRepairTruncationCount,
+          compilerRepairFinishReasons,
+          repairRejected,
+          repairRejectedReason,
+          repairDegradationSignals,
+          degradedCandidateAvailable: !!displayedDegraded.evaluation.compiled.content,
+          degradedCandidateSource: bestSubstantiveCandidateSource,
+          displayedCandidateSource: displayedDegraded.displayedCandidateSource,
+          diagnosticsAlignedWithDisplayedCandidate: displayedDegraded.diagnosticsAlignedWithDisplayedCandidate,
+          semanticRepairChangedSections,
+          semanticRepairStructuralChange,
+          ...displayedDegraded.evaluation.featureQualityDiagnostics,
+        };
+      }
       const displayedFailure = alignDisplayedCandidate(bestSubstantiveCurrent, bestSubstantiveCandidateSource);
       throw new PrdCompilerQualityError(
         'PRD compiler quality gate failed after semantic verification.',

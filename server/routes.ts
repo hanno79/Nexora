@@ -895,9 +895,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           try {
             const existingPrd = await storage.getPrd(editablePrdId);
             if (!existingPrd) return;
-            const iterationLog = assessed.qualityStatus === 'passed'
-              ? existingPrd.iterationLog || null
-              : mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, assessed.qualityStatus, assessed.compilerDiagnostics);
+            const iterationLog = mergeDiagnosticsIntoIterationLog(existingPrd.iterationLog, assessed.qualityStatus, assessed.compilerDiagnostics);
             await storage.persistPrdRunFinalization({
               prdId: editablePrdId,
               userId,

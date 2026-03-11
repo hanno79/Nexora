@@ -67,6 +67,15 @@ export interface AIResponseWithFallback extends AIResponse {
   fallbackModel?: string;
 }
 
+export class ClientDisconnectError extends Error {
+  readonly code = 'ERR_CLIENT_DISCONNECT';
+
+  constructor(message = 'Provider request aborted by caller') {
+    super(message);
+    this.name = 'AbortError';
+  }
+}
+
 export abstract class BaseAIProvider {
   protected apiKey: string;
   protected config: ProviderConfig;
@@ -116,12 +125,12 @@ export abstract class BaseAIProvider {
       callerAborted = true;
       controller.abort(abortSignal?.reason);
     };
+    if (abortSignal?.aborted) {
+      abortFromCaller();
+      throw new ClientDisconnectError();
+    }
     if (abortSignal) {
-      if (abortSignal.aborted) {
-        abortFromCaller();
-      } else {
-        abortSignal.addEventListener('abort', abortFromCaller, { once: true });
-      }
+      abortSignal.addEventListener('abort', abortFromCaller, { once: true });
     }
     const timeout = setTimeout(() => {
       timedOut = true;
@@ -132,10 +141,7 @@ export abstract class BaseAIProvider {
     } catch (error: any) {
       if (error?.name === 'AbortError') {
         if (callerAborted || abortSignal?.aborted) {
-          const abortError: any = new Error('Provider request aborted by caller');
-          abortError.name = 'AbortError';
-          abortError.code = 'ERR_CLIENT_DISCONNECT';
-          throw abortError;
+          throw new ClientDisconnectError();
         }
         if (timedOut) {
           throw new Error(`Provider request timed out after ${ms}ms`);

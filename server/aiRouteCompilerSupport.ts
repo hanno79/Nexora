@@ -95,5 +95,8 @@ export async function persistCompilerRunArtifactBestEffort(params: {
       routeKey: params.routeKey,
       error,
     });
+    console.error(
+      `[COMPILER-ARTIFACT-FAIL] ${params.workflow}/${params.routeKey}: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }

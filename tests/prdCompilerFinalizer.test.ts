@@ -1575,7 +1575,7 @@ describe('prdCompilerFinalizer', () => {
     expect(qualityError.placeholderFeatureIds).toEqual(expect.arrayContaining(['F-01']));
     expect(qualityError.acceptanceBoilerplateFeatureIds).toEqual([]);
     expect(qualityError.featureQualityFloorFeatureIds).toEqual(expect.arrayContaining(['F-01']));
-    expect(qualityError.featureQualityFloorFailedFeatureIds).toEqual(expect.arrayContaining(['F-01']));
+    expect(qualityError.featureQualityFloorFailedFeatureIds).toEqual([]);
     expect(qualityError.featureQualityFloorPassed).toBe(true);
     expect(qualityError.primaryFeatureQualityReason).toBeUndefined();
     expect(qualityError.emptyMainFlowFeatureIds).toEqual([]);

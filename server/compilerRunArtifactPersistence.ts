@@ -76,7 +76,14 @@ export async function persistCompilerRunArtifact(
 
   const timestampedArtifactPath = path.join(reportDir, `compiler_run_${fileKey}_${timestampToken}.json`);
   const latestArtifactPath = path.join(reportDir, `compiler_run_${fileKey}_latest.json`);
-  const serialized = JSON.stringify(payload, null, 2) + '\n';
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(payload, null, 2) + '\n';
+  } catch {
+    // Fallback: stageData weglassen (haeufigste Quelle fuer zirkulaere Referenzen)
+    const safePayload = { ...payload, stageData: { _serializationFailed: true } };
+    serialized = JSON.stringify(safePayload, null, 2) + '\n';
+  }
 
   await fs.promises.writeFile(timestampedArtifactPath, serialized, 'utf8');
   await fs.promises.writeFile(latestArtifactPath, serialized, 'utf8');

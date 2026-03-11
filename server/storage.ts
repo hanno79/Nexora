@@ -401,7 +401,7 @@ export class DatabaseStorage implements IStorage {
         updateData.iterationLog = input.iterationLog;
       } else if (input.iterationLog === null) {
         updateData.iterationLog = null;
-      } else if (input.compilerDiagnostics && input.qualityStatus !== 'passed') {
+      } else if (input.compilerDiagnostics && input.qualityStatus !== 'cancelled') {
         updateData.iterationLog = mergeDiagnosticsIntoIterationLog(
           currentPrd.iterationLog,
           input.qualityStatus,

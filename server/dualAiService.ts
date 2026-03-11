@@ -2207,6 +2207,22 @@ Your task:
   }
 
 
+  private async writeArtifactAliasAtomically(targetPath: string, serialized: string): Promise<void> {
+    const tempPath = path.join(
+      path.dirname(targetPath),
+      `${path.basename(targetPath)}.${process.pid}.${Date.now()}_${Math.random().toString(36).slice(2, 8)}.tmp`,
+    );
+
+    try {
+      await fs.promises.writeFile(tempPath, serialized, 'utf8');
+      // Same-directory rename keeps the stable alias update atomic for readers.
+      await fs.promises.rename(tempPath, targetPath);
+    } catch (error) {
+      await fs.promises.rm(tempPath, { force: true }).catch(() => undefined);
+      throw error;
+    }
+  }
+
   private async writeIterativeArtifacts(payload: {
     finalContent: string;
     mergedPRD: string;
@@ -2221,40 +2237,43 @@ Your task:
     const issues: string[] = [];
     const repoRoot = process.cwd();
     const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const targets = [
-      path.join(repoRoot, `.tmp_run_response_${suffix}.json`),
-      path.join(repoRoot, `.tmp_run_final_gate_verify_${suffix}.json`),
+    const artifacts = [
+      {
+        timestampedPath: path.join(repoRoot, `.tmp_run_response_${suffix}.json`),
+        latestAliasPath: path.join(repoRoot, '.tmp_run_response.json'),
+      },
+      {
+        timestampedPath: path.join(repoRoot, `.tmp_run_final_gate_verify_${suffix}.json`),
+        latestAliasPath: path.join(repoRoot, '.tmp_run_final_gate_verify.json'),
+      },
     ];
 
-    const preStats = new Map<string, fs.Stats | null>();
+    const serialized = JSON.stringify(payload, null, 2) + '\n';
+
     await Promise.all(
-      targets.map(async (target) => {
-        try {
-          preStats.set(target, await fs.promises.stat(target));
-        } catch {
-          preStats.set(target, null);
-        }
+      artifacts.map(async ({ timestampedPath, latestAliasPath }) => {
+        await fs.promises.writeFile(timestampedPath, serialized, 'utf8');
+        await this.writeArtifactAliasAtomically(latestAliasPath, serialized);
       }),
     );
 
-    const serialized = JSON.stringify(payload, null, 2) + '\n';
-    await Promise.all(targets.map((target) => fs.promises.writeFile(target, serialized, 'utf8')));
-
-    for (const target of targets) {
-      const after = await fs.promises.stat(target);
-      const before = preStats.get(target);
-      if (after.size <= 0) {
-        issues.push(`${path.basename(target)} has zero size`);
-      }
-      if (before && after.mtimeMs <= before.mtimeMs) {
-        issues.push(`${path.basename(target)} mtime did not advance`);
+    const expectedSize = Buffer.byteLength(serialized, 'utf8');
+    for (const { timestampedPath, latestAliasPath } of artifacts) {
+      for (const target of [timestampedPath, latestAliasPath]) {
+        const after = await fs.promises.stat(target);
+        if (after.size !== expectedSize) {
+          issues.push(`${path.basename(target)} size ${after.size} != expected ${expectedSize}`);
+        }
       }
     }
 
     return {
       ok: issues.length === 0,
       issues,
-      files: targets.map(t => path.basename(t)),
+      files: artifacts.flatMap(({ timestampedPath, latestAliasPath }) => [
+        path.basename(timestampedPath),
+        path.basename(latestAliasPath),
+      ]),
     };
   }
 

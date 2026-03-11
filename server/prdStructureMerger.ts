@@ -39,6 +39,11 @@ const PLACEHOLDER_PATTERNS = [
   /to be filled by section repair/i,
 ];
 
+const MIN_WORD_LENGTH = 3;
+const ECHO_OVERLAP_THRESHOLD = 0.8;
+const SHORT_TEXT_MAX_LENGTH = 60;
+const ECHO_PENALTY_SCORE = 120;
+
 /**
  * Merge expanded feature specs into an existing PRDStructure.
  * For each expanded feature:
@@ -124,7 +129,7 @@ function calculateEchoPenalty(text: string, featureName: string): number {
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, ' ')
       .split(/\s+/)
-      .filter(word => word.length >= 3)
+      .filter(word => word.length >= MIN_WORD_LENGTH)
   );
 
   if (featureNameWords.size === 0) {
@@ -136,12 +141,14 @@ function calculateEchoPenalty(text: string, featureName: string): number {
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, ' ')
       .split(/\s+/)
-      .filter(word => word.length >= 3)
+      .filter(word => word.length >= MIN_WORD_LENGTH)
   );
   const overlap = [...featureNameWords].filter(word => textWords.has(word)).length;
   const echoRatio = overlap / featureNameWords.size;
 
-  return echoRatio > 0.8 && text.length < 60 ? 120 : 0;
+  return echoRatio > ECHO_OVERLAP_THRESHOLD && text.length < SHORT_TEXT_MAX_LENGTH
+    ? ECHO_PENALTY_SCORE
+    : 0;
 }
 
 // ÄNDERUNG 09.03.2026: Merge bevorzugt jetzt inhaltliche Substanz statt
@@ -239,16 +246,21 @@ function mergeFeatureSpecs(existing: FeatureSpec, expanded: FeatureSpec): Featur
 
   const expandedFeatureScore = calculateFeatureSubstanceScore(expanded);
   const existingFeatureScore = calculateFeatureSubstanceScore(existing);
+  const expandedLen = (expanded.rawContent ?? '').length;
+  const existingLen = (existing.rawContent ?? '').length;
 
   if (
     expandedFeatureScore > existingFeatureScore
     || (
       expandedFeatureScore > 0
       && expandedFeatureScore === existingFeatureScore
-      && expanded.rawContent.length > existing.rawContent.length
+      && expandedLen > existingLen
     )
   ) {
-    merged.rawContent = expanded.rawContent;
+    const expandedRawContent = typeof expanded.rawContent === 'string' ? expanded.rawContent : undefined;
+    if (expandedRawContent !== undefined) {
+      merged.rawContent = expandedRawContent;
+    }
   }
 
   return merged;

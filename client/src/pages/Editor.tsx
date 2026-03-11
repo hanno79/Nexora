@@ -433,8 +433,8 @@ export default function Editor() {
     }
 
     if (failedQuality || failedRuntime) {
-      // Content auch bei failed_quality/failed_runtime persistieren,
-      // damit er nach Reload erhalten bleibt (nicht nur im Memory).
+      // Persist content even on failed_quality/failed_runtime
+      // so it remains after reload (not only in memory).
       const patchData: PatchPrdPayload = {
         title,
         description,
@@ -446,6 +446,11 @@ export default function Editor() {
         queryClient.invalidateQueries({ queryKey: prdDetailQueryKey });
         queryClient.invalidateQueries({ queryKey: PRDS_LIST_QUERY_KEY });
       }).catch((error) => {
+        toast({
+          title: t.common.error,
+          description: error.message || t.editor.saveFailed,
+          variant: "destructive",
+        });
         console.error('Failed to save degraded AI content:', error);
       });
 
