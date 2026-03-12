@@ -7,8 +7,11 @@ Beschreibung: Compiler- und Persistenz-Helfer fuer KI-Routen mit Storage-/DB-Kop
 
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { persistCompilerRunArtifact } from './compilerRunArtifactPersistence';
 import { logger } from './logger';
+
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 import { compilePrdDocument } from './prdCompiler';
 import {
   buildCompilerRunDiagnostics,
@@ -71,7 +74,7 @@ export async function persistCompilerRunArtifactBestEffort(params: {
 }) {
   try {
     const written = await persistCompilerRunArtifact({
-      baseDir: process.cwd(),
+      baseDir: PROJECT_ROOT,
       workflow: params.workflow,
       routeKey: params.routeKey,
       qualityStatus: params.qualityStatus,
@@ -102,7 +105,7 @@ export async function persistCompilerRunArtifactBestEffort(params: {
     );
     // Minimales Fehler-Artefakt als letzte Rettung — damit immer eine Datei auf Disk landet
     try {
-      const fallbackDir = path.join(process.cwd(), 'documentation', 'compiler_runs');
+      const fallbackDir = path.join(PROJECT_ROOT, 'documentation', 'compiler_runs');
       await fs.promises.mkdir(fallbackDir, { recursive: true });
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
       const fallbackPath = path.join(fallbackDir, `compiler_run_error_${ts}.json`);
@@ -114,6 +117,7 @@ export async function persistCompilerRunArtifactBestEffort(params: {
         errorMessage: error instanceof Error ? error.message : String(error),
         errorStack: error instanceof Error ? error.stack : undefined,
         cwd: process.cwd(),
+        projectRoot: PROJECT_ROOT,
       }, null, 2) + '\n', 'utf8');
     } catch { /* absolute last resort — nothing more we can do */ }
   }

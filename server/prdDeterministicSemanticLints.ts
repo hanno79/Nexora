@@ -1723,7 +1723,9 @@ function collectDegenerateSectionIssues(
   const issues: DeterministicSemanticIssue[] = [];
 
   for (const { key, label } of DEGENERATE_SECTION_KEYS) {
-    if (isCompilerFilledScope(key, knownFallbackSections)) continue;
+    // Kein Fallback-Skip: Degenerate Content muss immer erkannt werden,
+    // auch wenn die Section vom Compiler eingefuegt wurde — spaetere
+    // Pipeline-Schritte (Repair, Regeneration) koennen Fallbacks degradieren.
     const text = String(structure[key] || '').trim();
     if (!text) continue;
 
