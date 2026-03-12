@@ -609,6 +609,7 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
                   <SelectItem value="development">{t.settings.tierDevelopment}</SelectItem>
                   <SelectItem value="production">{t.settings.tierProduction}</SelectItem>
                   <SelectItem value="premium">{t.settings.tierPremium}</SelectItem>
+                  <SelectItem value="abacus">{t.settings.tierAbacus}</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">{t.settings.qualityTierDesc}</p>

@@ -26,6 +26,7 @@ import {
 } from './modelFamily';
 import {
   MODEL_TIERS,
+  TIER_PROVIDER_HINT,
   getDefaultFallbackChainForTier,
   sanitizeConfiguredModel,
   type ModelConfig,
@@ -249,6 +250,8 @@ export async function executeOpenRouterFallback(
     recordFailureForRun,
   } = params;
 
+  const tierProviderHint = TIER_PROVIDER_HINT[tier];
+
   const errors: string[] = [];
   const seen = new Set<string>();
   const modelsToTry: FallbackCandidate[] = [];
@@ -289,7 +292,7 @@ export async function executeOpenRouterFallback(
       return;
     }
 
-    const modelProvider = getBestDirectProvider(sanitized);
+    const modelProvider = getBestDirectProvider(sanitized, tierProviderHint);
     if (modelProvider && modelProvider !== 'openrouter') {
       const providerCd = getProviderCooldownStatus(modelProvider);
       if (providerCd) {
@@ -432,7 +435,7 @@ export async function executeOpenRouterFallback(
       console.warn(`${attemptModel} failed, trying next model...`, errorMessage);
 
       const errMsg = errorMessage.toLowerCase();
-      const failedIsOpenRouterOnly = getBestDirectProvider(attemptModel) === null;
+      const failedIsOpenRouterOnly = getBestDirectProvider(attemptModel, tierProviderHint) === null;
       const nextSliceStart = typeof currentIndex === 'number' && currentIndex >= 0
         ? currentIndex + 1
         : 0;
@@ -445,39 +448,57 @@ export async function executeOpenRouterFallback(
         )
       ) {
         for (const remaining of modelsToTry.slice(nextSliceStart)) {
-          if (getBestDirectProvider(remaining.model) === null) {
+          if (getBestDirectProvider(remaining.model, tierProviderHint) === null) {
             setGlobalCooldown(remaining.model, 5 * 60 * 1000, 'openrouter auth failure');
             console.warn(`[Auth-Skip] Cooldown set for ${remaining.model} (OpenRouter auth failure)`);
           }
         }
       }
 
-      const failedProvider = getBestDirectProvider(attemptModel);
+      const failedProvider = getBestDirectProvider(attemptModel, tierProviderHint);
       if (failedProvider && failedProvider !== 'openrouter') {
-        if (
-          errMsg.includes('timed out') ||
-          errMsg.includes('fetch failed') ||
+        // Abacus ist ein Meta-Router — verschiedene Model-IDs nutzen verschiedene Backends.
+        // Provider-weite Rate-Limit-Cooldowns wuerden unbeteiligte Modelle faelschlich blockieren.
+        const isMetaRouterProvider = failedProvider === 'abacus';
+
+        const isHardNetworkError =
           errMsg.includes('econnrefused') ||
           errMsg.includes('enotfound') ||
-          errMsg.includes('socket hang up')
-        ) {
-          setProviderCooldown(failedProvider, 5 * 60 * 1000, `timeout/connection error on ${attemptModel}`);
-          for (const remaining of modelsToTry.slice(nextSliceStart)) {
-            const remainingProvider = getBestDirectProvider(remaining.model);
-            if (remainingProvider === failedProvider) {
-              setGlobalCooldown(remaining.model, 5 * 60 * 1000, `provider ${failedProvider} down`);
-              console.warn(`[Circuit-Breaker] Skipping ${remaining.model} (provider ${failedProvider} down)`);
+          errMsg.includes('socket hang up');
+        const isSoftTimeout =
+          errMsg.includes('timed out') ||
+          errMsg.includes('fetch failed');
+
+        if (isHardNetworkError || isSoftTimeout) {
+          if (isMetaRouterProvider && isSoftTimeout && !isHardNetworkError) {
+            // Meta-Router: Timeouts sind modellspezifisch (Backend-Modell war langsam),
+            // kein Provider-weiter Cooldown — andere Model-IDs nutzen andere Backends
+            console.warn(`[Timeout] ${attemptModel} timed out on meta-router ${failedProvider} — model-only cooldown`);
+          } else {
+            // Echte Netzwerk-Fehler oder Timeouts auf normalen Providern: Provider-weiter Cooldown
+            setProviderCooldown(failedProvider, 5 * 60 * 1000, `timeout/connection error on ${attemptModel}`);
+            for (const remaining of modelsToTry.slice(nextSliceStart)) {
+              const remainingProvider = getBestDirectProvider(remaining.model, tierProviderHint);
+              if (remainingProvider === failedProvider) {
+                setGlobalCooldown(remaining.model, 5 * 60 * 1000, `provider ${failedProvider} down`);
+                console.warn(`[Circuit-Breaker] Skipping ${remaining.model} (provider ${failedProvider} down)`);
+              }
             }
           }
         }
 
         if (errMsg.includes('rate limit') || errMsg.includes('429')) {
-          setProviderCooldown(failedProvider, 2 * 60 * 1000, `rate limited on ${attemptModel}`);
-          for (const remaining of modelsToTry.slice(nextSliceStart)) {
-            const remainingProvider = getBestDirectProvider(remaining.model);
-            if (remainingProvider === failedProvider) {
-              setGlobalCooldown(remaining.model, 2 * 60 * 1000, `provider ${failedProvider} rate limited`);
-              console.warn(`[Rate-Limit-CB] Skipping ${remaining.model} (provider ${failedProvider} rate limited)`);
+          if (isMetaRouterProvider) {
+            // Meta-Router: Nur das spezifische Modell kuehl stellen, nicht den gesamten Provider
+            console.warn(`[Rate-Limit] ${attemptModel} rate limited on meta-router ${failedProvider} — model-only cooldown`);
+          } else {
+            setProviderCooldown(failedProvider, 2 * 60 * 1000, `rate limited on ${attemptModel}`);
+            for (const remaining of modelsToTry.slice(nextSliceStart)) {
+              const remainingProvider = getBestDirectProvider(remaining.model, tierProviderHint);
+              if (remainingProvider === failedProvider) {
+                setGlobalCooldown(remaining.model, 2 * 60 * 1000, `provider ${failedProvider} rate limited`);
+                console.warn(`[Rate-Limit-CB] Skipping ${remaining.model} (provider ${failedProvider} rate limited)`);
+              }
             }
           }
         }
@@ -497,7 +518,7 @@ export async function executeOpenRouterFallback(
       continue;
     }
 
-    const modelProvider = getBestDirectProvider(attemptModel);
+    const modelProvider = getBestDirectProvider(attemptModel, tierProviderHint);
     if (modelProvider && modelProvider !== 'openrouter') {
       const providerCd = getProviderCooldownStatus(modelProvider);
       if (providerCd) {
@@ -524,7 +545,7 @@ export async function executeOpenRouterFallback(
 
   for (const { model: attemptModel, isPrimary, reason } of cooldownOverrideCandidates) {
     throwIfAborted();
-    const modelProvider = getBestDirectProvider(attemptModel);
+    const modelProvider = getBestDirectProvider(attemptModel, tierProviderHint);
     if (modelProvider && modelProvider !== 'openrouter') {
       const providerCd = getProviderCooldownStatus(modelProvider);
       if (providerCd) {

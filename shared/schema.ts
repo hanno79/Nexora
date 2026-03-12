@@ -56,22 +56,26 @@ const tierModelSetSchema = z.object({
   fallbackChain: z.array(z.string()).optional(),
 });
 
+export const aiTierSchema = z.enum(['development', 'production', 'premium', 'abacus']);
+
 export const aiPreferencesSchema = z.object({
   generatorModel: z.string().optional(),
   reviewerModel: z.string().optional(),
   verifierModel: z.string().optional(),
   fallbackModel: z.string().optional(),
   fallbackChain: z.array(z.string()).optional(),
-  tier: z.enum(['development', 'production', 'premium']).optional(),
+  tier: aiTierSchema.optional(),
   tierModels: z.object({
     development: tierModelSetSchema.optional(),
     production: tierModelSetSchema.optional(),
     premium: tierModelSetSchema.optional(),
+    abacus: tierModelSetSchema.optional(),
   }).optional(),
   tierDefaults: z.object({
     development: tierDefaultsSchema.optional(),
     production: tierDefaultsSchema.optional(),
     premium: tierDefaultsSchema.optional(),
+    abacus: tierDefaultsSchema.optional(),
   }).optional(),
   iterativeMode: z.boolean().optional(),
   iterationCount: z.number().min(2).max(5).optional().default(3),
@@ -236,7 +240,7 @@ export const aiUsage = pgTable("ai_usage", {
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
   modelType: varchar("model_type").notNull(), // 'generator' | 'reviewer'
   model: varchar("model").notNull(), // Full model name (e.g., 'openai/gpt-4o')
-  tier: varchar("tier").notNull(), // 'development' | 'production' | 'premium'
+  tier: varchar("tier").notNull(), // 'development' | 'production' | 'premium' | 'abacus'
   inputTokens: integer("input_tokens").notNull().default(0),
   outputTokens: integer("output_tokens").notNull().default(0),
   totalCost: numeric("total_cost", { precision: 12, scale: 6 }).notNull().default('0'),
@@ -251,7 +255,7 @@ export type AiUsage = typeof aiUsage.$inferSelect;
 
 export const insertAiUsageSchema = createInsertSchema(aiUsage, {
   modelType: z.enum(['generator', 'reviewer', 'verifier']),
-  tier: z.enum(['development', 'production', 'premium']),
+  tier: aiTierSchema,
   inputTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
   totalCost: z.string(),

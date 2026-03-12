@@ -9,7 +9,7 @@
  * ÄNDERUNG 04.03.2026: Verbesserte Fehlerbehandlung hinzugefuegt
  */
 
-import { BaseAIProvider, type AIModel, type CallOptions, type AIResponse, type ProviderConfig, PROVIDER_METADATA } from './base';
+import { BaseAIProvider, sanitizeProviderErrorText, type AIModel, type CallOptions, type AIResponse, type ProviderConfig, PROVIDER_METADATA } from './base';
 
 // ÄNDERUNG 03.03.2026: Cerebras Provider Integration
 
@@ -138,7 +138,8 @@ export class CerebrasProvider extends BaseAIProvider {
 
       if (!fetchResponse.ok) {
         const errorText = await fetchResponse.text();
-        let errorMessage = `Cerebras API Error ${fetchResponse.status}: ${errorText}`;
+        const sanitized = sanitizeProviderErrorText(fetchResponse.status, errorText);
+        let errorMessage = `Cerebras API Error ${fetchResponse.status}: ${sanitized}`;
 
         // Spezifische Fehlermeldungen fuer haeufige Fehler
         if (fetchResponse.status === 401) {

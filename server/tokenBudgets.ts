@@ -58,7 +58,7 @@ export const ITERATIVE_CLARIFYING_Q = budget('ITERATIVE_CLARIFYING_Q', 1500);
 export const ITERATIVE_STRUCTURED_DELTA = budget('ITERATIVE_STRUCTURED_DELTA', 1200);
 
 // === Compiler & Repair ===
-export const REPAIR_PASS = budget('REPAIR_PASS', 12000);
+export const REPAIR_PASS = budget('REPAIR_PASS', 16000);
 
 // === Content Review & Refinement (post-compiler) ===
 export const CONTENT_REVIEW_REFINE = budget('CONTENT_REVIEW_REFINE', 12000);

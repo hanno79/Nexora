@@ -67,6 +67,19 @@ export interface AIResponseWithFallback extends AIResponse {
   fallbackModel?: string;
 }
 
+/**
+ * Erkennt HTML-Fehlerseiten (z.B. Cloudflare 524) und kuerzt sie auf eine lesbare Zeile.
+ * Gibt den Original-Text zurueck wenn kein HTML erkannt wird.
+ */
+export function sanitizeProviderErrorText(status: number, text: string): string {
+  const trimmed = text.trimStart();
+  if (trimmed.startsWith('<') || trimmed.includes('<!DOCTYPE')) {
+    const titleMatch = text.match(/<title[^>]*>(.*?)<\/title>/i);
+    return titleMatch?.[1]?.trim() || `HTTP ${status}`;
+  }
+  return text;
+}
+
 export class ClientDisconnectError extends Error {
   readonly code = 'ERR_CLIENT_DISCONNECT';
 

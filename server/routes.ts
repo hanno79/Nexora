@@ -1425,9 +1425,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               return;
             }
 
-            const iterationLog = assessed.qualityStatus === 'passed'
-              ? (result.iterationLog || existingPrd.iterationLog || null)
-              : mergeDiagnosticsIntoIterationLog(result.iterationLog || existingPrd.iterationLog, assessed.qualityStatus, assessed.compilerDiagnostics);
+            const iterationLog = mergeDiagnosticsIntoIterationLog(
+              result.iterationLog || existingPrd.iterationLog,
+              assessed.qualityStatus,
+              assessed.compilerDiagnostics
+            );
 
             await storage.persistPrdRunFinalization({
               prdId: editablePrdId!,
@@ -1442,7 +1444,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             logger.info("Iterative finalization persisted", {
               prdId: editablePrdId,
               qualityStatus: assessed.qualityStatus,
-              contentLength: assessed.qualityStatus === 'passed' ? contentToPersist.length : 0,
+              contentLength: (contentToPersist || '').length,
+              finalContentLength: (result.finalContent || '').length,
             });
           } catch (saveError) {
             logger.error("Iterative finalization persistence failed", { error: saveError });
@@ -1453,13 +1456,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // AI usage logging is best-effort and must never block response completion.
       (async () => {
         try {
+          // Tier aus User-Preferences auflösen statt hardcodiert 'development'
+          const [userRow] = await db
+            .select({ aiPreferences: users.aiPreferences })
+            .from(users)
+            .where(eq(users.id, userId))
+            .limit(1);
+          const userTier = resolveModelTier((userRow?.aiPreferences as any)?.tier);
+
           for (const iteration of result.iterations) {
             const splitTokens = splitTokenCount(iteration.tokensUsed);
             await logAiUsage(
               userId,
               'generator',
               result.modelsUsed[0] || 'unknown',
-              'development',
+              userTier,
               {
                 prompt_tokens: 0,
                 completion_tokens: splitTokens.first,
@@ -1472,7 +1483,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               userId,
               'reviewer',
               result.modelsUsed[1] || result.modelsUsed[0] || 'unknown',
-              'development',
+              userTier,
               {
                 prompt_tokens: 0,
                 completion_tokens: splitTokens.second,

@@ -27,6 +27,15 @@ export function normalizeModelFamily(value: string | null | undefined): string |
   return normalized.replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || undefined;
 }
 
+// Meta-Router-Modelle (z.B. route-llm) waehlen intern verschiedene Backend-Modelle.
+// Sie bilden keine echte "Familie" und sollten nicht von der Independence-Pruefung blockiert werden.
+const META_ROUTER_FAMILY = 'meta-router';
+const META_ROUTER_SLUGS = new Set(['route-llm']);
+
+export function isMetaRouterFamily(family: string | null | undefined): boolean {
+  return family === META_ROUTER_FAMILY;
+}
+
 export function getModelFamily(model: string | null | undefined): string | undefined {
   const normalized = normalizeModelIdentifier(model);
   if (!normalized) return undefined;
@@ -34,6 +43,10 @@ export function getModelFamily(model: string | null | undefined): string | undef
   const slug = normalized.includes('/')
     ? normalized.split('/').slice(-1)[0]
     : normalized;
+
+  // Meta-Router-Modelle erhalten eine spezielle Familie
+  if (META_ROUTER_SLUGS.has(slug)) return META_ROUTER_FAMILY;
+
   const tokens = slug.split(/[-_.]+/).filter(Boolean);
   if (tokens.length === 0) return undefined;
 
@@ -83,7 +96,7 @@ export function buildAvoidedModelFamilies(models: Array<string | null | undefine
   return Array.from(new Set(
     models
       .map(entry => getModelFamily(entry))
-      .filter((entry): entry is string => Boolean(entry))
+      .filter((entry): entry is string => Boolean(entry) && !isMetaRouterFamily(entry))
   ));
 }
 

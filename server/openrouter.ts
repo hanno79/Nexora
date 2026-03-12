@@ -40,6 +40,7 @@ import {
   MODEL_TIERS,
   resolveModelTier,
   sanitizeConfiguredModel,
+  TIER_PROVIDER_HINT,
   type ModelConfig,
   type ModelTier,
 } from './openrouterModelConfig';
@@ -476,7 +477,8 @@ class OpenRouterClient {
    * um Modelle korrekt an den richtigen Provider zu routen.
    */
   private detectProviderForModel(modelName: string): AIProvider | null {
-    const provider = getBestDirectProvider(modelName);
+    const preferredProvider = TIER_PROVIDER_HINT[this.tier];
+    const provider = getBestDirectProvider(modelName, preferredProvider);
 
     if (provider) {
       console.log(`[OpenRouterClient] Registry matched ${modelName} to provider: ${provider}`);

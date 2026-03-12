@@ -27,7 +27,7 @@ describe('tokenBudgets', () => {
     expect(budgets.ITERATIVE_ANSWERER_RETRY).toBe(7000);
     expect(budgets.ITERATIVE_CLARIFYING_Q).toBe(1500);
     expect(budgets.ITERATIVE_STRUCTURED_DELTA).toBe(1200);
-    expect(budgets.REPAIR_PASS).toBe(12000);
+    expect(budgets.REPAIR_PASS).toBe(16000);
     expect(budgets.SECTION_REGENERATION).toBe(2000);
     expect(budgets.FEATURE_LIST_GENERATION).toBe(4000);
     expect(budgets.FEATURE_EXPANSION).toBe(4200);

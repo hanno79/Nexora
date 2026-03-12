@@ -9,7 +9,7 @@
  * ÄNDERUNG 04.03.2026: Model-Liste mit tatsaechlich verfuegbaren Modellen aktualisiert
  */
 
-import { BaseAIProvider, type AIModel, type CallOptions, type AIResponse, type ProviderConfig, PROVIDER_METADATA } from './base';
+import { BaseAIProvider, sanitizeProviderErrorText, type AIModel, type CallOptions, type AIResponse, type ProviderConfig, PROVIDER_METADATA } from './base';
 
 // ÄNDERUNG 04.03.2026: NVIDIA Provider Integration
 
@@ -259,7 +259,8 @@ export class NvidiaProvider extends BaseAIProvider {
 
       if (!fetchResponse.ok) {
         const errorText = await fetchResponse.text();
-        let errorMessage = `NVIDIA API Error ${fetchResponse.status}: ${errorText}`;
+        const sanitized = sanitizeProviderErrorText(fetchResponse.status, errorText);
+        let errorMessage = `NVIDIA API Error ${fetchResponse.status}: ${sanitized}`;
 
         // Spezifische Fehlermeldungen fuer haeufige Fehler
         if (fetchResponse.status === 401) {

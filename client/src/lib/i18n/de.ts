@@ -192,6 +192,7 @@ export const de: Translations = {
     tierDevelopment: "Entwicklung (Kostenlos/Günstig)",
     tierProduction: "Produktion (Ausgewogen)",
     tierPremium: "Premium (Höchste Qualität)",
+    tierAbacus: "Abacus AI (RouteLLM-Guthaben)",
     iterativeWorkflow: "Iterativer Workflow-Modus",
     iterativeWorkflowDesc: "KI #1 stellt Fragen, KI #2 antwortet mit Best Practices",
     iterationCountLabel: "Anzahl Iterationen",

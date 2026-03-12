@@ -190,6 +190,7 @@ export const en = {
     tierDevelopment: "Development (Free/Low-cost)",
     tierProduction: "Production (Balanced)",
     tierPremium: "Premium (Highest Quality)",
+    tierAbacus: "Abacus AI (RouteLLM Credits)",
     iterativeWorkflow: "Iterative Workflow Mode",
     iterativeWorkflowDesc: "AI #1 asks questions, AI #2 answers with best practices",
     iterationCountLabel: "Iteration Count",

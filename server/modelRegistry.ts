@@ -124,10 +124,21 @@ export function resolveProvidersForModel(modelId: string): AIProvider[] {
 /**
  * Gibt den besten Direct-Provider fuer ein Modell zurueck, oder null fuer OpenRouter.
  * Ersatz fuer die alte detectProviderForModel() Heuristik.
+ *
+ * @param preferredProvider - Optionaler Hinweis welcher Provider bevorzugt werden soll
+ *   (z.B. aus dem aktiven Tier). Wird nur verwendet wenn das Modell tatsaechlich
+ *   bei diesem Provider registriert ist.
  */
-export function getBestDirectProvider(modelId: string): AIProvider | null {
+export function getBestDirectProvider(modelId: string, preferredProvider?: AIProvider): AIProvider | null {
   const providers = resolveProvidersForModel(modelId);
-  return providers.length > 0 ? providers[0] : null;
+  if (providers.length === 0) return null;
+
+  // Bevorzugten Provider vorziehen wenn er in der Liste ist
+  if (preferredProvider && providers.includes(preferredProvider)) {
+    return preferredProvider;
+  }
+
+  return providers[0];
 }
 
 /**

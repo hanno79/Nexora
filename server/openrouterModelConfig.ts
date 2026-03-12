@@ -8,6 +8,10 @@ Beschreibung: Zentrale Tier-, Default- und Fallback-Konfiguration fuer OpenRoute
 // ÄNDERUNG 08.03.2026: Tier-/Fallback-Konfiguration aus `server/openrouter.ts` extrahiert,
 // um die Datei konservativ zu verkleinern und die API ueber Re-Exports stabil zu halten.
 
+import type { AIProvider } from './providers/base';
+
+export type { AIProvider } from './providers/base';
+
 export interface ModelTier {
   generator: string;
   reviewer: string;
@@ -19,12 +23,16 @@ export interface ModelConfig {
   development: ModelTier;
   production: ModelTier;
   premium: ModelTier;
+  abacus: ModelTier;
 }
 
 export const DEFAULT_SAFE_TIER: keyof ModelConfig = 'development';
 export const DEFAULT_FREE_GENERATOR_MODEL = 'nvidia/nemotron-3-nano-30b-a3b:free';
 export const DEFAULT_FREE_REVIEWER_MODEL = 'arcee-ai/trinity-large-preview:free';
 export const DEFAULT_FREE_FALLBACK_MODEL = 'google/gemma-3-27b-it:free';
+export const TIER_PROVIDER_HINT: Partial<Record<string, AIProvider>> = {
+  abacus: 'abacus',
+};
 
 export const DEFAULT_FREE_FALLBACK_CHAIN: readonly string[] = [
   'google/gemma-3-27b-it:free',
@@ -50,6 +58,14 @@ export const DEFAULT_PREMIUM_FALLBACK_CHAIN: readonly string[] = [
   'meta-llama/llama-3.3-70b-instruct:free',
 ];
 
+export const DEFAULT_ABACUS_FALLBACK_CHAIN: readonly string[] = [
+  'claude-4-5-sonnet',
+  'gpt-5.2',
+  'gemini-2.5-pro',
+  'deepseek-v3.2',
+  'gpt-4.1',
+];
+
 export const DEPRECATED_MODEL_IDS = new Set<string>([
   'deepseek/deepseek-r1-0528:free',
   'deepseek-ai/deepseek-r1',
@@ -61,10 +77,13 @@ export const DEFAULT_FALLBACK_MODEL_BY_TIER: Record<keyof ModelConfig, string> =
   development: DEFAULT_FREE_FALLBACK_MODEL,
   production: 'google/gemini-2.5-flash',
   premium: 'anthropic/claude-sonnet-4',
+  abacus: 'claude-4-5-sonnet',
 };
 
 export function getDefaultFallbackChainForTier(tier: keyof ModelConfig): readonly string[] {
   switch (tier) {
+    case 'abacus':
+      return DEFAULT_ABACUS_FALLBACK_CHAIN;
     case 'premium':
       return DEFAULT_PREMIUM_FALLBACK_CHAIN;
     case 'production':
@@ -103,6 +122,12 @@ export const MODEL_TIERS: ModelConfig = {
     reviewer: 'google/gemini-2.5-pro-preview',
     verifier: 'mistralai/mistral-small-3.1-24b-instruct',
     cost: '~$0.30-1.00 pro PRD',
+  },
+  abacus: {
+    generator: 'route-llm',
+    reviewer: 'route-llm',
+    verifier: 'route-llm',
+    cost: '~$0.05-0.20 pro PRD (Credits)',
   },
 };
 

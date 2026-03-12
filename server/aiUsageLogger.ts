@@ -14,7 +14,7 @@ export async function logAiUsage(
   userId: string,
   modelType: 'generator' | 'reviewer',
   model: string,
-  tier: 'development' | 'production' | 'premium',
+  tier: InsertAiUsage['tier'],
   usage: {
     prompt_tokens?: number;
     completion_tokens?: number;

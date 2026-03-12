@@ -566,8 +566,12 @@ function summarizeFeatureCapability(feature: FeatureSpec): string {
   ].filter(Boolean).join(' ');
 }
 
+function escapeForRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function buildWholeWordPattern(value: string): RegExp {
-  return new RegExp(`\\b${String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+  return new RegExp(`\\b${escapeForRegex(String(value || ''))}\\b`, 'i');
 }
 
 function buildFeatureSemanticClaimText(feature: FeatureSpec): string {
@@ -1716,17 +1720,13 @@ const DEGENERATE_SECTION_KEYS: { key: keyof PRDStructure; label: string }[] = [
   { key: 'timelineMilestones', label: 'Timeline & Milestones' },
 ];
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 const DEGENERATE_SECTION_SELF_REFERENCE_REGEX = new RegExp(
   `\\b(?:${Array.from(new Set(
     DEGENERATE_SECTION_KEYS.flatMap(({ key, label }) => [
       normalizeForMatch(label),
-      normalizeForMatch(String(key).replace(/([a-z])([A-Z])/g, '$1 $2')),
+      normalizeForMatch(key.replace(/([a-z])([A-Z])/g, '$1 $2')),
     ]).filter(Boolean)
-  )).map(escapeRegExp).join('|')})\\b`,
+  )).map(escapeForRegex).join('|')})\\b`,
   'i'
 );
 

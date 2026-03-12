@@ -1,9 +1,10 @@
-export type AiTier = "development" | "production" | "premium";
+export type AiTier = "development" | "production" | "premium" | "abacus";
 
 export interface TierDefaults {
   development?: { generator?: string; reviewer?: string; verifier?: string };
   production?: { generator?: string; reviewer?: string; verifier?: string };
   premium?: { generator?: string; reviewer?: string; verifier?: string };
+  abacus?: { generator?: string; reviewer?: string; verifier?: string };
 }
 
 export interface TierModelSelection {
