@@ -60,7 +60,7 @@ export async function initializeModelRegistry(): Promise<void> {
   // Importiere getModelsForProvider lazy um zirkulaere Abhaengigkeiten zu vermeiden
   const { getModelsForProvider } = await import('./providers/index');
 
-  const providers: AIProvider[] = ['nvidia', 'groq', 'cerebras'];
+  const providers: AIProvider[] = ['nvidia', 'groq', 'cerebras', 'abacus'];
 
   for (const provider of providers) {
     try {
@@ -110,6 +110,7 @@ export function resolveProvidersForModel(modelId: string): AIProvider[] {
     nvidia: 'NVIDIA_API_KEY',
     groq: 'GROQ_API_KEY',
     cerebras: 'CEREBRAS_API_KEY',
+    abacus: 'ABACUS_API_KEY',
   };
 
   return entry.providers.filter(provider => {

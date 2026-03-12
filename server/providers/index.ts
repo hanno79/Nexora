@@ -13,10 +13,12 @@ export * from './base';
 export { GroqProvider } from './groq';
 export { CerebrasProvider } from './cerebras';
 export { NvidiaProvider } from './nvidia';
+export { AbacusProvider } from './abacus';
 
 import { GroqProvider } from './groq';
 import { CerebrasProvider } from './cerebras';
 import { NvidiaProvider } from './nvidia';
+import { AbacusProvider } from './abacus';
 import type { BaseAIProvider, AIProvider, ProviderConfig, AIModel } from './base';
 import { PROVIDER_METADATA } from './base';
 
@@ -120,6 +122,8 @@ export function createProvider(
       return new CerebrasProvider(apiKey, log);
     case 'nvidia':
       return new NvidiaProvider(apiKey, log);
+    case 'abacus':
+      return new AbacusProvider(apiKey, log);
     default:
       throw new Error(`Provider ${provider} wird nicht unterstützt. Bitte nutze OpenRouter über den bestehenden Client.`);
   }
@@ -147,6 +151,11 @@ export async function getModelsForProvider(provider: AIProvider): Promise<AIMode
       const apiKey = process.env.NVIDIA_API_KEY || '';
       const nvidia = new NvidiaProvider(apiKey);
       return nvidia.getModels();
+    }
+    case 'abacus': {
+      const apiKey = process.env.ABACUS_API_KEY || '';
+      const abacus = new AbacusProvider(apiKey);
+      return abacus.getModels();
     }
     default:
       return [];

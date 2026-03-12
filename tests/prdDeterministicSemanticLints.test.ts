@@ -357,7 +357,7 @@ describe('deterministic semantic compiler lints', () => {
 
   it('flags degenerate section content when list bullets wrap markdown headings with non-dash markers', () => {
     const compiled = compilePrdDocument(buildPrd({
-      nonFunctional: '* ### Latency Budget',
+      nonFunctional: '* ### Latency Budget\n* ### Throughput Requirements\n* ### Availability Targets',
     }), {
       mode: 'generate',
       language: 'en',
@@ -374,7 +374,7 @@ describe('deterministic semantic compiler lints', () => {
 
   it('flags self-referential placeholders for every configured degenerate section key', () => {
     const compiled = compilePrdDocument(buildPrd({
-      timelineMilestones: 'Timeline & Milestones is deferred.',
+      timelineMilestones: 'The Timeline & Milestones section is deferred to a later release cycle.',
     }), {
       mode: 'generate',
       language: 'en',

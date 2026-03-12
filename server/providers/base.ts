@@ -12,7 +12,7 @@ import type { Response } from 'express';
 
 // ÄNDERUNG 03.03.2026: Neue Basis-Struktur für alle AI Provider
 
-export type AIProvider = 'openrouter' | 'groq' | 'cerebras' | 'nvidia';
+export type AIProvider = 'openrouter' | 'groq' | 'cerebras' | 'nvidia' | 'abacus';
 
 export interface AIModel {
   id: string;
@@ -290,6 +290,17 @@ export const PROVIDER_METADATA: Record<AIProvider, ProviderConfig> = {
     apiKeyEnv: 'NVIDIA_API_KEY',
     supportsStreaming: true,
     websiteUrl: 'https://build.nvidia.com',
+  },
+  abacus: {
+    id: 'abacus',
+    name: 'abacus',
+    displayName: 'Abacus AI',
+    icon: 'Brain',
+    color: '#8B5CF6', // violet-500
+    baseUrl: 'https://routellm.abacus.ai/v1',
+    apiKeyEnv: 'ABACUS_API_KEY',
+    supportsStreaming: true,
+    websiteUrl: 'https://routellm-apis.abacus.ai',
   },
 };
 
