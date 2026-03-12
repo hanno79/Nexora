@@ -81,6 +81,7 @@ export const aiPreferencesSchema = z.object({
   iterationCount: z.number().min(2).max(5).optional().default(3),
   iterativeTimeoutMinutes: z.number().int().min(5).max(120).optional(),
   useFinalReview: z.boolean().optional(),
+  maxSemanticRepairCycles: z.number().int().min(2).max(20).optional(),
   guidedQuestionRounds: z.number().min(1).max(10).optional().default(3),
 });
 

@@ -14,6 +14,7 @@ export interface SemanticBlockingIssue {
   sectionKey: string;
   suggestedAction?: 'rewrite' | 'enrich';
   targetFields?: FeatureEnrichableField[];
+  suggestedFix?: string;
 }
 
 export interface SemanticVerificationResult {
@@ -137,7 +138,8 @@ Return JSON only:
       "sectionKey": "canonical section key like systemBoundaries or feature:F-01",
       "message": "short concrete explanation",
       "suggestedAction": "rewrite" | "enrich",
-      "targetFields": ["purpose", "mainFlow"]
+      "targetFields": ["purpose", "mainFlow"],
+      "suggestedFix": "concrete correction describing what the content SHOULD say"
     }
   ]
 }
@@ -149,6 +151,7 @@ RULES
 4. If you choose "feature_section_semantic_mismatch", include targetFields and ensure the message ends with "Rewrite: field1, field2, ...".
 5. If no blocking issues exist, return verdict "pass" and an empty blockingIssues array.
 6. Missing or empty enrichment fields (UI Impact, Trigger, Alternate Flows, Preconditions, Postconditions) are NOT blocking semantic defects. Only report a feature_section_semantic_mismatch for missing fields if the absence creates a factual contradiction with another section.
+7. For each blocking issue, provide a suggestedFix with a concrete, actionable correction describing what the content SHOULD say. Do not restate the problem — provide the corrected text or a precise description of what needs to change.
 
 REQUEST CONTEXT
 - Mode: ${input.mode}
@@ -266,6 +269,8 @@ export function parseSemanticVerificationResponse(params: {
           ? `Feature block "${sectionKey}" needs semantic correction. Rewrite: ${(targetFields || FEATURE_ENRICHABLE_FIELDS).join(', ')}`
           : `Section "${sectionKey}" contains a blocking semantic inconsistency.`);
 
+      const suggestedFix = String(issue.suggestedFix || '').trim() || undefined;
+
       return {
         code: normalizeIssueCode(issue.code, sectionKey),
         sectionKey,
@@ -274,6 +279,7 @@ export function parseSemanticVerificationResponse(params: {
           : message,
         suggestedAction,
         ...(targetFields ? { targetFields } : {}),
+        ...(suggestedFix ? { suggestedFix } : {}),
       };
     });
 

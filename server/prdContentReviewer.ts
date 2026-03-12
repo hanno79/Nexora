@@ -54,6 +54,7 @@ export interface ContentIssue {
   severity: 'error' | 'warning';
   suggestedAction: 'rewrite' | 'expand' | 'enrich' | 'keep';
   targetFields?: FeatureEnrichableField[];
+  suggestedFix?: string;
 }
 
 export interface SectionQualityScore {
@@ -813,6 +814,7 @@ type SemanticRepairTarget =
       sectionKey: PatchableSectionKey;
       issueCodes: string[];
       messages: string[];
+      suggestedFixes: string[];
       evidence: SemanticRepairEvidence[];
     }
   | {
@@ -822,6 +824,7 @@ type SemanticRepairTarget =
       featureName: string;
       issueCodes: string[];
       messages: string[];
+      suggestedFixes: string[];
       targetFields: FeatureEnrichableField[];
       evidence: SemanticRepairEvidence[];
     };
@@ -1088,6 +1091,7 @@ function buildSemanticRepairTargets(
       if (existing && existing.kind === 'feature') {
         existing.issueCodes = Array.from(new Set([...existing.issueCodes, issue.code].filter(Boolean)));
         existing.messages = Array.from(new Set([...existing.messages, issue.message].filter(Boolean)));
+        if (issue.suggestedFix) existing.suggestedFixes.push(issue.suggestedFix);
         existing.targetFields = Array.from(new Set([
           ...existing.targetFields,
           ...resolveFeatureTargetFields(issue),
@@ -1102,6 +1106,7 @@ function buildSemanticRepairTargets(
         featureName: feature.name,
         issueCodes: issue.code ? [issue.code] : [],
         messages: issue.message ? [issue.message] : [],
+        suggestedFixes: issue.suggestedFix ? [issue.suggestedFix] : [],
         targetFields: resolveFeatureTargetFields(issue),
         evidence: [],
       });
@@ -1114,6 +1119,7 @@ function buildSemanticRepairTargets(
     if (existing && existing.kind === 'section') {
       existing.issueCodes = Array.from(new Set([...existing.issueCodes, issue.code].filter(Boolean)));
       existing.messages = Array.from(new Set([...existing.messages, issue.message].filter(Boolean)));
+      if (issue.suggestedFix) existing.suggestedFixes.push(issue.suggestedFix);
       continue;
     }
 
@@ -1122,6 +1128,7 @@ function buildSemanticRepairTargets(
       sectionKey: normalizedSectionKey,
       issueCodes: issue.code ? [issue.code] : [],
       messages: issue.message ? [issue.message] : [],
+      suggestedFixes: issue.suggestedFix ? [issue.suggestedFix] : [],
       evidence: [],
     });
   }
@@ -1210,11 +1217,15 @@ function buildSemanticRepairPrompt(params: {
       : ['Deterministic Evidence: none'];
 
     if (target.kind === 'section') {
+      const suggestedFixLines = target.suggestedFixes.length > 0
+        ? ['Suggested Fixes:', ...target.suggestedFixes.map(fix => `- ${fix}`)]
+        : [];
       return [
         `## Target Section: ${target.sectionKey}`,
         `Issue Codes: ${target.issueCodes.join(', ') || 'unknown'}`,
         'Blocking Issues:',
         ...target.messages.map(message => `- ${message}`),
+        ...suggestedFixLines,
         ...deterministicEvidence,
         'Current Section Content:',
         String((structure as any)[target.sectionKey] || '(missing)').trim() || '(missing)',
@@ -1226,6 +1237,9 @@ function buildSemanticRepairPrompt(params: {
       String(entry.id || '').trim().toUpperCase() === target.featureId
     );
     const fieldLines = target.targetFields.map(field => `- ${field}: ${summarizeFeatureField((feature as any)?.[field]) || '(missing)'}`);
+    const suggestedFixLines = target.suggestedFixes.length > 0
+      ? ['Suggested Fixes:', ...target.suggestedFixes.map(fix => `- ${fix}`)]
+      : [];
     return [
       `## Target Feature: ${target.featureId} - ${target.featureName}`,
       `Feature List Position: ${featurePosition >= 0 ? featurePosition + 1 : 'unknown'}`,
@@ -1233,6 +1247,7 @@ function buildSemanticRepairPrompt(params: {
       `Target Fields: ${target.targetFields.join(', ')}`,
       'Blocking Issues:',
       ...target.messages.map(message => `- ${message}`),
+      ...suggestedFixLines,
       ...deterministicEvidence,
       'Current Target Field Content:',
       ...fieldLines,

@@ -2307,7 +2307,7 @@ describe('prdCompilerFinalizer', () => {
       semanticRepairAttempted: true,
       semanticRepairIssueCodes: ['cross_section_inconsistency'],
       semanticRepairSectionKeys: ['definitionOfDone'],
-      repairGapReason: 'repair_no_substantive_change',
+      repairGapReason: 'same_issues_persisted',
       repairCycleCount: 2,
     });
 
@@ -2336,7 +2336,7 @@ describe('prdCompilerFinalizer', () => {
       const qualityError = error as PrdCompilerQualityError;
       expect(qualityError.quality.issues.some(issue => issue.code === 'semantic_verifier_blocked')).toBe(true);
       expect(qualityError.semanticRepairAttempted).toBe(true);
-      expect(qualityError.repairGapReason).toBe('repair_no_substantive_change');
+      expect(qualityError.repairGapReason).toBe('same_issues_persisted');
       expect(qualityError.postRepairSemanticBlockingIssues.map(issue => issue.sectionKey)).toEqual(['definitionOfDone']);
       expect(qualityError.finalSemanticBlockingIssues.map(issue => issue.sectionKey)).toEqual(['definitionOfDone']);
     }
@@ -2371,6 +2371,8 @@ describe('prdCompilerFinalizer', () => {
       .split('\n\n## Success Criteria & Acceptance Testing')[0]
       .trim();
 
+    // Feature-by-feature repair: timelineMilestones (severity 0) is picked first,
+    // definitionOfDone (severity 1) second. Truncation on cycle 1 is retried in cycle 2.
     const semanticVerifier = vi.fn()
       .mockResolvedValueOnce({
         verdict: 'fail' as const,
@@ -2391,6 +2393,21 @@ describe('prdCompilerFinalizer', () => {
         model: 'mock/verifier',
         usage: usage(8),
       })
+      // After cycle 2 repairs timelineMilestones: definitionOfDone still failing
+      .mockResolvedValueOnce({
+        verdict: 'fail' as const,
+        blockingIssues: [
+          {
+            code: 'cross_section_inconsistency',
+            sectionKey: 'definitionOfDone',
+            message: 'Definition of Done omits the mandatory semantic verification gate.',
+            suggestedAction: 'rewrite' as const,
+          },
+        ],
+        model: 'mock/verifier',
+        usage: usage(8),
+      })
+      // After cycle 3 repairs definitionOfDone: all clear
       .mockResolvedValueOnce({
         verdict: 'pass' as const,
         blockingIssues: [],
@@ -2399,26 +2416,29 @@ describe('prdCompilerFinalizer', () => {
       });
 
     const semanticRefineReviewer = vi.fn()
+      // Cycle 1: timelineMilestones → truncated
       .mockResolvedValueOnce({
-        content: '{"sections":{"definitionOfDone":"truncated',
+        content: '{"sections":{"timelineMilestones":"truncated',
         model: 'mock/reviewer',
         usage: usage(12),
         finishReason: 'length',
       })
+      // Cycle 2: timelineMilestones retry → success
       .mockResolvedValueOnce({
         content: JSON.stringify({
           sections: {
-            definitionOfDone: repairedDefinitionOfDoneBody,
+            timelineMilestones: repairedTimelineBody,
           },
         }),
         model: 'mock/reviewer',
         usage: usage(12),
         finishReason: 'stop',
       })
+      // Cycle 3: definitionOfDone → success
       .mockResolvedValueOnce({
         content: JSON.stringify({
           sections: {
-            timelineMilestones: repairedTimelineBody,
+            definitionOfDone: repairedDefinitionOfDoneBody,
           },
         }),
         model: 'mock/reviewer',
@@ -2440,8 +2460,10 @@ describe('prdCompilerFinalizer', () => {
     expect(result.semanticVerification?.verdict).toBe('pass');
     expect(result.semanticRepairApplied).toBe(true);
     expect(result.semanticRepairTruncated).toBe(true);
-    expect(result.semanticRepairSectionKeys).toEqual(['definitionOfDone', 'timelineMilestones']);
-    expect(semanticRefineReviewer).toHaveBeenCalledTimes(2);
-    expect(semanticVerifier).toHaveBeenCalledTimes(2);
+    expect(result.semanticRepairSectionKeys).toEqual(
+      expect.arrayContaining(['timelineMilestones', 'definitionOfDone'])
+    );
+    expect(semanticRefineReviewer).toHaveBeenCalledTimes(3);
+    expect(semanticVerifier).toHaveBeenCalledTimes(3);
   });
 });

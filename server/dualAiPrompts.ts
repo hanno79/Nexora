@@ -718,7 +718,7 @@ interface CompilerDiagnostics {
   semanticRepairIssueCodes?: string[];
   semanticRepairSectionKeys?: string[];
   semanticRepairTruncated?: boolean;
-  repairGapReason?: 'emergent_issue_after_repair' | 'same_issues_persisted' | 'repair_no_structural_change' | 'repair_no_substantive_change' | 'repair_budget_exhausted';
+  repairGapReason?: 'emergent_issue_after_repair' | 'same_issues_persisted' | 'repair_no_structural_change' | 'repair_no_substantive_change' | 'repair_budget_exhausted' | 'regression_detected';
   repairCycleCount?: number;
   compilerRepairTruncationCount?: number;
   compilerRepairFinishReasons?: string[];

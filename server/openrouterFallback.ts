@@ -527,6 +527,10 @@ export async function executeOpenRouterFallback(
       }
     }
 
+    if (tier !== 'development' && isOpenRouterFreeModel(attemptModel)) {
+      console.warn(`[FallbackWarning] Tier "${tier}" is using free model ${attemptModel} for ${modelType} — fallback chain may be misconfigured`);
+    }
+
     const result = await tryModelWithFallback(attemptModel, isPrimary, 'normal', index);
     if (result) {
       return result;

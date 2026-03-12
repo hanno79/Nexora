@@ -47,7 +47,8 @@ export type RepairGapReason =
   | 'same_issues_persisted'
   | 'repair_no_structural_change'
   | 'repair_no_substantive_change'
-  | 'repair_budget_exhausted';
+  | 'repair_budget_exhausted'
+  | 'regression_detected';
 export type DegradedCandidateSource = 'pre_repair_best' | 'post_targeted_repair';
 export type DisplayedCandidateSource = 'passed' | DegradedCandidateSource;
 
@@ -83,6 +84,8 @@ export interface FinalizeWithCompilerGatesOptions {
   semanticRefineReviewer?: ReviewerContentGenerator;
   /** Independent semantic verifier that runs after compiler/content review. */
   semanticVerifier?: (input: SemanticVerifierInput) => Promise<SemanticVerificationResult>;
+  /** Max semantic repair cycles. Default: max(4, affectedFeatureCount * 2), capped at 20. */
+  maxSemanticRepairCycles?: number;
   onStageProgress?: (event: {
     type: 'content_review_start' | 'semantic_verification_start' | 'semantic_repair_start' | 'semantic_repair_done';
     issueCount?: number;
@@ -1385,6 +1388,7 @@ function toSemanticContentIssues(issues: SemanticBlockingIssue[]): ContentIssue[
       severity: 'error',
       suggestedAction: issue.suggestedAction || (isFeatureIssue ? 'enrich' : 'rewrite'),
       ...(issue.targetFields?.length ? { targetFields: issue.targetFields } : {}),
+      ...(issue.suggestedFix ? { suggestedFix: issue.suggestedFix } : {}),
     };
   });
 }
@@ -1397,7 +1401,60 @@ function cloneSemanticBlockingIssues(issues: SemanticBlockingIssue[] | undefined
     message: String(issue.message || '').trim() || 'Blocking semantic inconsistency.',
     suggestedAction: issue.suggestedAction || (String(issue.sectionKey || '').trim().startsWith('feature:') ? 'enrich' : 'rewrite'),
     ...(issue.targetFields?.length ? { targetFields: Array.from(new Set(issue.targetFields)) } : {}),
+    ...(issue.suggestedFix ? { suggestedFix: issue.suggestedFix } : {}),
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Feature-by-feature repair helpers
+// ---------------------------------------------------------------------------
+
+function extractFeatureKey(sectionKey: string): string | null {
+  const match = sectionKey.match(/^feature:(F-\d+)$/i);
+  return match ? match[1].toUpperCase() : null;
+}
+
+function groupIssuesByTarget(issues: SemanticBlockingIssue[]): Map<string, SemanticBlockingIssue[]> {
+  const groups = new Map<string, SemanticBlockingIssue[]>();
+  for (const issue of issues) {
+    const key = issue.sectionKey || 'unknown';
+    const existing = groups.get(key);
+    if (existing) {
+      existing.push(issue);
+    } else {
+      groups.set(key, [issue]);
+    }
+  }
+  return groups;
+}
+
+const ISSUE_SEVERITY_RANK: Record<string, number> = {
+  business_rule_contradiction: 0,
+  cross_section_inconsistency: 1,
+  feature_section_semantic_mismatch: 2,
+  schema_field_mismatch: 3,
+  scope_meta_leakage: 4,
+};
+
+function getHighestSeverityRank(issues: SemanticBlockingIssue[]): number {
+  let best = 99;
+  for (const issue of issues) {
+    const rank = ISSUE_SEVERITY_RANK[issue.code] ?? 5;
+    if (rank < best) best = rank;
+  }
+  return best;
+}
+
+function sortTargetKeysBySeverity(grouped: Map<string, SemanticBlockingIssue[]>): string[] {
+  return Array.from(grouped.keys()).sort((a, b) => {
+    const rankA = getHighestSeverityRank(grouped.get(a) || []);
+    const rankB = getHighestSeverityRank(grouped.get(b) || []);
+    if (rankA !== rankB) return rankA - rankB;
+    // Section-level issues before feature-level issues
+    const aIsFeature = a.startsWith('feature:') ? 1 : 0;
+    const bIsFeature = b.startsWith('feature:') ? 1 : 0;
+    return aIsFeature - bIsFeature;
+  });
 }
 
 function blockingIssuePairSignature(issues: SemanticBlockingIssue[] | undefined): string[] {
@@ -2190,11 +2247,23 @@ export async function finalizeWithCompilerGates(
     let verification = await runSemanticVerifier();
     finalSemanticBlockingIssues = cloneSemanticBlockingIssues(verification.blockingIssues);
     const semanticRepairReviewer = options.semanticRefineReviewer || options.contentRefineReviewer;
-    const maxSemanticRepairCycles = semanticRepairReviewer ? 2 : 0;
+    const affectedFeatureCount = new Set(
+      verification.blockingIssues
+        .map(i => i.sectionKey)
+        .filter(s => s.startsWith('feature:'))
+    ).size;
+    const maxSemanticRepairCycles = semanticRepairReviewer
+      ? Math.min(options.maxSemanticRepairCycles ?? Math.max(4, affectedFeatureCount * 2), 20)
+      : 0;
 
     if (verification.verdict === 'fail' && verification.blockingIssues.length > 0) {
       initialSemanticBlockingIssues = cloneSemanticBlockingIssues(verification.blockingIssues);
     }
+
+    // Feature-by-feature semantic repair loop with locking and regression detection
+    const frozenFeatureIds = new Set<string>();
+    const manualReviewFeatureIds = new Set<string>();
+    const perTargetAttempts = new Map<string, number>();
 
     while (
       verification.verdict === 'fail'
@@ -2203,9 +2272,37 @@ export async function finalizeWithCompilerGates(
       && semanticRepairReviewer
     ) {
       runCancelCheck(`semantic_repair_cycle_${repairCycleCount + 1}`);
+
+      // 1. Filter out frozen and manual-review targets
+      const activeIssues = verification.blockingIssues.filter(issue => {
+        const featureKey = extractFeatureKey(issue.sectionKey);
+        if (featureKey && frozenFeatureIds.has(featureKey)) return false;
+        if (featureKey && manualReviewFeatureIds.has(featureKey)) return false;
+        if (!featureKey && manualReviewFeatureIds.has(issue.sectionKey)) return false;
+        return true;
+      });
+
+      if (activeIssues.length === 0) break;
+
+      // 2. Group by target, sort by severity, pick highest-priority target
+      const grouped = groupIssuesByTarget(activeIssues);
+      const sortedTargets = sortTargetKeysBySeverity(grouped);
+      const targetKey = sortedTargets[0];
+      const targetIssues = grouped.get(targetKey)!;
+
+      // 3. Track per-target attempts
+      const attempts = (perTargetAttempts.get(targetKey) ?? 0) + 1;
+      perTargetAttempts.set(targetKey, attempts);
+
+      // 4. Snapshot for potential revert
+      const snapshotContent = compiled.content;
+      const snapshotStructure = compiled.structure;
+      const snapshotEvaluation = currentEvaluation;
+
+      // 5. Diagnostics tracking
       const beforeRepairIssues = cloneSemanticBlockingIssues(verification.blockingIssues);
       const beforeRepairEvaluation = currentEvaluation;
-      const semanticIssues = toSemanticContentIssues(beforeRepairIssues);
+      const semanticIssues = toSemanticContentIssues(targetIssues);
       semanticRepairAttempted = true;
       repairCycleCount += 1;
       semanticRepairIssueCodes = Array.from(new Set([
@@ -2218,9 +2315,11 @@ export async function finalizeWithCompilerGates(
       ]));
       options.onStageProgress?.({
         type: 'semantic_repair_start',
-        issueCount: beforeRepairIssues.length,
+        issueCount: targetIssues.length,
         sectionKeys: semanticIssues.map(issue => issue.sectionKey).filter(Boolean),
       });
+
+      // 6. Call repair for ONLY this target's issues
       let semanticRepair: {
         content: string;
         structure: PRDStructure;
@@ -2264,13 +2363,17 @@ export async function finalizeWithCompilerGates(
       semanticRepairStructuralChange = semanticRepairStructuralChange || !!semanticRepair.structuralChange;
       options.onStageProgress?.({
         type: 'semantic_repair_done',
-        issueCount: beforeRepairIssues.length,
+        issueCount: targetIssues.length,
         sectionKeys: semanticIssues.map(issue => issue.sectionKey).filter(Boolean),
         applied: semanticRepair.refined,
         truncated: semanticRepair.truncated,
       });
 
+      // 7. Repair didn't refine — skip or mark for manual review
       if (!semanticRepair.refined) {
+        if (attempts >= 2) {
+          manualReviewFeatureIds.add(targetKey);
+        }
         repairGapReason = determineRepairGapReason({
           beforeRepair: beforeRepairIssues,
           afterRepair: beforeRepairIssues,
@@ -2282,11 +2385,16 @@ export async function finalizeWithCompilerGates(
           postRepairSemanticBlockingIssues = cloneSemanticBlockingIssues(beforeRepairIssues);
         }
         finalSemanticBlockingIssues = cloneSemanticBlockingIssues(beforeRepairIssues);
-        break;
+        continue; // Try next target instead of breaking
       }
 
+      // 8. Quality check
       const recompiledEvaluation = evaluateCandidate(semanticRepair.content);
       if (!(recompiledEvaluation.compiled.quality.valid || compareCandidatePreference(recompiledEvaluation, currentEvaluation) >= 0)) {
+        // Repair degraded quality — revert and try next target
+        if (attempts >= 2) {
+          manualReviewFeatureIds.add(targetKey);
+        }
         const semanticRepairChanged = !!semanticRepair.structuralChange || (semanticRepair.changedSections?.length || 0) > 0;
         repairGapReason = determineRepairGapReason({
           beforeRepair: beforeRepairIssues,
@@ -2299,9 +2407,10 @@ export async function finalizeWithCompilerGates(
           postRepairSemanticBlockingIssues = cloneSemanticBlockingIssues(beforeRepairIssues);
         }
         finalSemanticBlockingIssues = cloneSemanticBlockingIssues(beforeRepairIssues);
-        break;
+        continue; // Try next target instead of breaking
       }
 
+      // 9. Accept repair
       current = {
         ...current,
         content: recompiledEvaluation.content,
@@ -2314,6 +2423,8 @@ export async function finalizeWithCompilerGates(
       timelineMismatchedFeatureIds = compiled.quality.timelineMismatchedFeatureIds || [];
       semanticRepairApplied = true;
       maybePromoteBestSubstantive(current, currentEvaluation, degradedCandidateSource);
+
+      // 10. Re-verify
       runCancelCheck(`semantic_reverification_cycle_${repairCycleCount}`);
       verification = await runSemanticVerifier();
       finalSemanticBlockingIssues = cloneSemanticBlockingIssues(verification.blockingIssues);
@@ -2326,6 +2437,34 @@ export async function finalizeWithCompilerGates(
         break;
       }
 
+      // 11. Regression check: did repair break any frozen features?
+      const regressions = verification.blockingIssues.filter(issue => {
+        const fk = extractFeatureKey(issue.sectionKey);
+        return fk && frozenFeatureIds.has(fk);
+      });
+
+      if (regressions.length > 0) {
+        // Revert to snapshot
+        compiled = { content: snapshotContent, structure: snapshotStructure, quality: snapshotEvaluation.compiled.quality };
+        current = { ...current, content: snapshotContent };
+        currentEvaluation = snapshotEvaluation;
+        manualReviewFeatureIds.add(targetKey);
+        repairGapReason = 'regression_detected';
+        // Re-verify on reverted state
+        verification = await runSemanticVerifier();
+        finalSemanticBlockingIssues = cloneSemanticBlockingIssues(verification.blockingIssues);
+        continue;
+      }
+
+      // 12. Feature locking: if repaired target now passes, freeze it
+      const targetStillFailing = verification.blockingIssues.some(i => i.sectionKey === targetKey);
+      if (!targetStillFailing) {
+        const featureKey = extractFeatureKey(targetKey);
+        if (featureKey) frozenFeatureIds.add(featureKey);
+      } else if (attempts >= 2) {
+        manualReviewFeatureIds.add(targetKey);
+      }
+
       if (repairCycleCount >= maxSemanticRepairCycles) {
         repairGapReason = determineRepairGapReason({
           beforeRepair: beforeRepairIssues,
@@ -2336,6 +2475,11 @@ export async function finalizeWithCompilerGates(
         });
         break;
       }
+    }
+
+    // Set gap reason when loop exited due to all targets exhausted (manual review)
+    if (verification.verdict === 'fail' && semanticRepairAttempted && !repairGapReason) {
+      repairGapReason = 'same_issues_persisted';
     }
 
     if (verification.verdict === 'fail' && verification.blockingIssues.length > 0) {
