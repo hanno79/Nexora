@@ -947,25 +947,32 @@ function buildFeatureQualityDiagnostics(
   const lowSubstantialLeadingIds = snapshot.lowSubstantialFeatureIds.filter(featureId => featurePrioritySet.has(featureId));
   let featureQualityFloorPassed = true;
   let primaryFeatureQualityReason: string | undefined;
+  let qualityFloorFailedFeatureIds: string[] = [];
 
   if (collapsedLeadingIds.length > 0) {
     featureQualityFloorPassed = false;
+    qualityFloorFailedFeatureIds = collapsedLeadingIds;
     primaryFeatureQualityReason = `Leading features collapsed to bare IDs: ${collapsedLeadingIds.join(', ')}.`;
   } else if (placeholderPurposeLeadingIds.length >= minLeadThreshold) {
     featureQualityFloorPassed = false;
+    qualityFloorFailedFeatureIds = placeholderPurposeLeadingIds;
     primaryFeatureQualityReason = `Leading features use placeholder or ID-echo purpose text: ${placeholderPurposeLeadingIds.join(', ')}.`;
   } else if (emptyMainFlowLeadingIds.length >= minLeadThreshold) {
     featureQualityFloorPassed = false;
+    qualityFloorFailedFeatureIds = emptyMainFlowLeadingIds;
     primaryFeatureQualityReason = `Leading features are missing substantive main flows: ${emptyMainFlowLeadingIds.join(', ')}.`;
   } else if (thinAcceptanceLeadingIds.length >= minLeadThreshold) {
     featureQualityFloorPassed = false;
+    qualityFloorFailedFeatureIds = thinAcceptanceLeadingIds;
     primaryFeatureQualityReason = `Leading features use thin or generic acceptance criteria: ${thinAcceptanceLeadingIds.join(', ')}.`;
-  } else if (
-    lowSubstantialLeadingIds.length >= minLeadThreshold
-    || snapshot.lowSubstantialFeatureIds.length >= broadFeatureThreshold
-  ) {
+  } else if (lowSubstantialLeadingIds.length >= minLeadThreshold) {
     featureQualityFloorPassed = false;
-    primaryFeatureQualityReason = `Feature substance is too thin across the leading feature set: ${lowSubstantialLeadingIds.length > 0 ? lowSubstantialLeadingIds.join(', ') : snapshot.lowSubstantialFeatureIds.slice(0, 5).join(', ')}.`;
+    qualityFloorFailedFeatureIds = lowSubstantialLeadingIds;
+    primaryFeatureQualityReason = `Feature substance is too thin across the leading feature set: ${lowSubstantialLeadingIds.join(', ')}.`;
+  } else if (snapshot.lowSubstantialFeatureIds.length >= broadFeatureThreshold) {
+    featureQualityFloorPassed = false;
+    qualityFloorFailedFeatureIds = snapshot.lowSubstantialFeatureIds;
+    primaryFeatureQualityReason = `Feature substance is too thin across the broader feature set: ${snapshot.lowSubstantialFeatureIds.slice(0, 5).join(', ')}.`;
   }
 
   const qualityFloorRelevantIds = Array.from(new Set([
@@ -976,19 +983,6 @@ function buildFeatureQualityDiagnostics(
     ...snapshot.placeholderAlternateFlowFeatureIds,
     ...snapshot.thinAcceptanceCriteriaFeatureIds,
   ])).sort();
-  const qualityFloorFailedFeatureIds = collapsedLeadingIds.length > 0
-    ? collapsedLeadingIds
-    : placeholderPurposeLeadingIds.length >= minLeadThreshold
-      ? placeholderPurposeLeadingIds
-      : emptyMainFlowLeadingIds.length >= minLeadThreshold
-        ? emptyMainFlowLeadingIds
-        : thinAcceptanceLeadingIds.length >= minLeadThreshold
-          ? thinAcceptanceLeadingIds
-          : lowSubstantialLeadingIds.length >= minLeadThreshold
-            ? lowSubstantialLeadingIds
-            : snapshot.lowSubstantialFeatureIds.length >= broadFeatureThreshold
-              ? snapshot.lowSubstantialFeatureIds
-              : [];
   const qualityFloorFeatureIds = Array.from(new Set([
     ...featurePriorityWindow,
     ...qualityFloorRelevantIds,

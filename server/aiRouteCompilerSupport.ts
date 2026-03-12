@@ -119,6 +119,26 @@ export async function persistCompilerRunArtifactBestEffort(params: {
         cwd: process.cwd(),
         projectRoot: PROJECT_ROOT,
       }, null, 2) + '\n', 'utf8');
-    } catch { /* absolute last resort — nothing more we can do */ }
+    } catch { /* async fallback fehlgeschlagen */ }
+    // Synchroner Fallback — garantiert eine Datei, selbst wenn alle async-Pfade scheitern
+    try {
+      const syncDir = path.join(PROJECT_ROOT, 'documentation', 'compiler_runs');
+      fs.mkdirSync(syncDir, { recursive: true });
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      fs.writeFileSync(
+        path.join(syncDir, `compiler_run_error_${ts}.json`),
+        JSON.stringify({
+          _error: true,
+          _sync: true,
+          timestamp: new Date().toISOString(),
+          workflow: params.workflow,
+          routeKey: params.routeKey,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          cwd: process.cwd(),
+          projectRoot: PROJECT_ROOT,
+        }, null, 2) + '\n',
+        'utf8'
+      );
+    } catch { /* nichts mehr moeglich */ }
   }
 }

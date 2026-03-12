@@ -304,7 +304,7 @@ describe('prdCompilerFinalizer', () => {
     expect(qualityError.featureQualityFloorPassed).toBe(false);
     expect(qualityError.featureQualityFloorFeatureIds).toEqual(['F-01', 'F-02', 'F-03', 'F-04', 'F-05']);
     expect(qualityError.featureQualityFloorFailedFeatureIds).toEqual(['F-03', 'F-04', 'F-05']);
-    expect(qualityError.primaryFeatureQualityReason).toContain('Feature substance is too thin across the leading feature set');
+    expect(qualityError.primaryFeatureQualityReason).toBe('Feature substance is too thin across the broader feature set: F-03, F-04, F-05.');
   });
 
   it('recovers truncated generate output when deterministic completion yields a valid PRD', async () => {

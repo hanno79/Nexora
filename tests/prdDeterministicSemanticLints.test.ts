@@ -10,7 +10,9 @@ function buildPrd(params?: {
   domainModel?: string;
   globalBusinessRules?: string;
   nonFunctional?: string;
+  definitionOfDone?: string;
   outOfScope?: string;
+  timelineMilestones?: string;
   featureName?: string;
   featurePurpose?: string;
   featureDataImpact?: string;
@@ -69,13 +71,13 @@ function buildPrd(params?: {
     '- A Node.js API runs behind an authenticated edge gateway with PostgreSQL persistence.',
     '',
     '## Definition of Done',
-    '- The widget ships when validation, tests, and reviewer checks all pass.',
+    params?.definitionOfDone || '- The widget ships when validation, tests, and reviewer checks all pass.',
     '',
     '## Out of Scope',
     params?.outOfScope || '- No native mobile application in this release.',
     '',
     '## Timeline & Milestones',
-    '- Phase 1 delivers widget configuration, Phase 2 delivers rollout hardening.',
+    params?.timelineMilestones || '- Phase 1 delivers widget configuration, Phase 2 delivers rollout hardening.',
     '',
     '## Success Criteria & Acceptance Testing',
     '- Teams can save and reload provider order without manual correction.',
@@ -350,6 +352,40 @@ describe('deterministic semantic compiler lints', () => {
     });
 
     expect(compiled.quality.issues.some(issue => issue.code === 'out_of_scope_future_leakage')).toBe(true);
+    expect(compiled.quality.valid).toBe(false);
+  });
+
+  it('flags degenerate section content when list bullets wrap markdown headings with non-dash markers', () => {
+    const compiled = compilePrdDocument(buildPrd({
+      nonFunctional: '* ### Latency Budget',
+    }), {
+      mode: 'generate',
+      language: 'en',
+    });
+
+    expect(compiled.quality.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'section_content_degenerate',
+        evidencePath: 'nonFunctional',
+      }),
+    ]));
+    expect(compiled.quality.valid).toBe(false);
+  });
+
+  it('flags self-referential placeholders for every configured degenerate section key', () => {
+    const compiled = compilePrdDocument(buildPrd({
+      timelineMilestones: 'Timeline & Milestones is deferred.',
+    }), {
+      mode: 'generate',
+      language: 'en',
+    });
+
+    expect(compiled.quality.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'section_content_degenerate',
+        evidencePath: 'timelineMilestones',
+      }),
+    ]));
     expect(compiled.quality.valid).toBe(false);
   });
 

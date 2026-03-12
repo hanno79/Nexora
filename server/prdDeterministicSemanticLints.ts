@@ -1716,6 +1716,23 @@ const DEGENERATE_SECTION_KEYS: { key: keyof PRDStructure; label: string }[] = [
   { key: 'timelineMilestones', label: 'Timeline & Milestones' },
 ];
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const DEGENERATE_SECTION_SELF_REFERENCE_REGEX = new RegExp(
+  `\\b(?:${Array.from(new Set(
+    DEGENERATE_SECTION_KEYS.flatMap(({ key, label }) => [
+      normalizeForMatch(label),
+      normalizeForMatch(String(key).replace(/([a-z])([A-Z])/g, '$1 $2')),
+    ]).filter(Boolean)
+  )).map(escapeRegExp).join('|')})\\b`,
+  'i'
+);
+
+const DEGENERATE_OUT_OF_SCOPE_MARKER_REGEX = /\b(?:explicitly\s+)?(?:out\s+of\s+scope|not\s+in\s+scope|excluded|deferred|not\s+included|ausgeschlossen|verschoben|nicht\s+im\s+scope)\b/i;
+const DEGENERATE_LEGACY_SELF_REFERENCE_REGEX = /\b(?:ausgeschlossene?\s+features?\b|excluded\s+features?\b|out\s+of\s+scope.*not\s+in\s+scope|nicht\s+im\s+scope.*ausgeschlossen)\b/i;
+
 function collectDegenerateSectionIssues(
   structure: PRDStructure,
   knownFallbackSections: Set<string>
@@ -1731,16 +1748,20 @@ function collectDegenerateSectionIssues(
 
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
 
-    // Muster 1: Heading innerhalb einer Liste ("- ### ...")
-    const headingInList = lines.some(l => /^-\s*#{1,4}\s/.test(l));
+    // Muster 1: Heading innerhalb einer Liste ("- ### ...", "* ### ...", "• ### ...")
+    const headingInList = lines.some(l => /^\s*[-*•+]\s*#{1,4}\s/.test(l));
 
     // Muster 2: Selbstreferenzielle Leer-Saetze — gesamte Section ist nur 1 Zeile
     // und enthaelt kaum substantiven Inhalt, z.B.:
     //   "Ausgeschlossene Features ist in diesem Release ausgeschlossen."
     // Nicht triggern bei konkreten Ausschluessen wie "Native mobile apps are excluded."
+    const normalizedSingleLine = lines.length === 1 ? normalizeForMatch(lines[0]) : '';
     const selfReferential = lines.length === 1 && lines[0].length < 100 && (
-      /\b(ausgeschlossene?\s+features?\b|excluded\s+features?\b)/i.test(lines[0]) ||
-      /\b(out\s+of\s+scope.*not\s+in\s+scope|nicht\s+im\s+scope.*ausgeschlossen)\b/i.test(lines[0])
+      DEGENERATE_LEGACY_SELF_REFERENCE_REGEX.test(normalizedSingleLine)
+      || (
+        DEGENERATE_SECTION_SELF_REFERENCE_REGEX.test(normalizedSingleLine)
+        && DEGENERATE_OUT_OF_SCOPE_MARKER_REGEX.test(normalizedSingleLine)
+      )
     );
 
     if (headingInList || selfReferential) {
