@@ -35,7 +35,7 @@ export default function Settings() {
   const { user } = useAuth();
 
   // Provider-Filter State
-  const [selectedProviders, setSelectedProviders] = useState<AIProvider[]>(['openrouter', 'groq', 'cerebras', 'nvidia']);
+  const [selectedProviders, setSelectedProviders] = useState<AIProvider[]>(['openrouter', 'groq', 'cerebras', 'nvidia', 'abacus']);
 
   // Fetch provider data
   const { data: providersData } = useQuery<{

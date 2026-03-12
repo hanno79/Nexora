@@ -26,7 +26,7 @@ export interface AggregatedAIModel extends AIModel {
   availableProviders: AIProvider[];
 }
 
-export const SUPPORTED_PROVIDERS: AIProvider[] = ['openrouter', 'groq', 'cerebras', 'nvidia'];
+export const SUPPORTED_PROVIDERS: AIProvider[] = ['openrouter', 'groq', 'cerebras', 'nvidia', 'abacus'];
 
 export function isSupportedProvider(provider: string): provider is AIProvider {
   return SUPPORTED_PROVIDERS.includes(provider as AIProvider);

@@ -6,12 +6,12 @@
  */
 
 import React from 'react';
-import { Globe, Zap, Cpu, Monitor, Check } from 'lucide-react';
+import { Globe, Zap, Cpu, Monitor, Brain, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 
-export type AIProvider = 'openrouter' | 'groq' | 'cerebras' | 'nvidia';
+export type AIProvider = 'openrouter' | 'groq' | 'cerebras' | 'nvidia' | 'abacus';
 
 interface ProviderInfo {
   id: AIProvider;
@@ -34,6 +34,7 @@ const iconMap = {
   Zap,
   Cpu,
   Monitor,
+  Brain,
 };
 
 export function ProviderFilter({
