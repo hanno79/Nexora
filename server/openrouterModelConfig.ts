@@ -42,20 +42,18 @@ export const DEFAULT_FREE_FALLBACK_CHAIN: readonly string[] = [
   'openai/gpt-oss-120b:free',
 ];
 
+// ÄNDERUNG 13.03.2026: Free-Modelle aus Production/Premium-Chains entfernt,
+// damit diese Tiers nie versehentlich auf Free-Endpunkte zurueckfallen.
 export const DEFAULT_PRODUCTION_FALLBACK_CHAIN: readonly string[] = [
   'google/gemini-2.5-flash',
   'mistralai/mistral-small-3.1-24b-instruct',
   'meta-llama/llama-4-maverick-17b-128e-instruct',
-  'google/gemma-3-27b-it:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
 ];
 
 export const DEFAULT_PREMIUM_FALLBACK_CHAIN: readonly string[] = [
   'anthropic/claude-sonnet-4',
   'google/gemini-2.5-flash',
   'mistralai/mistral-small-3.1-24b-instruct',
-  'google/gemma-3-27b-it:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
 ];
 
 export const DEFAULT_ABACUS_FALLBACK_CHAIN: readonly string[] = [

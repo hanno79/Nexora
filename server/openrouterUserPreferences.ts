@@ -68,10 +68,19 @@ export async function applyUserPreferencesToClient(
   const resolvedFallbackModel =
     sanitizeConfiguredModel(activeTierModels.fallbackModel || prefs.fallbackModel) ||
     getDefaultFallbackModelForTier(tier);
+  // ÄNDERUNG 13.03.2026: Tier-spezifische Chain hat immer Vorrang.
+  // Legacy prefs.fallbackChain nur noch fuer Development-Tier, damit alte
+  // Free-Model-Chains nicht versehentlich Premium-Tiers ueberschreiben.
+  const hasTierSpecificChain = Array.isArray(activeTierModels.fallbackChain)
+    && activeTierModels.fallbackChain.length > 0;
+  const hasLegacyGlobalChain = Array.isArray(prefs.fallbackChain)
+    && prefs.fallbackChain.length > 0;
   const resolvedFallbackChain: string[] =
-    activeTierModels.fallbackChain ??
-    (Array.isArray(prefs.fallbackChain) ? prefs.fallbackChain : undefined) ??
-    [...getDefaultFallbackChainForTier(tier)];
+    hasTierSpecificChain
+      ? activeTierModels.fallbackChain
+      : (tier === 'development' && hasLegacyGlobalChain)
+        ? prefs.fallbackChain
+        : [...getDefaultFallbackChainForTier(tier)];
   const verifierResolution = resolveIndependentVerifierModel({
     generatorModel: resolvedGeneratorModel,
     reviewerModel: resolvedReviewerModel,

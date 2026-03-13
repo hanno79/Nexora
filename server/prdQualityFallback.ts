@@ -45,6 +45,7 @@ const BLOCKED_DEGRADATION_SIGNALS = new Set([
   'dummy_main_flow',
   'acceptance_criteria_boilerplate',
   'substantial_field_regression',
+  'substantial_feature_loss',
 ]);
 
 export function shouldRejectDegradedResult(

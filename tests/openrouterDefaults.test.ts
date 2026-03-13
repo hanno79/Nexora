@@ -550,16 +550,14 @@ describe('openrouter safe defaults', () => {
     }
   });
 
-  it('production tier fallback chain contains paid models', () => {
+  it('production tier fallback chain contains only paid models', () => {
     const chain = getDefaultFallbackChainForTier('production');
     expect(chain).toBe(DEFAULT_PRODUCTION_FALLBACK_CHAIN);
     expect(chain.length).toBeGreaterThanOrEqual(3);
-    // Must contain at least one paid model (no :free suffix)
-    const paidModels = chain.filter(m => !m.endsWith(':free'));
-    expect(paidModels.length).toBeGreaterThanOrEqual(2);
-    // Must also include free emergency fallbacks
+    // All models must be paid (no :free suffix) — free fallbacks were removed
+    // to prevent non-development tiers from accidentally using free endpoints
     const freeModels = chain.filter(m => m.endsWith(':free'));
-    expect(freeModels.length).toBeGreaterThanOrEqual(1);
+    expect(freeModels.length).toBe(0);
   });
 
   it('premium tier fallback chain contains paid models', () => {

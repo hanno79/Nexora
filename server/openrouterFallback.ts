@@ -316,9 +316,18 @@ export async function executeOpenRouterFallback(
   const primary = preferredModels[modelType];
   // ÄNDERUNG 11.03.2026: Bei leerer Fallback-Kette auf Tier-Defaults zurückfallen,
   // damit auch ohne User-Preferences mehrere Modelle zur Verfügung stehen.
-  const fallbackChain = preferredFallbackChain.length > 0
+  const rawFallbackChain = preferredFallbackChain.length > 0
     ? preferredFallbackChain
     : [...getDefaultFallbackChainForTier(tier)];
+  // ÄNDERUNG 13.03.2026: Defense-in-Depth — Free-Modelle aus der Fallback-Chain
+  // filtern wenn der Tier nicht 'development' ist, damit Premium-Tiers nie
+  // versehentlich auf Free-Endpunkte zurueckfallen.
+  const fallbackChain = tier === 'development'
+    ? rawFallbackChain
+    : rawFallbackChain.filter(model => !isOpenRouterFreeModel(model));
+  if (fallbackChain.length < rawFallbackChain.length) {
+    console.warn(`[TierFilter] Removed ${rawFallbackChain.length - fallbackChain.length} free model(s) from fallback chain for tier "${tier}"`);
+  }
   const tierModels = MODEL_TIERS[tier];
   const roleDefault = modelType === 'generator'
     ? tierModels.generator

@@ -39,6 +39,7 @@ import {
   type ProviderFailureStage,
   type RuntimeFailureCode,
 } from './providerFailureDiagnostics';
+import { compareStructures, restoreRemovedFeatures } from './prdStructureDiff';
 
 type SupportedLanguage = 'de' | 'en';
 export type FinalizerFailureStage = 'compiler_repair' | 'content_review' | 'semantic_verifier' | 'early_drift';
@@ -900,6 +901,13 @@ function collectRepairDegradationSignals(bestStructure: PRDStructure, candidateS
     signals.add('substantial_field_regression');
   }
 
+  // ÄNDERUNG 13.03.2026: Erkennt katastrophalen Feature-Verlust (>50% der Features verloren).
+  const baselineFeatureCount = bestStructure.features?.length || 0;
+  const candidateFeatureCount = candidateStructure.features?.length || 0;
+  if (baselineFeatureCount > 0 && candidateFeatureCount < Math.ceil(baselineFeatureCount * 0.5)) {
+    signals.add('substantial_feature_loss');
+  }
+
   return Array.from(signals);
 }
 
@@ -911,6 +919,7 @@ function buildRepairRejectedReason(signals: string[]): string | undefined {
     dummy_main_flow: 'main flows degraded into dummy or placeholder steps',
     acceptance_criteria_boilerplate: 'acceptance criteria collapsed into repeated boilerplate',
     substantial_field_regression: 'feature detail regressed sharply compared to the best candidate',
+    substantial_feature_loss: 'more than half of features were lost in the repair output',
   };
   return `Rejected compiler repair because ${signals.map(signal => labels[signal] || signal.replace(/_/g, ' ')).join(', ')}.`;
 }
@@ -1714,23 +1723,38 @@ export async function finalizeWithCompilerGates(
   ) => {
     let nextContent = content;
     const rawCompiled = compileCurrent(content);
-    let nextCompiled = rawCompiled;
+    // Existing: Feld-Qualitaet bestehender Features wiederherstellen
     const recovery = restoreFeatureQualityFromBest({
       bestStructure: baselineStructure,
       candidateStructure: rawCompiled.structure,
     });
-    if (recovery.changed) {
-      nextContent = assembleStructureToMarkdown(recovery.structure);
-      nextCompiled = compileCurrent(nextContent);
+    let workingStructure = recovery.changed ? recovery.structure : rawCompiled.structure;
+
+    // ÄNDERUNG 13.03.2026: Komplett fehlende Features aus der Baseline wiederherstellen.
+    // restoreFeatureQualityFromBest() iteriert nur ueber existierende Candidate-Features,
+    // stellt aber komplett verlorene Features nicht wieder her. Hier greifen wir auf
+    // compareStructures/restoreRemovedFeatures zurueck (gleiche Logik wie runPostCompilerPreservation).
+    const diff = compareStructures(baselineStructure, workingStructure);
+    let restoredMissingFeatureCount = 0;
+    if (diff.removedFeatures.length > 0) {
+      workingStructure = restoreRemovedFeatures(baselineStructure, workingStructure, diff.removedFeatures);
+      restoredMissingFeatureCount = diff.removedFeatures.length;
     }
+
+    const structureChanged = recovery.changed || restoredMissingFeatureCount > 0;
+    if (structureChanged) {
+      nextContent = assembleStructureToMarkdown(workingStructure);
+    }
+    const nextCompiled = structureChanged ? compileCurrent(nextContent) : rawCompiled;
     const evaluated = evaluateCandidate(nextContent, nextCompiled);
     return {
       content: nextContent,
-      rawCompiled,
+      rawCompiled,  // unveraendert fuer Degradation-Signal-Vergleich
       compiled: evaluated.compiled,
       featureQualityDiagnostics: evaluated.featureQualityDiagnostics,
       featureSubstanceScore: evaluated.featureSubstanceScore,
       recovery,
+      restoredMissingFeatureCount,
     };
   };
 
@@ -1915,6 +1939,18 @@ export async function finalizeWithCompilerGates(
       compilerRepairFinishReasons.push(repairResult.finishReason);
       if (repairResult.finishReason === 'length') {
         compilerRepairTruncationCount++;
+        // ÄNDERUNG 13.03.2026: Truncated Responses ueberspringen statt als
+        // Degradation zu zaehlen. Truncation ist ein Infrastruktur-Problem,
+        // kein Model-Problem — soll degradationCount nicht erhoehen.
+        console.warn(`[RepairLoop] Pass ${pass}: truncated response (finish_reason=length), skipping compilation`);
+        repairHistory.push({
+          pass,
+          score: bestScore,
+          issueCount: bestCompiled.quality.issues.length,
+          topIssues: ['truncated_response'],
+        });
+        if (compilerRepairTruncationCount >= 2) break;
+        continue;
       }
     }
     const recoveredRepair = compileWithFeatureQualityRecovery(
