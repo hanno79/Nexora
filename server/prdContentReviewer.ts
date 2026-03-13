@@ -827,6 +827,7 @@ type SemanticRepairTarget =
       suggestedFixes: string[];
       targetFields: FeatureEnrichableField[];
       evidence: SemanticRepairEvidence[];
+      contentDrift?: boolean;
     };
 
 interface NormalizedSemanticPatch {
@@ -1155,6 +1156,32 @@ function buildSemanticRepairTargets(
     }
   }
 
+  // Feature-Drift-Erkennung: Prüfe ob Feature-Inhalte zum Titel passen.
+  // Bei Drift → alle Felder als Targets setzen und contentDrift markieren.
+  const featureTargets = Array.from(targets.values()).filter(
+    (t): t is Extract<SemanticRepairTarget, { kind: 'feature' }> => t.kind === 'feature'
+  );
+  if (featureTargets.length > 0 && structure.features?.length) {
+    const driftIssues = analyzeFeatureSemanticIssues(structure.features);
+    const driftedFeatureIds = new Set(
+      driftIssues
+        .filter(i => i.code === 'feature_semantic_mismatch')
+        .map(i => i.sectionKey.replace(/^feature:/i, '').trim().toUpperCase())
+    );
+
+    for (const target of featureTargets) {
+      if (driftedFeatureIds.has(target.featureId)) {
+        target.contentDrift = true;
+        target.targetFields = [...FEATURE_ENRICHABLE_FIELDS];
+        if (!target.messages.some(m => m.includes('content drift'))) {
+          target.messages.push(
+            `CONTENT DRIFT: Feature "${target.featureName}" content does not match its title. All fields must be rewritten to match the feature name.`
+          );
+        }
+      }
+    }
+  }
+
   return Array.from(targets.values());
 }
 
@@ -1240,11 +1267,20 @@ function buildSemanticRepairPrompt(params: {
     const suggestedFixLines = target.suggestedFixes.length > 0
       ? ['Suggested Fixes:', ...target.suggestedFixes.map(fix => `- ${fix}`)]
       : [];
+    const driftWarning = target.contentDrift
+      ? [
+          '⚠️ CONTENT DRIFT DETECTED: The current content of this feature does NOT match its title.',
+          `The feature is named "${target.featureName}" but its content describes a completely different concept.`,
+          'You MUST rewrite ALL fields from scratch to match the feature name. Do NOT try to patch the existing content.',
+          'Generate entirely new content that correctly implements what the feature name describes.',
+        ]
+      : [];
     return [
       `## Target Feature: ${target.featureId} - ${target.featureName}`,
       `Feature List Position: ${featurePosition >= 0 ? featurePosition + 1 : 'unknown'}`,
       `Issue Codes: ${target.issueCodes.join(', ') || 'unknown'}`,
       `Target Fields: ${target.targetFields.join(', ')}`,
+      ...driftWarning,
       'Blocking Issues:',
       ...target.messages.map(message => `- ${message}`),
       ...suggestedFixLines,

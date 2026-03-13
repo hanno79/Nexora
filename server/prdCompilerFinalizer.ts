@@ -2631,10 +2631,17 @@ export async function finalizeWithCompilerGates(
       }
 
       // ÄNDERUNG 13.03.2026: Repair-Exhaustion Circuit-Breaker
-      // Wenn der Repair-Loop keine substantive Aenderung bewirken konnte,
+      // Wenn der Repair-Loop keine substantive oder strukturelle Aenderung bewirken konnte,
       // sind die verbleibenden Issues offenbar unreparierbar → als degraded akzeptieren.
+      // repair_no_structural_change = Repair konnte GAR NICHTS aendern (staerkstes Erschoepfungssignal)
+      // repair_no_substantive_change = Repair hat geaendert aber nichts verbessert
       // Greift NUR wenn Repair tatsaechlich gelaufen ist (repairCycleCount > 0).
-      if (repairGapReason === 'repair_no_substantive_change' && repairCycleCount > 0) {
+      const isRepairExhausted = (
+        repairGapReason === 'repair_no_substantive_change'
+        || repairGapReason === 'repair_no_structural_change'
+      ) && repairCycleCount > 0;
+
+      if (isRepairExhausted) {
         const displayedExhausted = alignDisplayedCandidate(bestSubstantiveCurrent, bestSubstantiveCandidateSource);
         return {
           content: displayedExhausted.evaluation.compiled.content,

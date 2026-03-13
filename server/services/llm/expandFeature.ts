@@ -3,6 +3,8 @@ import { setGlobalCooldown } from '../../openrouter';
 import type { TokenUsage } from "@shared/schema";
 import { enforceStructure } from './repairSection';
 import { FEATURE_EXPANSION } from '../../tokenBudgets';
+import { parseFeatureSubsections } from '../../prdFeatureParser';
+import { analyzeFeatureSemanticIssues } from '../../prdFeatureSemantics';
 
 type SupportedContentLanguage = 'de' | 'en';
 
@@ -267,6 +269,18 @@ function buildDeterministicFeatureFallback(
   ].join('\n');
 }
 
+function hasFeatureContentDrift(featureId: string, featureName: string, content: string): boolean {
+  const parsed = parseFeatureSubsections(content);
+  const featureSpec = {
+    id: featureId,
+    name: featureName,
+    rawContent: content,
+    ...parsed,
+  };
+  const issues = analyzeFeatureSemanticIssues([featureSpec]);
+  return issues.some(i => i.code === 'feature_semantic_mismatch');
+}
+
 export async function expandFeature(
   userInput: string,
   vision: string,
@@ -298,41 +312,48 @@ export async function expandFeature(
 
     const validation = validateExpandedFeature(result.content);
 
+    // Determine the valid content (direct or via local structure repair)
+    let validContent: string | null = null;
+    let modelTag = result.model;
+
     if (validation.valid) {
+      validContent = result.content;
+    } else {
+      // Deterministic pre-repair: recover minor structure issues without an extra model call.
+      const locallyRepaired = enforceStructure(result.content);
+      if (locallyRepaired !== result.content) {
+        const repairedValidation = validateExpandedFeature(locallyRepaired);
+        if (repairedValidation.valid) {
+          validContent = locallyRepaired;
+          modelTag = `${result.model}:local-structure-repair`;
+        }
+      }
+    }
+
+    if (validContent) {
+      // Feature-Drift-Erkennung: Prüfen ob der generierte Inhalt zum Feature-Titel passt.
+      // Bei Drift auf Attempt 1 → Model rotieren und erneut versuchen.
+      if (attempt === 1 && hasFeatureContentDrift(featureId, featureName, validContent)) {
+        console.warn(`  ⚠️ ${featureId} content drift detected — "${featureName}" content does not match title`);
+        setGlobalCooldown(result.model, 60 * 1000, 'feature content drift');
+        console.log(`  🔄 Retrying ${featureId} due to content drift...`);
+        retried = true;
+        continue;
+      }
+
       console.log(`  ✅ ${featureId} expanded successfully (attempt ${attempt})`);
       return {
         featureId,
         featureName,
         ...(parentTaskName ? { parentTaskName } : {}),
         ...(parentTaskDescription ? { parentTaskDescription } : {}),
-        content: result.content,
-        model: result.model,
+        content: validContent,
+        model: modelTag,
         usage: result.usage,
         retried: attempt > 1,
         valid: true,
         compiled: true,
       };
-    }
-
-    // Deterministic pre-repair: recover minor structure issues without an extra model call.
-    const locallyRepaired = enforceStructure(result.content);
-    if (locallyRepaired !== result.content) {
-      const repairedValidation = validateExpandedFeature(locallyRepaired);
-      if (repairedValidation.valid) {
-        console.log(`  🛠️ ${featureId} normalized via local structure repair (attempt ${attempt})`);
-        return {
-          featureId,
-          featureName,
-          ...(parentTaskName ? { parentTaskName } : {}),
-          ...(parentTaskDescription ? { parentTaskDescription } : {}),
-          content: locallyRepaired,
-          model: `${result.model}:local-structure-repair`,
-          usage: result.usage,
-          retried: attempt > 1,
-          valid: true,
-          compiled: true,
-        };
-      }
     }
 
     console.warn(`  ⚠️ ${featureId} validation failed — missing: ${validation.missing.join(', ')}`);
