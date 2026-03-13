@@ -1524,11 +1524,33 @@ function isEnrichmentOnlyIssue(issue: SemanticBlockingIssue): boolean {
 }
 
 function isSectionLevelContradiction(issue: SemanticBlockingIssue): boolean {
-  // Nur globalBusinessRules — dort sind Widersprueche oft im User-Prompt verankert
-  // und vom Repair-Loop nicht aufloesbar. Andere Sections (z.B. timelineMilestones)
+  // globalBusinessRules-Widersprueche sind oft im User-Prompt verankert
+  // und vom Repair-Loop nicht aufloesbar — egal ob als business_rule_contradiction
+  // oder cross_section_inconsistency gemeldet. Andere Sections (z.B. timelineMilestones)
   // mit business_rule_contradiction sind potenziell reparierbar.
+  if (issue.sectionKey !== 'globalBusinessRules') return false;
   return issue.code === 'business_rule_contradiction'
-    && issue.sectionKey === 'globalBusinessRules';
+    || issue.code === 'cross_section_inconsistency';
+}
+
+function isNonFeatureSchemaMismatch(issue: SemanticBlockingIssue): boolean {
+  // schema_field_mismatch auf nicht-Feature-Sections (z.B. domainModel) sind
+  // Definitions-Nitpicks die der Repair-Loop nicht aufloesen kann.
+  return issue.code === 'schema_field_mismatch'
+    && !issue.sectionKey?.startsWith('feature:');
+}
+
+// Issues die definitiv unreparierbar sind — Repair-Loop ueberspringt sie komplett
+function isUnrepairableIssue(issue: SemanticBlockingIssue): boolean {
+  return isEnrichmentOnlyIssue(issue)
+    || isSectionLevelContradiction(issue);
+}
+
+// Soft-blocking am Final Gate: unreparierbar + schema-Nitpicks auf nicht-Feature-Sections
+// (letztere werden im Repair-Loop VERSUCHT, aber blockieren nicht wenn sie bestehen bleiben)
+function isSoftBlockingIssue(issue: SemanticBlockingIssue): boolean {
+  return isUnrepairableIssue(issue)
+    || isNonFeatureSchemaMismatch(issue);
 }
 
 function partitionBlockingIssues(issues: SemanticBlockingIssue[]): {
@@ -1538,7 +1560,7 @@ function partitionBlockingIssues(issues: SemanticBlockingIssue[]): {
   const hard: SemanticBlockingIssue[] = [];
   const soft: SemanticBlockingIssue[] = [];
   for (const issue of issues) {
-    if (isEnrichmentOnlyIssue(issue) || isSectionLevelContradiction(issue)) {
+    if (isSoftBlockingIssue(issue)) {
       soft.push(issue);
     } else {
       hard.push(issue);
@@ -2339,8 +2361,9 @@ export async function finalizeWithCompilerGates(
         if (featureKey && frozenFeatureIds.has(featureKey)) return false;
         if (featureKey && manualReviewFeatureIds.has(featureKey)) return false;
         if (!featureKey && manualReviewFeatureIds.has(issue.sectionKey)) return false;
-        // ÄNDERUNG 13.03.2026: Soft-blocking Issues nicht reparieren — werden am Gate akzeptiert
-        if (isEnrichmentOnlyIssue(issue) || isSectionLevelContradiction(issue)) return false;
+        // ÄNDERUNG 13.03.2026: Unreparierbare Issues nicht reparieren — werden am Gate akzeptiert.
+        // Hinweis: isNonFeatureSchemaMismatch wird hier NICHT gefiltert — Repair darf es versuchen.
+        if (isUnrepairableIssue(issue)) return false;
         return true;
       });
 
@@ -2499,9 +2522,10 @@ export async function finalizeWithCompilerGates(
         break;
       }
 
-      // ÄNDERUNG 13.03.2026: Auch beenden wenn nur noch soft-blocking Issues uebrig sind
-      const { hardBlocking: remainingHard } = partitionBlockingIssues(verification.blockingIssues);
-      if (remainingHard.length === 0) {
+      // ÄNDERUNG 13.03.2026: Auch beenden wenn nur noch unreparierbare Issues uebrig sind.
+      // Hinweis: isNonFeatureSchemaMismatch zaehlt hier NICHT — der Loop darf diese weiter versuchen.
+      const hasRepairableIssues = verification.blockingIssues.some(i => !isUnrepairableIssue(i));
+      if (!hasRepairableIssues) {
         repairGapReason = undefined;
         break;
       }
@@ -2605,6 +2629,63 @@ export async function finalizeWithCompilerGates(
           ...displayedDegraded.evaluation.featureQualityDiagnostics,
         };
       }
+
+      // ÄNDERUNG 13.03.2026: Repair-Exhaustion Circuit-Breaker
+      // Wenn der Repair-Loop keine substantive Aenderung bewirken konnte,
+      // sind die verbleibenden Issues offenbar unreparierbar → als degraded akzeptieren.
+      // Greift NUR wenn Repair tatsaechlich gelaufen ist (repairCycleCount > 0).
+      if (repairGapReason === 'repair_no_substantive_change' && repairCycleCount > 0) {
+        const displayedExhausted = alignDisplayedCandidate(bestSubstantiveCurrent, bestSubstantiveCandidateSource);
+        return {
+          content: displayedExhausted.evaluation.compiled.content,
+          structure: displayedExhausted.evaluation.compiled.structure,
+          quality: withSyntheticQualityIssue(displayedExhausted.evaluation.compiled.quality, {
+            code: 'semantic_verifier_repair_exhausted',
+            message: `Repair loop exhausted after ${repairCycleCount} cycles (${repairGapReason}). `
+              + `Remaining issues: ${verification.blockingIssues.map(i => `${i.sectionKey}:${i.code}`).join(', ')}. `
+              + `Accepting as degraded.`,
+            severity: 'warning',
+          }),
+          qualityScore: bestScore,
+          repairAttempts,
+          reviewerAttempts,
+          contentReview,
+          contentRefined,
+          semanticVerification: verification,
+          semanticVerificationHistory,
+          semanticRepairApplied,
+          semanticRepairAttempted,
+          semanticRepairIssueCodes,
+          semanticRepairSectionKeys,
+          semanticRepairTruncated,
+          initialSemanticBlockingIssues,
+          postRepairSemanticBlockingIssues,
+          finalSemanticBlockingIssues,
+          repairGapReason,
+          repairCycleCount,
+          primaryCapabilityAnchors: displayedExhausted.evaluation.compiled.quality.primaryCapabilityAnchors,
+          featurePriorityWindow: displayedExhausted.evaluation.compiled.quality.featurePriorityWindow,
+          coreFeatureIds: displayedExhausted.evaluation.compiled.quality.coreFeatureIds,
+          supportFeatureIds: displayedExhausted.evaluation.compiled.quality.supportFeatureIds,
+          canonicalFeatureIds: displayedExhausted.evaluation.compiled.quality.canonicalFeatureIds || canonicalFeatureIds,
+          timelineMismatchedFeatureIds: displayedExhausted.evaluation.compiled.quality.timelineMismatchedFeatureIds || timelineMismatchedFeatureIds,
+          timelineRewrittenFromFeatureMap,
+          timelineRewriteAppliedLines,
+          compilerRepairTruncationCount,
+          compilerRepairFinishReasons,
+          repairRejected,
+          repairRejectedReason,
+          repairDegradationSignals,
+          degradedCandidateAvailable: !!displayedExhausted.evaluation.compiled.content,
+          degradedCandidateSource: bestSubstantiveCandidateSource,
+          displayedCandidateSource: displayedExhausted.displayedCandidateSource,
+          diagnosticsAlignedWithDisplayedCandidate: displayedExhausted.diagnosticsAlignedWithDisplayedCandidate,
+          semanticRepairChangedSections,
+          semanticRepairStructuralChange,
+          ...displayedExhausted.evaluation.featureQualityDiagnostics,
+        };
+      }
+
       const displayedFailure = alignDisplayedCandidate(bestSubstantiveCurrent, bestSubstantiveCandidateSource);
       throw new PrdCompilerQualityError(
         'PRD compiler quality gate failed after semantic verification.',

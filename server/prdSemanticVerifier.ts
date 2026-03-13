@@ -152,6 +152,9 @@ RULES
 5. If no blocking issues exist, return verdict "pass" and an empty blockingIssues array.
 6. Missing or empty enrichment fields (UI Impact, Data Impact, Trigger, Alternate Flows, Preconditions, Postconditions) are NOT blocking semantic defects — even when the feature describes visual or data-heavy functionality. Only report a feature_section_semantic_mismatch when the absence creates a FACTUAL CONTRADICTION with another section (e.g., Main Flow references a UI element defined nowhere). A field simply being empty is never blocking.
 7. For each blocking issue, provide a suggestedFix with a concrete, actionable correction describing what the content SHOULD say. Do not restate the problem — provide the corrected text or a precise description of what needs to change.
+8. Content that EXISTS but is described as 'generic', 'incomplete', or 'lacking technical detail' is a QUALITY issue, not a semantic defect. Only report semantic defects when there is a FACTUAL CONTRADICTION between sections — e.g., Section A says "ratio 50:1" and Section B says "ratio 100:1". A section being less detailed than another is never a semantic defect.
+9. Mathematical equivalences are NOT cross_section_inconsistency. For example: "ratio 100:1", "divided by 100", and "multiply by 0.01" all express the same conversion and are consistent. Only flag an inconsistency when the actual VALUES disagree.
+10. Truncated or placeholder text (e.g., 'freigesch', single dashes, 'TBD') in a field is a content quality issue, not a semantic mismatch. Do not report feature_section_semantic_mismatch for incomplete text unless it creates a factual contradiction with another section.
 
 REQUEST CONTEXT
 - Mode: ${input.mode}
