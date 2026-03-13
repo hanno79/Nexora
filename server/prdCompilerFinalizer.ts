@@ -1511,16 +1511,40 @@ function determineRepairGapReason(params: {
 }
 
 const ENRICHMENT_ONLY_FIELDS: ReadonlySet<string> = new Set([
-  'uiImpact', 'trigger', 'alternateFlows', 'preconditions', 'postconditions',
+  'uiImpact', 'dataImpact', 'trigger', 'alternateFlows', 'preconditions', 'postconditions',
 ]);
 
-function areAllIssuesEnrichmentOnly(issues: SemanticBlockingIssue[]): boolean {
-  return issues.length > 0 && issues.every(issue => {
-    if (issue.code !== 'feature_section_semantic_mismatch') return false;
-    if (!issue.sectionKey?.startsWith('feature:')) return false;
-    if (!issue.targetFields?.length) return false;
-    return issue.targetFields.every(field => ENRICHMENT_ONLY_FIELDS.has(field));
-  });
+// ÄNDERUNG 13.03.2026: Soft-blocking Issues (Enrichment-Gaps, Section-Level-Widersprueche)
+// werden am Final Gate als degraded akzeptiert statt zu blockieren.
+function isEnrichmentOnlyIssue(issue: SemanticBlockingIssue): boolean {
+  if (issue.code !== 'feature_section_semantic_mismatch') return false;
+  if (!issue.sectionKey?.startsWith('feature:')) return false;
+  if (!issue.targetFields?.length) return false;
+  return issue.targetFields.every(field => ENRICHMENT_ONLY_FIELDS.has(field));
+}
+
+function isSectionLevelContradiction(issue: SemanticBlockingIssue): boolean {
+  // Nur globalBusinessRules — dort sind Widersprueche oft im User-Prompt verankert
+  // und vom Repair-Loop nicht aufloesbar. Andere Sections (z.B. timelineMilestones)
+  // mit business_rule_contradiction sind potenziell reparierbar.
+  return issue.code === 'business_rule_contradiction'
+    && issue.sectionKey === 'globalBusinessRules';
+}
+
+function partitionBlockingIssues(issues: SemanticBlockingIssue[]): {
+  hardBlocking: SemanticBlockingIssue[];
+  softBlocking: SemanticBlockingIssue[];
+} {
+  const hard: SemanticBlockingIssue[] = [];
+  const soft: SemanticBlockingIssue[] = [];
+  for (const issue of issues) {
+    if (isEnrichmentOnlyIssue(issue) || isSectionLevelContradiction(issue)) {
+      soft.push(issue);
+    } else {
+      hard.push(issue);
+    }
+  }
+  return { hardBlocking: hard, softBlocking: soft };
 }
 
 function hasSubstantiveCandidateImprovement(
@@ -2309,12 +2333,14 @@ export async function finalizeWithCompilerGates(
     ) {
       runCancelCheck(`semantic_repair_cycle_${repairCycleCount + 1}`);
 
-      // 1. Filter out frozen and manual-review targets
+      // 1. Filter out frozen, manual-review, and soft-blocking targets
       const activeIssues = verification.blockingIssues.filter(issue => {
         const featureKey = extractFeatureKey(issue.sectionKey);
         if (featureKey && frozenFeatureIds.has(featureKey)) return false;
         if (featureKey && manualReviewFeatureIds.has(featureKey)) return false;
         if (!featureKey && manualReviewFeatureIds.has(issue.sectionKey)) return false;
+        // ÄNDERUNG 13.03.2026: Soft-blocking Issues nicht reparieren — werden am Gate akzeptiert
+        if (isEnrichmentOnlyIssue(issue) || isSectionLevelContradiction(issue)) return false;
         return true;
       });
 
@@ -2473,6 +2499,13 @@ export async function finalizeWithCompilerGates(
         break;
       }
 
+      // ÄNDERUNG 13.03.2026: Auch beenden wenn nur noch soft-blocking Issues uebrig sind
+      const { hardBlocking: remainingHard } = partitionBlockingIssues(verification.blockingIssues);
+      if (remainingHard.length === 0) {
+        repairGapReason = undefined;
+        break;
+      }
+
       // 11. Regression check: did repair break any frozen features?
       const regressions = verification.blockingIssues.filter(issue => {
         const fk = extractFeatureKey(issue.sectionKey);
@@ -2519,16 +2552,18 @@ export async function finalizeWithCompilerGates(
     }
 
     if (verification.verdict === 'fail' && verification.blockingIssues.length > 0) {
-      // Wenn alle finalen Issues nur Enrichment-Felder betreffen (z.B. fehlende
-      // uiImpact/trigger), den Candidate durchlassen statt zu blockieren.
-      if (areAllIssuesEnrichmentOnly(verification.blockingIssues)) {
+      // ÄNDERUNG 13.03.2026: Partitioniere in hard-blocking (echte Defekte) und
+      // soft-blocking (Enrichment-Gaps, Section-Level-Widersprueche). Nur hard-blocking
+      // Issues blockieren die Finalisierung — soft-blocking werden als degraded akzeptiert.
+      const { hardBlocking, softBlocking } = partitionBlockingIssues(verification.blockingIssues);
+      if (hardBlocking.length === 0 && softBlocking.length > 0) {
         const displayedDegraded = alignDisplayedCandidate(bestSubstantiveCurrent, bestSubstantiveCandidateSource);
         return {
           content: displayedDegraded.evaluation.compiled.content,
           structure: displayedDegraded.evaluation.compiled.structure,
           quality: withSyntheticQualityIssue(displayedDegraded.evaluation.compiled.quality, {
             code: 'semantic_verifier_enrichment_only',
-            message: `Verifier reported only enrichment gaps (${verification.blockingIssues.map(i => i.sectionKey).join(', ')}). Accepting as degraded.`,
+            message: `Verifier reported only soft-blocking issues (${softBlocking.map(i => `${i.sectionKey}:${i.code}`).join(', ')}). Accepting as degraded.`,
             severity: 'warning',
           }),
           qualityScore: bestScore,

@@ -150,7 +150,7 @@ RULES
 3. Only use "enrich" for feature issues; use "rewrite" for section-level issues.
 4. If you choose "feature_section_semantic_mismatch", include targetFields and ensure the message ends with "Rewrite: field1, field2, ...".
 5. If no blocking issues exist, return verdict "pass" and an empty blockingIssues array.
-6. Missing or empty enrichment fields (UI Impact, Trigger, Alternate Flows, Preconditions, Postconditions) are NOT blocking semantic defects. Only report a feature_section_semantic_mismatch for missing fields if the absence creates a factual contradiction with another section.
+6. Missing or empty enrichment fields (UI Impact, Data Impact, Trigger, Alternate Flows, Preconditions, Postconditions) are NOT blocking semantic defects — even when the feature describes visual or data-heavy functionality. Only report a feature_section_semantic_mismatch when the absence creates a FACTUAL CONTRADICTION with another section (e.g., Main Flow references a UI element defined nowhere). A field simply being empty is never blocking.
 7. For each blocking issue, provide a suggestedFix with a concrete, actionable correction describing what the content SHOULD say. Do not restate the problem — provide the corrected text or a precise description of what needs to change.
 
 REQUEST CONTEXT
