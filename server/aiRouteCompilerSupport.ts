@@ -18,6 +18,7 @@ import {
   type CompilerRunDiagnostics,
   type PrdQualityStatus,
 } from './prdRunQuality';
+import type { PrdQualityReport } from './prdCompilerValidation';
 import type { PRDStructure } from './prdStructure';
 import { storage } from './storage';
 
@@ -27,6 +28,19 @@ export async function resolveTemplateCategoryForPrd(prdId?: string | null): Prom
   if (!prd?.templateId) return undefined;
   const template = await storage.getTemplate(prd.templateId);
   return template?.category || undefined;
+}
+
+const DEGRADATION_ISSUE_CODES = new Set([
+  'semantic_verifier_enrichment_only',
+  'semantic_verifier_repair_exhausted',
+]);
+
+function assessQualityStatus(quality: PrdQualityReport): PrdQualityStatus {
+  if (!quality.valid) return 'failed_quality';
+  const hasDegradation = quality.issues.some(
+    issue => DEGRADATION_ISSUE_CODES.has(issue.code),
+  );
+  return hasDegradation ? 'degraded' : 'passed';
 }
 
 export function assessCompilerOutcome(params: {
@@ -44,7 +58,7 @@ export function assessCompilerOutcome(params: {
     strictLanguageConsistency: true,
     enableFeatureAggregation: true,
   });
-  const qualityStatus: PrdQualityStatus = compiled.quality.valid ? 'passed' : 'failed_quality';
+  const qualityStatus: PrdQualityStatus = assessQualityStatus(compiled.quality);
   const compilerDiagnostics = buildCompilerRunDiagnostics({
     quality: compiled.quality,
     base: params.baseDiagnostics || {},

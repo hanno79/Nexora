@@ -87,8 +87,8 @@ function buildFeatureSummary(structure: PRDStructure): string {
         `- ${feature.id}: ${feature.name}`,
         `  Purpose: ${sectionSnippet(feature.purpose, 180) || '(missing)'}`,
         `  Trigger: ${sectionSnippet(feature.trigger, 140) || '(missing)'}`,
-        `  Data: ${sectionSnippet(feature.dataImpact, 140) || '(missing)'}`,
-        `  UI: ${sectionSnippet(feature.uiImpact, 140) || '(missing)'}`,
+        `  dataImpact: ${sectionSnippet(feature.dataImpact, 140) || '(missing)'}`,
+        `  uiImpact: ${sectionSnippet(feature.uiImpact, 140) || '(missing)'}`,
       ];
       return summary.join('\n');
     })
@@ -138,7 +138,7 @@ Return JSON only:
       "sectionKey": "canonical section key like systemBoundaries or feature:F-01",
       "message": "short concrete explanation",
       "suggestedAction": "rewrite" | "enrich",
-      "targetFields": ["purpose", "mainFlow"],
+      "targetFields": ["purpose", "mainFlow"],  // ONLY use these exact camelCase names: name, purpose, actors, trigger, preconditions, mainFlow, alternateFlows, postconditions, dataImpact, uiImpact, acceptanceCriteria
       "suggestedFix": "concrete correction describing what the content SHOULD say"
     }
   ]
@@ -154,7 +154,7 @@ RULES
 7. For each blocking issue, provide a suggestedFix with a concrete, actionable correction describing what the content SHOULD say. Do not restate the problem — provide the corrected text or a precise description of what needs to change.
 8. Content that EXISTS but is described as 'generic', 'incomplete', or 'lacking technical detail' is a QUALITY issue, not a semantic defect. Only report semantic defects when there is a FACTUAL CONTRADICTION between sections — e.g., Section A says "ratio 50:1" and Section B says "ratio 100:1". A section being less detailed than another is never a semantic defect.
 9. Mathematical equivalences are NOT cross_section_inconsistency. For example: "ratio 100:1", "divided by 100", and "multiply by 0.01" all express the same conversion and are consistent. Only flag an inconsistency when the actual VALUES disagree.
-10. Truncated or placeholder text (e.g., 'freigesch', single dashes, 'TBD') in a field is a content quality issue, not a semantic mismatch. Do not report feature_section_semantic_mismatch for incomplete text unless it creates a factual contradiction with another section.
+10. Truncated or placeholder text (e.g., 'freigesch', single dashes, 'TBD') AND incomplete sentences that break off mid-word or mid-phrase in a field are content quality issues, not semantic mismatches. Do not report feature_section_semantic_mismatch for incomplete, empty, or truncated text unless it creates a factual contradiction with another section. An empty or truncated dataImpact or uiImpact field is NEVER a blocking issue.
 
 REQUEST CONTEXT
 - Mode: ${input.mode}
