@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { compilePrdDocument } from '../server/prdCompiler';
 import {
   collectTimelineConsistencyDiagnostics,
+  collectDeterministicSemanticIssues,
   rewriteTimelineMilestonesFromFeatureMap,
 } from '../server/prdDeterministicSemanticLints';
 
@@ -1202,5 +1203,187 @@ describe('deterministic semantic compiler lints', () => {
     expect(rewrite.content).toContain('| 2 | F-02 Core Tetris Gameplay |');
     expect(rewrite.content).not.toContain('F-01 Core Tetris Gameplay');
     expect(rewrite.appliedLines).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New quality lint checks
+// ---------------------------------------------------------------------------
+
+import type { PRDStructure } from '../server/prdStructure';
+
+function makeMinimalStructure(overrides?: Partial<PRDStructure>): PRDStructure {
+  return {
+    features: [],
+    otherSections: {},
+    systemVision: 'A test application.',
+    systemBoundaries: 'Backend API with PostgreSQL.',
+    domainModel: '- User (id, name)',
+    globalBusinessRules: 'Users must be authenticated.',
+    nonFunctional: 'API p95 < 300ms.',
+    errorHandling: 'Errors are logged.',
+    deployment: 'Node.js API with PostgreSQL.',
+    definitionOfDone: 'Tests pass.',
+    outOfScope: 'No mobile app.',
+    timelineMilestones: 'Phase 1: MVP.',
+    successCriteria: 'KPIs met.',
+    ...overrides,
+  };
+}
+
+describe('feature_duplicate_flow', () => {
+  it('detects features with nearly identical main flows', () => {
+    const structure = makeMinimalStructure({
+      features: [
+        {
+          id: 'F-01', name: 'Currency System', rawContent: '',
+          purpose: 'Spieler sammelt Waehrung waehrend des Spiels und kann damit dauerhafte Faehigkeiten freischalten die das Gameplay verbessern',
+          mainFlow: [
+            'Spieler sammelt Punkte waehrend des Spiels durch das Loeschen von Linien.',
+            'Die Punkte werden in Waehrung umgewandelt und im lokalen Speicher gespeichert.',
+            'Spieler kann im Hauptmenue die verfuegbaren Faehigkeiten anzeigen lassen.',
+            'Spieler waehlt eine Faehigkeit aus und kauft sie mit der gesammelten Waehrung.',
+            'Die Faehigkeit wird dauerhaft freigeschaltet und ist in zukuenftigen Spielen verfuegbar.',
+          ],
+          acceptanceCriteria: ['Currency updates correctly.'],
+        },
+        {
+          id: 'F-02', name: 'Meta Progression', rawContent: '',
+          purpose: 'Spieler sammelt Waehrung waehrend des Spiels und kann damit dauerhafte Faehigkeiten freischalten die strategische Vorteile bieten',
+          mainFlow: [
+            'Spieler sammelt Waehrung waehrend des Spiels durch das Loeschen von Linien.',
+            'Die Waehrung wird im lokalen Speicher gespeichert.',
+            'Spieler kann im Hauptmenue die verfuegbaren Faehigkeiten anzeigen lassen.',
+            'Spieler waehlt eine Faehigkeit aus und kauft sie mit der gesammelten Waehrung.',
+            'Die Faehigkeit wird dauerhaft freigeschaltet und ist in zukuenftigen Spielen verfuegbar.',
+          ],
+          acceptanceCriteria: ['Progression works correctly.'],
+        },
+      ],
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure);
+    const dupes = issues.filter(i => i.code === 'feature_duplicate_flow');
+    expect(dupes.length).toBeGreaterThanOrEqual(1);
+    expect(dupes[0].message).toContain('F-01');
+    expect(dupes[0].message).toContain('F-02');
+  });
+
+  it('does not flag features with different flows', () => {
+    const structure = makeMinimalStructure({
+      features: [
+        {
+          id: 'F-01', name: 'Login', rawContent: '',
+          purpose: 'Authenticate users via email and password',
+          mainFlow: ['User enters email.', 'User enters password.', 'System validates credentials.'],
+          acceptanceCriteria: ['Login succeeds with valid credentials.'],
+        },
+        {
+          id: 'F-02', name: 'Export PDF', rawContent: '',
+          purpose: 'Generate PDF reports from dashboard data',
+          mainFlow: ['User clicks export.', 'System generates PDF.', 'Browser downloads file.'],
+          acceptanceCriteria: ['PDF contains dashboard data.'],
+        },
+      ],
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure);
+    const dupes = issues.filter(i => i.code === 'feature_duplicate_flow');
+    expect(dupes).toHaveLength(0);
+  });
+});
+
+describe('acceptance_criteria_boilerplate', () => {
+  it('detects generic boilerplate acceptance criteria (DE)', () => {
+    const structure = makeMinimalStructure({
+      features: [
+        {
+          id: 'F-01', name: 'Tetris Gameplay', rawContent: '',
+          purpose: 'Classic Tetris gameplay',
+          mainFlow: ['Player rotates blocks.'],
+          acceptanceCriteria: [
+            'Klassisches Tetris-Gameplay kann mit gültigen Eingaben erfolgreich ausgeführt werden.',
+            'Ungültige Eingaben oder Ausführungsfehler bei Klassisches Tetris-Gameplay erzeugen verständliches Feedback ohne inkonsistenten Zustand.',
+          ],
+        },
+      ],
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure, { language: 'de' });
+    const boilerplate = issues.filter(i => i.code === 'acceptance_criteria_boilerplate');
+    expect(boilerplate.length).toBeGreaterThanOrEqual(1);
+    expect(boilerplate[0].message).toContain('F-01');
+    expect(boilerplate[0].message).toContain('2/2');
+  });
+
+  it('does not flag specific acceptance criteria', () => {
+    const structure = makeMinimalStructure({
+      features: [
+        {
+          id: 'F-01', name: 'Login', rawContent: '',
+          purpose: 'User authentication',
+          mainFlow: ['User logs in.'],
+          acceptanceCriteria: [
+            'Login with valid credentials returns a JWT token within 500ms.',
+            'Three failed attempts trigger a 15-minute lockout.',
+          ],
+        },
+      ],
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure);
+    const boilerplate = issues.filter(i => i.code === 'acceptance_criteria_boilerplate');
+    expect(boilerplate).toHaveLength(0);
+  });
+});
+
+describe('deployment_stack_mismatch', () => {
+  it('detects backend stack in client-only architecture', () => {
+    const structure = makeMinimalStructure({
+      systemBoundaries: 'Eine clientseitige Webanwendung ohne serverseitige Logik. Persistence via LocalStorage.',
+      deployment: 'Tech-Stack: Next.js, Database: Supabase oder PostgreSQL, Auth: Clerk, Payment: Stripe.',
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure);
+    const mismatch = issues.filter(i => i.code === 'deployment_stack_mismatch');
+    expect(mismatch.length).toBeGreaterThanOrEqual(1);
+    expect(mismatch[0].message).toContain('client-only');
+    expect(mismatch[0].message).toMatch(/PostgreSQL|Supabase|Clerk|Stripe/);
+  });
+
+  it('does not flag backend stack for server architecture', () => {
+    const structure = makeMinimalStructure({
+      systemBoundaries: 'The system includes a backend API server with PostgreSQL persistence.',
+      deployment: 'Tech-Stack: Node.js, Database: PostgreSQL, Auth: Clerk.',
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure);
+    const mismatch = issues.filter(i => i.code === 'deployment_stack_mismatch');
+    expect(mismatch).toHaveLength(0);
+  });
+});
+
+describe('nfr_architecture_mismatch', () => {
+  it('detects concurrent user NFR for client-only app', () => {
+    const structure = makeMinimalStructure({
+      systemBoundaries: 'Eine rein clientseitige Webanwendung. Keine serverseitige Logik.',
+      nonFunctional: 'Die Anwendung sollte mindestens 10.000 gleichzeitige Nutzer unterstützen.',
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure);
+    const mismatch = issues.filter(i => i.code === 'nfr_architecture_mismatch');
+    expect(mismatch.length).toBeGreaterThanOrEqual(1);
+    expect(mismatch[0].message).toContain('client-only');
+  });
+
+  it('does not flag concurrent user NFR for server app', () => {
+    const structure = makeMinimalStructure({
+      systemBoundaries: 'Backend API with load balancer and PostgreSQL cluster.',
+      nonFunctional: 'The system supports 10,000 concurrent users.',
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure);
+    const mismatch = issues.filter(i => i.code === 'nfr_architecture_mismatch');
+    expect(mismatch).toHaveLength(0);
   });
 });

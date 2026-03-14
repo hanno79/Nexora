@@ -2034,6 +2034,249 @@ export function collectDeterministicSemanticIssues(
 
   issues.push(...collectDegenerateSectionIssues(structure, knownFallbackSections));
 
+  issues.push(...detectFeatureDuplicateFlow(structure));
+  issues.push(...detectAcceptanceCriteriaBoilerplate(structure, options.language));
+  if (!systemBoundariesAreFallback && !deploymentIsFallback) {
+    issues.push(...detectDeploymentStackMismatch(structure));
+  }
+  if (!systemBoundariesAreFallback) {
+    issues.push(...detectNfrArchitectureMismatch(structure));
+  }
+
+  return issues;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers for new quality lint checks
+// ---------------------------------------------------------------------------
+
+function buildWordTrigrams(text: string): Set<string> {
+  const words = text.toLowerCase().replace(/[^a-zäöüß0-9\s]/g, '').split(/\s+/).filter(Boolean);
+  const trigrams = new Set<string>();
+  for (let i = 0; i <= words.length - 3; i++) {
+    trigrams.add(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+  }
+  return trigrams;
+}
+
+function computeTrigramSimilarity(a: string, b: string): number {
+  const triA = buildWordTrigrams(a);
+  const triB = buildWordTrigrams(b);
+  if (triA.size === 0 && triB.size === 0) return 0;
+  if (triA.size === 0 || triB.size === 0) return 0;
+  let intersection = 0;
+  for (const t of triA) {
+    if (triB.has(t)) intersection++;
+  }
+  return intersection / Math.max(triA.size, triB.size);
+}
+
+const BOILERPLATE_PATTERNS_DE = [
+  /kann mit g[üu]ltigen eingaben erfolgreich ausgef[üu]hrt werden/i,
+  /erzeugen? verst[äa]ndliches feedback ohne inkonsistenten zustand/i,
+  /kann erfolgreich durchgef[üu]hrt werden/i,
+  /ung[üu]ltige eingaben.*erzeugen.*feedback/i,
+];
+
+const BOILERPLATE_PATTERNS_EN = [
+  /can be successfully executed with valid inputs/i,
+  /produce understandable feedback without inconsistent state/i,
+  /invalid inputs.*produce.*feedback/i,
+];
+
+function isBoilerplateAcceptanceCriterion(text: string, language?: SupportedLanguage): boolean {
+  const patterns = language === 'en' ? BOILERPLATE_PATTERNS_EN : [...BOILERPLATE_PATTERNS_DE, ...BOILERPLATE_PATTERNS_EN];
+  return patterns.some(p => p.test(text));
+}
+
+const CLIENT_ONLY_INDICATORS = [
+  /clientseitig/i, /client[\s-]?side/i, /statische?\s+bereitstellung/i,
+  /static\s+deploy/i, /keine\s+serverseitige/i, /ohne\s+serverseitige/i,
+  /no\s+server[\s-]?side/i,
+  /rein.*client/i, /purely?\s+client/i, /local\s*storage/i,
+];
+
+const BACKEND_STACK_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /supabase/i, label: 'Supabase' },
+  { pattern: /postgresql|postgres/i, label: 'PostgreSQL' },
+  { pattern: /mysql/i, label: 'MySQL' },
+  { pattern: /mongodb/i, label: 'MongoDB' },
+  { pattern: /\bauth\b.*(?:clerk|replit|firebase|auth0)/i, label: 'Auth-Service' },
+  { pattern: /payment.*stripe|stripe.*payment/i, label: 'Stripe Payment' },
+  { pattern: /\bstripe\b/i, label: 'Stripe' },
+];
+
+function detectArchitectureType(boundaries: string): 'client-only' | 'server' | 'mixed' {
+  if (!boundaries) return 'mixed';
+  const isClient = CLIENT_ONLY_INDICATORS.some(p => p.test(boundaries));
+  const hasServer = /serverseitig|server[\s-]?side|backend|api[\s-]?server/i.test(boundaries)
+    && !/keine\s+serverseitige|ohne\s+serverseitige|no\s+server/i.test(boundaries);
+  if (isClient && !hasServer) return 'client-only';
+  if (hasServer) return 'server';
+  return 'mixed';
+}
+
+// ---------------------------------------------------------------------------
+// Lint #1: Feature Duplicate Flow
+// ---------------------------------------------------------------------------
+
+function detectFeatureDuplicateFlow(structure: PRDStructure): DeterministicSemanticIssue[] {
+  const issues: DeterministicSemanticIssue[] = [];
+  const features = structure.features || [];
+  if (features.length < 2) return issues;
+
+  const featureTexts = features.map(f => ({
+    id: f.id,
+    name: f.name,
+    mainFlow: (f.mainFlow || []).join(' '),
+    purpose: f.purpose || '',
+    altFlows: (f.alternateFlows || []).join(' '),
+    postconditions: f.postconditions || '',
+  }));
+
+  const reported = new Set<string>();
+
+  for (let i = 0; i < featureTexts.length; i++) {
+    for (let j = i + 1; j < featureTexts.length; j++) {
+      const a = featureTexts[i];
+      const b = featureTexts[j];
+
+      if (!a.mainFlow || !b.mainFlow) continue;
+
+      const mainSim = computeTrigramSimilarity(a.mainFlow, b.mainFlow);
+      const purposeSim = computeTrigramSimilarity(a.purpose, b.purpose);
+      const combinedSim = mainSim * 0.6 + purposeSim * 0.4;
+
+      if (combinedSim < 0.5) continue;
+
+      const key = `${a.id}|${b.id}`;
+      if (reported.has(key)) continue;
+      reported.add(key);
+
+      const pct = Math.round(combinedSim * 100);
+      issues.push({
+        code: 'feature_duplicate_flow',
+        message: `${a.id} "${a.name}" and ${b.id} "${b.name}" have ${pct}% similar content (Main Flow + Purpose). Consider merging or clearly differentiating them.`,
+        severity: 'warning',
+        evidencePath: `feature:${a.id}`,
+        evidenceSnippet: a.mainFlow.slice(0, 200),
+        relatedPaths: [`feature:${a.id}`, `feature:${b.id}`],
+      });
+    }
+  }
+
+  return issues;
+}
+
+// ---------------------------------------------------------------------------
+// Lint #2: Acceptance Criteria Boilerplate
+// ---------------------------------------------------------------------------
+
+function detectAcceptanceCriteriaBoilerplate(
+  structure: PRDStructure,
+  language?: SupportedLanguage,
+): DeterministicSemanticIssue[] {
+  const issues: DeterministicSemanticIssue[] = [];
+  const features = structure.features || [];
+
+  for (const feature of features) {
+    const acs = feature.acceptanceCriteria || [];
+    if (acs.length === 0) continue;
+
+    const boilerplateCount = acs.filter(ac => isBoilerplateAcceptanceCriterion(ac, language)).length;
+    if (boilerplateCount === 0) continue;
+
+    const ratio = boilerplateCount / acs.length;
+    if (ratio < 0.5) continue;
+
+    issues.push({
+      code: 'acceptance_criteria_boilerplate',
+      message: `${feature.id} "${feature.name}" has ${boilerplateCount}/${acs.length} generic/boilerplate acceptance criteria. Replace with specific, testable conditions.`,
+      severity: 'warning',
+      evidencePath: `feature:${feature.id}`,
+      evidenceSnippet: acs.find(ac => isBoilerplateAcceptanceCriterion(ac, language))?.slice(0, 200),
+    });
+  }
+
+  return issues;
+}
+
+// ---------------------------------------------------------------------------
+// Lint #3: Deployment Stack Mismatch
+// ---------------------------------------------------------------------------
+
+function detectDeploymentStackMismatch(structure: PRDStructure): DeterministicSemanticIssue[] {
+  const issues: DeterministicSemanticIssue[] = [];
+  const boundaries = String(structure.systemBoundaries || '');
+  const deployment = String(structure.deployment || '');
+
+  if (!boundaries || !deployment) return issues;
+
+  const archType = detectArchitectureType(boundaries);
+  if (archType !== 'client-only') return issues;
+
+  const foundBackend: string[] = [];
+  for (const { pattern, label } of BACKEND_STACK_PATTERNS) {
+    if (pattern.test(deployment)) {
+      foundBackend.push(label);
+    }
+  }
+
+  if (foundBackend.length === 0) return issues;
+
+  issues.push({
+    code: 'deployment_stack_mismatch',
+    message: `System Boundaries describe a client-only architecture, but Deployment references backend technologies: ${foundBackend.join(', ')}. Remove or justify these entries.`,
+    severity: 'warning',
+    evidencePath: 'deployment',
+    evidenceSnippet: deployment.slice(0, 250),
+    relatedPaths: ['systemBoundaries', 'deployment'],
+  });
+
+  return issues;
+}
+
+// ---------------------------------------------------------------------------
+// Lint #4: NFR Architecture Mismatch
+// ---------------------------------------------------------------------------
+
+function detectNfrArchitectureMismatch(structure: PRDStructure): DeterministicSemanticIssue[] {
+  const issues: DeterministicSemanticIssue[] = [];
+  const boundaries = String(structure.systemBoundaries || '');
+  const nfr = String(structure.nonFunctional || '');
+
+  if (!boundaries || !nfr) return issues;
+
+  const archType = detectArchitectureType(boundaries);
+  if (archType !== 'client-only') return issues;
+
+  const concurrentUserPattern = /(\d[\d.,]*)\s*(?:gleichzeitig\w*|concurrent|simultaneous)\s*(?:nutzer|user|connection)/i;
+  const match = nfr.match(concurrentUserPattern);
+  if (match) {
+    issues.push({
+      code: 'nfr_architecture_mismatch',
+      message: `NFR mentions "${match[0]}" but System Boundaries describe a client-only app with no server. This metric is irrelevant for static web apps.`,
+      severity: 'warning',
+      evidencePath: 'nonFunctional',
+      evidenceSnippet: nfr.slice(Math.max(0, nfr.indexOf(match[0]) - 40), nfr.indexOf(match[0]) + match[0].length + 40),
+      relatedPaths: ['systemBoundaries', 'nonFunctional'],
+    });
+  }
+
+  // Also check pattern "support X users" near concurrent context
+  const supportUsersPattern = /(?:unterstuetz|support|handle).*?(\d[\d.]*)\s*(?:gleichzeitig|concurrent|simultaneous)/i;
+  const match2 = !match ? nfr.match(supportUsersPattern) : null;
+  if (match2) {
+    issues.push({
+      code: 'nfr_architecture_mismatch',
+      message: `NFR mentions "${match2[0]}" but System Boundaries describe a client-only app. Server-side scalability metrics don't apply.`,
+      severity: 'warning',
+      evidencePath: 'nonFunctional',
+      evidenceSnippet: match2[0],
+      relatedPaths: ['systemBoundaries', 'nonFunctional'],
+    });
+  }
+
   return issues;
 }
 
