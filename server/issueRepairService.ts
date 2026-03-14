@@ -1,3 +1,12 @@
+/*
+Author: rahn
+Datum: 14.03.2026
+Version: 1.0
+Beschreibung: Service fuer die gezielte Reparatur einzelner semantischer Blocking-Issues
+              in einem bestehenden PRD. Nutzt applySemanticPatchRefinement fuer den
+              LLM-gestuetzten Repair und den Semantic Verifier zur Erfolgskontrolle.
+*/
+
 import { compilePrdDocument } from './prdCompiler';
 import { assembleStructureToMarkdown } from './prdAssembler';
 import { applySemanticPatchRefinement, type ReviewerRefineResult } from './prdContentReviewer';
