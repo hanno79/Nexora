@@ -35,7 +35,13 @@ import {
 
 type ModelRole = 'generator' | 'reviewer' | 'verifier' | 'semantic_repair';
 type PreferredModelRole = ModelRole | 'fallback';
-function tierModelForRole(tierModels: ModelTier, role: ModelRole): string {  if (role === 'semantic_repair') return tierModels.semanticRepair;  return tierModels[role];}
+function tierModelForRole(tierModels: ModelTier, role: ModelRole): string {
+  if (role === 'semantic_repair') {
+    return tierModels.semanticRepair;
+  }
+
+  return tierModels[role];
+}
 
 type PreferredModelsState = {
   generator?: string;
@@ -335,11 +341,7 @@ export async function executeOpenRouterFallback(
     console.warn(`[TierFilter] Removed ${rawFallbackChain.length - fallbackChain.length} free model(s) from fallback chain for tier "${tier}"`);
   }
   const tierModels = MODEL_TIERS[tier];
-  const roleDefault = modelType === 'generator'
-    ? tierModels.generator
-    : modelType === 'reviewer' ? tierModels.reviewer
-    : modelType === 'semantic_repair' ? tierModels.semanticRepair
-    : tierModels.verifier;
+  const roleDefault = tierModelForRole(tierModels, modelType);
   const crossRoleCandidates: ModelRole[] = modelType === 'generator'
     ? ['reviewer', 'verifier']
     : modelType === 'reviewer' ? ['verifier', 'generator']

@@ -32,6 +32,8 @@ describe('tokenBudgets', () => {
     expect(budgets.FEATURE_LIST_GENERATION).toBe(4000);
     expect(budgets.FEATURE_EXPANSION).toBe(4200);
     expect(budgets.FEATURE_REPAIR).toBe(3000);
+    expect(budgets.SEMANTIC_VERIFICATION).toBe(3500);
+    expect(budgets.CONTENT_REVIEW_REFINE).toBe(12000);
     expect(budgets.ANTHROPIC_PRD_GENERATION).toBe(4000);
   });
 

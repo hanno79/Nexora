@@ -469,7 +469,6 @@ export const en = {
     existingContentUsedAsContext: "existing content used as context",
     doneWithWarnings: "Content generated with warnings",
     qualityGateFailed: "Compiler quality gate failed after final verification.",
-    // ÄNDERUNG 02.03.2025: Neue Übersetzungen für Guided Finalisierung im DualAiDialog
     guidedFinalizing: "Generating PRD based on Guided answers...",
     guidedStartingFinalization: "Starting PRD generation...",
     guidedGenerationStarted: "Generating PRD...",

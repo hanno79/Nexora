@@ -4,13 +4,13 @@
  * Each budget has a sensible default that can be overridden via
  * an environment variable named TOKEN_BUDGET_{CONSTANT_NAME}.
  *
- * Example: TOKEN_BUDGET_REPAIR_PASS=16000 overrides the default 12000.
+ * Example: TOKEN_BUDGET_REPAIR_PASS=20000 overrides the default 16000.
  */
 
 import { logger } from './logger';
 
-// Maximale Obergrenze fuer Token-Budgets um unerwuenschte Konsequenzen
-// durch falsch gesetzte Umgebungsvariablen zu verhindern
+// Maximum cap for token budgets to prevent unintended consequences
+// from misconfigured environment variables
 const MAX_REASONABLE_BUDGET = 50000;
 
 function budget(name: string, defaultValue: number): number {

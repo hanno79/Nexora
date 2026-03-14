@@ -445,19 +445,7 @@ export function DualAiDialog({
     // ÄNDERUNG 02.03.2026: isFinalizing zu Dependencies hinzugefügt
   }, [open, guidedSessionId, workflowMode, currentStep, isFinalizing, handleGuidedFinalization, t.errors.generateFailed]);
 
-  // KI-Benutzereinstellungen laden, um den Standard-Workflow-Modus zu setzen
-  // ÄNDERUNG 02.03.2026: Prüfe auf aktive Guided-Session VOR dem Settings-Load
-  useEffect(() => {
-    if (open) {
-      // Wenn eine Guided-Session wiederhergestellt wurde, überspringe Settings-Load
-      // für den workflowMode, damit 'guided' erhalten bleibt
-      if (!guidedSessionId) {
-        loadUserSettings();
-      }
-    }
-  }, [open, guidedSessionId]);
-
-  const loadUserSettings = async () => {
+  const loadUserSettings = useCallback(async () => {
     const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
     try {
@@ -486,13 +474,25 @@ export function DualAiDialog({
         fetch('/api/settings/ai/health', { credentials: 'include' })
           .then(res => res.json())
           .then(data => setHealthStatus(data))
-          .catch(() => setHealthStatus(null))
+          .catch((err) => setHealthStatus({ healthy: false, model: '', error: err?.message || 'Health check failed' }))
           .finally(() => setHealthChecking(false));
       }
     } catch (err) {
       console.error('Failed to load AI settings:', err);
     }
-  };
+  }, [iterationCountMax, iterationCountMin, iterativeTimeoutMinutesMax, iterativeTimeoutMinutesMin]);
+
+  // KI-Benutzereinstellungen laden, um den Standard-Workflow-Modus zu setzen
+  // ÄNDERUNG 02.03.2026: Prüfe auf aktive Guided-Session VOR dem Settings-Load
+  useEffect(() => {
+    if (open) {
+      // Wenn eine Guided-Session wiederhergestellt wurde, überspringe Settings-Load
+      // für den workflowMode, damit 'guided' erhalten bleibt
+      if (!guidedSessionId) {
+        loadUserSettings();
+      }
+    }
+  }, [open, guidedSessionId, loadUserSettings]);
 
   const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs: number): Promise<Response> => {
     const controller = new AbortController();

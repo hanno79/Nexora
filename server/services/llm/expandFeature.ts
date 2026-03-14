@@ -270,15 +270,20 @@ function buildDeterministicFeatureFallback(
 }
 
 function hasFeatureContentDrift(featureId: string, featureName: string, content: string): boolean {
-  const parsed = parseFeatureSubsections(content);
-  const featureSpec = {
-    id: featureId,
-    name: featureName,
-    rawContent: content,
-    ...parsed,
-  };
-  const issues = analyzeFeatureSemanticIssues([featureSpec]);
-  return issues.some(i => i.code === 'feature_semantic_mismatch');
+  try {
+    const parsed = parseFeatureSubsections(content);
+    const featureSpec = {
+      id: featureId,
+      name: featureName,
+      rawContent: content,
+      ...parsed,
+    };
+    const issues = analyzeFeatureSemanticIssues([featureSpec]);
+    return issues.some(i => i.code === 'feature_semantic_mismatch');
+  } catch (error) {
+    console.error(`  ❌ Failed to analyze feature drift for ${featureId}:`, error);
+    return false;
+  }
 }
 
 export async function expandFeature(
@@ -331,8 +336,8 @@ export async function expandFeature(
     }
 
     if (validContent) {
-      // Feature-Drift-Erkennung: Prüfen ob der generierte Inhalt zum Feature-Titel passt.
-      // Bei Drift auf Attempt 1 → Model rotieren und erneut versuchen.
+      // Feature drift detection: verify generated content matches the feature title.
+      // On drift at attempt 1, rotate model and retry.
       if (attempt === 1 && hasFeatureContentDrift(featureId, featureName, validContent)) {
         console.warn(`  ⚠️ ${featureId} content drift detected — "${featureName}" content does not match title`);
         setGlobalCooldown(result.model, 60 * 1000, 'feature content drift');

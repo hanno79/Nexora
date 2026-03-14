@@ -16,8 +16,8 @@ import { BaseAIProvider, sanitizeProviderErrorText, type AIModel, type CallOptio
 // Abacus RouteLLM keys are long bearer tokens; reject obviously incomplete placeholder values.
 const MIN_API_KEY_LENGTH = 20;
 
-// Statische Modell-Liste — RouteLLM hat keinen dokumentierten /models Endpoint
-// Aktualisiert am 14.03.2026 anhand der tatsaechlichen API-Antwort
+// Static model list — RouteLLM has no documented /models endpoint
+// Updated 2026-03-14 based on actual API response
 const ABACUS_MODELS_FALLBACK: AIModel[] = [
   // ── Intelligent Routing ──
   {
@@ -702,7 +702,7 @@ export class AbacusProvider extends BaseAIProvider {
       return ABACUS_MODELS_FALLBACK;
     }
 
-    // RouteLLM hat keinen dokumentierten /models Endpoint — statische Liste verwenden
+    // RouteLLM has no documented /models endpoint — use static list
     return ABACUS_MODELS_FALLBACK;
   }
 
@@ -723,8 +723,8 @@ export class AbacusProvider extends BaseAIProvider {
     }
 
     try {
-      // RouteLLM braucht laenger als Standard-Provider: Routing-Entscheidung + Backend-Modell-Antwort
-      // Generator-Calls (lange PRD-Sektionen) koennen 4+ Minuten dauern
+      // RouteLLM needs more time than standard providers: routing decision + backend model response
+      // Generator calls (long PRD sections) can take 4+ minutes
       const abacusTimeoutMs = Number(process.env.ABACUS_TIMEOUT_MS || 360000);
       const maxRetries = model === 'route-llm' ? 1 : 0;
       let lastError: Error | null = null;
@@ -740,7 +740,7 @@ export class AbacusProvider extends BaseAIProvider {
             body: JSON.stringify(requestBody),
           }, abacusTimeoutMs, abortSignal);
 
-          // Bei Erfolg: weiter mit Response-Verarbeitung
+          // On success: proceed with response processing
           return await this.processAbacusResponse(fetchResponse, model, stream, expressResponse);
         } catch (retryErr) {
           lastError = retryErr as Error;
@@ -753,7 +753,7 @@ export class AbacusProvider extends BaseAIProvider {
           throw lastError;
         }
       }
-      // Fallthrough (sollte nicht erreicht werden)
+      // Fallthrough (should never be reached)
       throw lastError || new Error('Abacus call failed');
     } catch (error) {
       throw this.handleError(error);
