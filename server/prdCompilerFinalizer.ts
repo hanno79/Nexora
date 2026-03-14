@@ -2300,6 +2300,72 @@ export async function finalizeWithCompilerGates(
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Auto-Repair Pass: fix deterministic quality warnings before semantic verification
+  // -------------------------------------------------------------------------
+  const qualityRepairReviewer = options.semanticRefineReviewer || options.contentRefineReviewer;
+  if (qualityRepairReviewer && compiled.quality?.issues?.length) {
+    const qualityWarnings = compiled.quality.issues.filter(
+      (issue) => issue.severity === 'warning' && issue.evidencePath
+    );
+    if (qualityWarnings.length > 0) {
+      options.onStageProgress?.({ type: 'quality_repair_start' as any, issueCount: qualityWarnings.length });
+      let qualityRepairAppliedCount = 0;
+      const qualityRepairIssueCodes: string[] = [];
+
+      for (const warning of qualityWarnings.slice(0, 5)) {
+        runCancelCheck('quality_repair');
+        const sectionKey = warning.evidencePath?.startsWith('feature:')
+          ? warning.evidencePath
+          : warning.evidencePath || 'systemVision';
+        const isFeature = sectionKey.startsWith('feature:');
+        const contentIssues: ContentIssue[] = [{
+          code: warning.code,
+          sectionKey,
+          message: warning.message,
+          severity: 'warning',
+          suggestedAction: isFeature ? 'enrich' : 'rewrite',
+        }];
+
+        try {
+          const qualityPatch = await applySemanticPatchRefinement({
+            content: compiled.content,
+            structure: compiled.structure,
+            issues: contentIssues,
+            language: language || 'en',
+            templateCategory,
+            originalRequest,
+            reviewer: qualityRepairReviewer,
+          });
+
+          if (qualityPatch.refined) {
+            const patchEval = evaluateCandidate(qualityPatch.content);
+            if (compareCandidatePreference(patchEval, currentEvaluation) >= 0) {
+              current = { ...current, content: qualityPatch.content };
+              currentEvaluation = patchEval;
+              compiled = patchEval.compiled;
+              bestCurrent = current;
+              bestCompiled = compiled;
+              bestScore = Math.max(bestScore, qualityScore(compiled.quality));
+              qualityRepairAppliedCount++;
+              qualityRepairIssueCodes.push(warning.code);
+              reviewerAttempts.push(...qualityPatch.reviewerAttempts);
+              maybePromoteBestSubstantive(current, currentEvaluation, degradedCandidateSource);
+            }
+          }
+        } catch {
+          // Quality repair is best-effort — skip on error
+        }
+      }
+
+      options.onStageProgress?.({
+        type: 'quality_repair_done' as any,
+        issueCount: qualityWarnings.length,
+        applied: qualityRepairAppliedCount > 0,
+      });
+    }
+  }
+
   if (options.semanticVerifier) {
     const runSemanticVerifier = async () => {
       runCancelCheck('semantic_verification');
