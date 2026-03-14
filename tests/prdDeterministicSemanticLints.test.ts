@@ -1316,6 +1316,28 @@ describe('acceptance_criteria_boilerplate', () => {
     expect(boilerplate[0].message).toContain('2/2');
   });
 
+  it('detects compiler-generated boilerplate acceptance criteria (EN)', () => {
+    const structure = makeMinimalStructure({
+      features: [
+        {
+          id: 'F-01', name: 'Checkout', rawContent: '',
+          purpose: 'Complete a purchase',
+          mainFlow: ['User submits an order.'],
+          acceptanceCriteria: [
+            'Checkout completes successfully with valid input.',
+            'Invalid input or execution failures in Checkout produce clear feedback without leaving inconsistent state.',
+          ],
+        },
+      ],
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure, { language: 'en' });
+    const boilerplate = issues.filter(i => i.code === 'acceptance_criteria_boilerplate');
+    expect(boilerplate.length).toBeGreaterThanOrEqual(1);
+    expect(boilerplate[0].message).toContain('F-01');
+    expect(boilerplate[0].message).toContain('2/2');
+  });
+
   it('does not flag specific acceptance criteria', () => {
     const structure = makeMinimalStructure({
       features: [
@@ -1355,6 +1377,17 @@ describe('deployment_stack_mismatch', () => {
     const structure = makeMinimalStructure({
       systemBoundaries: 'The system includes a backend API server with PostgreSQL persistence.',
       deployment: 'Tech-Stack: Node.js, Database: PostgreSQL, Auth: Clerk.',
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure);
+    const mismatch = issues.filter(i => i.code === 'deployment_stack_mismatch');
+    expect(mismatch).toHaveLength(0);
+  });
+
+  it('does not treat local storage plus a REST API as client-only', () => {
+    const structure = makeMinimalStructure({
+      systemBoundaries: 'Single-page app stores auth tokens in localStorage and talks to a REST API.',
+      deployment: 'Tech-Stack: Node.js API, Database: PostgreSQL.',
     });
 
     const issues = collectDeterministicSemanticIssues(structure);

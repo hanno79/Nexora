@@ -65,7 +65,7 @@ export async function repairSingleIssue(options: IssueRepairOptions): Promise<Is
   let lastModel = '';
 
   const { client, contentLanguage } = await createClientWithUserPreferences(userId);
-  const langInstruction = getLanguageInstruction(contentLanguage || language);
+  const langInstruction = getLanguageInstruction(language || contentLanguage);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     // 1. Parse current content to structure
@@ -110,7 +110,8 @@ export async function repairSingleIssue(options: IssueRepairOptions): Promise<Is
 
     if (!patchResult.refined) {
       // Repair did not change anything — no point retrying with the same content
-      return buildResult(currentContent, false, [], attempt, lastModel, totalUsage);
+      const remainingIssues = [issue];
+      return buildResult(currentContent, false, remainingIssues, attempt, lastModel, totalUsage);
     }
 
     currentContent = patchResult.content;

@@ -91,26 +91,37 @@ export function DualAiDialog({
   // ÄNDERUNG 02.03.2026: States für Guided Finalisierung
   const [guidedSessionId, setGuidedSessionId] = useState<string | null>(null);
   const [guidedSessionInfo, setGuidedSessionInfo] = useState<{projectIdea: string; answersCount: number} | null>(null);
+  const [sessionRestoreChecked, setSessionRestoreChecked] = useState(false);
+  const [isFinalizing, setIsFinalizing] = useState(false);
   const { elapsedSeconds, startTimer: startElapsedTimer, stopTimer: stopElapsedTimer, resetTimer: resetElapsedTimer } = useElapsedTimer();
 
   const resetState = useCallback(() => {
     setUserInput('');
+    setIsGenerating(false);
     setCurrentStep('idle');
     setGeneratorModel('');
     setReviewerModel('');
     setVerifierModel('');
+    setSemanticRepairModel('');
     setError('');
+    setHealthStatus(null);
+    setHealthChecking(false);
     setRunQualityStatus(null);
+    setWorkflowMode('simple');
+    setIterationCount(3);
+    setIterativeTimeoutMinutes(30);
+    setUseFinalReview(false);
     setCurrentIteration(0);
     setTotalIterations(0);
+    setShowGuidedDialog(false);
     setProgressDetail('');
     setTotalTokensSoFar(0);
     setModeInfo(null);
     // ÄNDERUNG 02.03.2026: Guided Session States zurücksetzen
     setGuidedSessionId(null);
     setGuidedSessionInfo(null);
-    // ÄNDERUNG 02.03.2026: isGenerating zurücksetzen damit Dialog nicht deaktiviert bleibt
-    setIsGenerating(false);
+    setSessionRestoreChecked(false);
+    setIsFinalizing(false);
     resetElapsedTimer();
   }, [resetElapsedTimer]);
 
@@ -153,16 +164,28 @@ export function DualAiDialog({
     };
   }, []);
 
+  const handleClose = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    resetState();
+    onOpenChange(false);
+  }, [onOpenChange, resetState]);
+
   const closeDialogAfter = useCallback((delayMs: number) => {
     if (closeTimerRef.current) {
       clearTimeout(closeTimerRef.current);
     }
     closeTimerRef.current = setTimeout(() => {
       closeTimerRef.current = null;
-      onOpenChange(false);
-      resetState();
+      handleClose();
     }, delayMs);
-  }, [onOpenChange, resetState]);
+  }, [handleClose]);
 
   const applyRunPayload = useCallback((payload: any) => {
     const runRecord = extractAiRunRecord(payload);
@@ -363,9 +386,13 @@ export function DualAiDialog({
   // ÄNDERUNG 02.03.2026: Lade Guided Session aus localStorage beim Öffnen
   // ÄNDERUNG 02.03.2026: Race Condition behoben - setTimeout mit Closure entfernt
   useEffect(() => {
-    if (!open) return;
-    
+    if (!open) {
+      setSessionRestoreChecked(false);
+      return;
+    }
+     
     const restoreSession = () => {
+      setSessionRestoreChecked(false);
       try {
         const stored = localStorage.getItem('nexora_guided_session_v2');
         if (!stored) return;
@@ -397,9 +424,11 @@ export function DualAiDialog({
         }
       } catch (err) {
         console.warn('localStorage access failed:', err);
+      } finally {
+        setSessionRestoreChecked(true);
       }
     };
-    
+     
     restoreSession();
   }, [open]);
 
@@ -407,8 +436,6 @@ export function DualAiDialog({
   // Dieser Effect läuft NACHDEM die States (guidedSessionId, workflowMode) aktualisiert wurden
   // ÄNDERUNG 02.03.2026: Verhindert Race Condition durch setTimeout - nutzt useEffect stattdessen
   // ÄNDERUNG 02.03.2026: isFinalizing State verhindert Doppelausführung
-  const [isFinalizing, setIsFinalizing] = useState(false);
-  
   useEffect(() => {
     if (!open || !guidedSessionId || workflowMode !== 'guided') return;
     if (currentStep !== 'idle' || isFinalizing) return; // Bereits am Laufen
@@ -446,6 +473,7 @@ export function DualAiDialog({
   }, [open, guidedSessionId, workflowMode, currentStep, isFinalizing, handleGuidedFinalization, t.errors.generateFailed]);
 
   const loadUserSettings = useCallback(async () => {
+    if (!sessionRestoreChecked) return;
     const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
     try {
@@ -480,19 +508,18 @@ export function DualAiDialog({
     } catch (err) {
       console.error('Failed to load AI settings:', err);
     }
-  }, [iterationCountMax, iterationCountMin, iterativeTimeoutMinutesMax, iterativeTimeoutMinutesMin]);
+  }, [iterationCountMax, iterationCountMin, iterativeTimeoutMinutesMax, iterativeTimeoutMinutesMin, sessionRestoreChecked]);
 
   // KI-Benutzereinstellungen laden, um den Standard-Workflow-Modus zu setzen
   // ÄNDERUNG 02.03.2026: Prüfe auf aktive Guided-Session VOR dem Settings-Load
   useEffect(() => {
-    if (open) {
-      // Wenn eine Guided-Session wiederhergestellt wurde, überspringe Settings-Load
-      // für den workflowMode, damit 'guided' erhalten bleibt
-      if (!guidedSessionId) {
-        loadUserSettings();
-      }
+    if (!open || !sessionRestoreChecked) return;
+    // Wenn eine Guided-Session wiederhergestellt wurde, überspringe Settings-Load
+    // für den workflowMode, damit 'guided' erhalten bleibt
+    if (!guidedSessionId) {
+      loadUserSettings();
     }
-  }, [open, guidedSessionId, loadUserSettings]);
+  }, [open, guidedSessionId, loadUserSettings, sessionRestoreChecked]);
 
   const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs: number): Promise<Response> => {
     const controller = new AbortController();
@@ -816,7 +843,16 @@ export function DualAiDialog({
   const modeInfoText = getModeInfoText();
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(isOpen) => {
+        if (!isOpen) {
+          handleClose();
+          return;
+        }
+        onOpenChange(true);
+      }}
+    >
       <DialogContent className="sm:max-w-[650px] max-h-[90vh] overflow-y-auto" data-testid="dialog-dual-ai">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -1039,14 +1075,7 @@ export function DualAiDialog({
         <DialogFooter>
           <Button
             variant="outline"
-            onClick={() => {
-              if (abortControllerRef.current) {
-                abortControllerRef.current.abort();
-                abortControllerRef.current = null;
-              }
-              onOpenChange(false);
-              resetState();
-            }}
+            onClick={handleClose}
             data-testid="button-dual-ai-cancel"
           >
             {t.common.cancel}
@@ -1100,16 +1129,14 @@ export function DualAiDialog({
           if (!isOpen) {
             // ÄNDERUNG 02.03.2026: Nur zurücksetzen wenn keine Session läuft
             if (!guidedSessionId) {
-              onOpenChange(false);
-              resetState();
+              handleClose();
             }
           }
         }}
         onContentGenerated={(content, response) => {
           onContentGenerated(content, response);
           setShowGuidedDialog(false);
-          onOpenChange(false);
-          resetState();
+          handleClose();
         }}
         onReadyForFinalization={handleGuidedReadyForFinalization}
         initialProjectIdea={userInput}

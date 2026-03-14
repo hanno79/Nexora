@@ -655,6 +655,7 @@ interface CompilerDiagnosticIssue {
   sectionKey: string;
   message: string;
   suggestedAction?: 'rewrite' | 'enrich';
+  suggestedFix?: string;
   targetFields?: string[];
 }
 

@@ -266,6 +266,7 @@ export async function executeOpenRouterFallback(
   const modelsToTry: FallbackCandidate[] = [];
   const cooldownSkippedModels: CooldownCandidate[] = [];
   const deferredSameFamilyModels: SameFamilyCandidate[] = [];
+  let sameFamilyFallbackSeeded = false;
   const blockedFamilies = new Set(normalizeModelFamilyList(constraints?.avoidModelFamilies || []));
 
   const throwIfAborted = () => {
@@ -349,6 +350,8 @@ export async function executeOpenRouterFallback(
     : ['reviewer', 'generator'];
   const allowCrossRoleFallback = process.env.ALLOW_CROSS_ROLE_MODEL_FALLBACK === 'true';
   const allowDirectProviderBaseFallback = tier !== 'development';
+  const allowSameFamilyFallback = constraints?.allowSameFamilyFallback !== false;
+  const freeModels = rawFallbackChain.filter(model => isOpenRouterFreeModel(model));
 
   addIfNew(primary, true);
   for (const fallbackModel of fallbackChain) {
@@ -357,13 +360,11 @@ export async function executeOpenRouterFallback(
   addIfNew(roleDefault, false);
 
   if (allowDirectProviderBaseFallback) {
-    for (const fallbackModel of fallbackChain) {
-      if (isOpenRouterFreeModel(fallbackModel)) {
-        const baseModel = fallbackModel.replace(/:free$/, '');
-        const directProviders = resolveProvidersForModel(baseModel);
-        if (directProviders.length > 0) {
-          addIfNew(baseModel, false);
-        }
+    for (const fallbackModel of freeModels) {
+      const baseModel = fallbackModel.replace(/:free$/, '');
+      const directProviders = resolveProvidersForModel(baseModel);
+      if (directProviders.length > 0) {
+        addIfNew(baseModel, false);
       }
     }
   }
@@ -393,6 +394,17 @@ export async function executeOpenRouterFallback(
       seen.add(emergency);
       modelsToTry.push({ model: emergency, isPrimary: false });
     }
+  }
+
+  if (modelsToTry.length === 0 && allowSameFamilyFallback && deferredSameFamilyModels.length > 0) {
+    for (const { model } of deferredSameFamilyModels) {
+      const sanitized = sanitizeConfiguredModel(model);
+      if (!sanitized) continue;
+      if (modelsToTry.some(entry => entry.model === sanitized)) continue;
+      seen.add(sanitized);
+      modelsToTry.push({ model: sanitized, isPrimary: false });
+    }
+    sameFamilyFallbackSeeded = modelsToTry.length > 0;
   }
 
   if (modelsToTry.length === 0) {
@@ -592,14 +604,14 @@ export async function executeOpenRouterFallback(
     }
   }
 
-  if (constraints?.allowSameFamilyFallback !== false && deferredSameFamilyModels.length > 0) {
+  if (allowSameFamilyFallback && !sameFamilyFallbackSeeded && deferredSameFamilyModels.length > 0) {
     console.warn(
       `Verifier independence fallback: retrying ${deferredSameFamilyModels.length} ${modelType} model(s) ` +
       `from blocked families ${Array.from(blockedFamilies).join(', ') || '(none)'}.`,
     );
   }
 
-  if (constraints?.allowSameFamilyFallback !== false) {
+  if (allowSameFamilyFallback && !sameFamilyFallbackSeeded) {
     for (const { model: attemptModel, isPrimary, family } of deferredSameFamilyModels) {
       throwIfAborted();
       console.warn(
@@ -634,16 +646,35 @@ export function applyFailureCooldown(model: string, errorMessage: string): void 
   if (message.includes('no longer available') || message.includes('end of life') || message.includes('reached its end')) {
     cooldownMs = 24 * 60 * 60 * 1000;
     reason = 'model unavailable on provider';
-  } else if (message.includes('not a valid model') || message.includes('not found') || message.includes('nicht gefunden')) {
+  } else if (
+    message.includes('not a valid model')
+    || message.includes('model not found')
+    || message.includes('provider not found')
+    || message.includes('not found')
+    || message.includes('nicht gefunden')
+    || message.includes('enotfound')
+  ) {
     cooldownMs = 30 * 60 * 1000;
     reason = 'model not found';
   } else if (message.includes('returned an empty response')) {
     cooldownMs = 10 * 60 * 1000;
     reason = 'repeated empty response';
-  } else if (message.includes('timed out') || message.includes('fetch failed') || message.includes('econnrefused') || message.includes('provider error')) {
+  } else if (
+    message.includes('timed out')
+    || message.includes('fetch failed')
+    || message.includes('econnrefused')
+    || message.includes('provider error')
+    || message.includes('socket hang up')
+  ) {
     cooldownMs = 3 * 60 * 1000;
     reason = 'provider connection error';
-  } else if (message.includes('rate limit exceeded') || message.includes('rate limit erreicht')) {
+  } else if (
+    message === '429'
+    || message.includes(' 429')
+    || message.includes('rate limit exceeded')
+    || message.includes('rate limit erreicht')
+    || message.includes('rate limit')
+  ) {
     cooldownMs = 2 * 60 * 1000;
     reason = 'rate limited';
   }

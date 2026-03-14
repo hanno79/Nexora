@@ -1,10 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OpenRouterClient, clearGlobalCooldown } from '../server/openrouter';
 import { getModelFamily } from '../server/modelFamily';
+import { initializeModelRegistry } from '../server/modelRegistry';
 
 const usage = { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 };
 
 describe('OpenRouterClient fallback behavior', () => {
+  beforeAll(async () => {
+    await initializeModelRegistry();
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
     // Clear any global cooldowns from previous tests
@@ -36,6 +41,42 @@ describe('OpenRouterClient fallback behavior', () => {
       'anthropic/claude-sonnet-4',
     ]);
     expect(attempts).not.toContain('deepseek/deepseek-r1-0528:free');
+  });
+
+  it('adds the paid base model when a free fallback is filtered in a paid tier', async () => {
+    const originalNvidiaKey = process.env.NVIDIA_API_KEY;
+    process.env.NVIDIA_API_KEY = 'nvapi-test';
+
+    try {
+      const client = new OpenRouterClient('test-key', 'production');
+      client.setPreferredModel('reviewer', 'anthropic/claude-sonnet-4');
+      client.setFallbackChain(['meta/llama-3.1-8b-instruct:free']);
+
+      const attempts: string[] = [];
+      vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
+        const attemptedModel = client.getPreferredModel(modelType)!;
+        attempts.push(attemptedModel);
+        if (attemptedModel === 'meta/llama-3.1-8b-instruct') {
+          return { content: 'ok', usage, model: attemptedModel };
+        }
+        throw new Error('forced reviewer failure');
+      });
+
+      const result = await client.callWithFallback('reviewer', 'system', 'user', 1200);
+
+      expect(result.model).toBe('meta/llama-3.1-8b-instruct');
+      expect(attempts).toContain('anthropic/claude-sonnet-4');
+      expect(attempts).toContain('meta/llama-3.1-8b-instruct');
+      expect(attempts).not.toContain('meta/llama-3.1-8b-instruct:free');
+    } finally {
+      if (originalNvidiaKey === undefined) {
+        delete process.env.NVIDIA_API_KEY;
+      } else {
+        process.env.NVIDIA_API_KEY = originalNvidiaKey;
+      }
+      clearGlobalCooldown('anthropic/claude-sonnet-4');
+      clearGlobalCooldown('meta/llama-3.1-8b-instruct');
+    }
   });
 
   it('cools down unstable models after empty responses and skips them on the next call', async () => {
@@ -136,6 +177,35 @@ describe('OpenRouterClient fallback behavior', () => {
     })).toBe(true);
     expect(sameFamilyFallbacks).toEqual(['anthropic/claude-sonnet-4']);
     expect(result.model).toBe('anthropic/claude-sonnet-4');
+  });
+
+  it('uses deferred same-family models when all regular candidates are blocked', async () => {
+    const client = new OpenRouterClient('test-key', 'production');
+    client.setPreferredModel('verifier', 'anthropic/claude-sonnet-4');
+    client.setFallbackChain(['anthropic/claude-haiku-4']);
+
+    const attempts: string[] = [];
+    vi.spyOn(client as any, 'callModel').mockImplementation(async (modelType: 'generator' | 'reviewer' | 'verifier') => {
+      const attemptedModel = client.getPreferredModel(modelType)!;
+      attempts.push(attemptedModel);
+      return { content: 'ok', usage, model: attemptedModel };
+    });
+
+    const result = await client.callWithFallback(
+      'verifier',
+      'system',
+      'user',
+      1200,
+      undefined,
+      undefined,
+      {
+        avoidModelFamilies: ['claude', 'mistral'],
+        allowSameFamilyFallback: true,
+      },
+    );
+
+    expect(result.model).toBe('anthropic/claude-sonnet-4');
+    expect(attempts).toEqual(['anthropic/claude-sonnet-4']);
   });
 
   it('surfaces repeated rate-limit failures as a transient provider issue without duplicate error lines', async () => {

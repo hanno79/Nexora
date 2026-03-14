@@ -45,6 +45,7 @@ import { compilePrdDocument } from '../server/prdCompiler';
 import { applySemanticPatchRefinement } from '../server/prdContentReviewer';
 import { toSemanticContentIssues } from '../server/prdCompilerFinalizer';
 import { parseSemanticVerificationResponse } from '../server/prdSemanticVerifier';
+import { getLanguageInstruction } from '../server/dualAiPrompts';
 import type { SemanticBlockingIssue } from '../server/prdSemanticVerifier';
 
 // ---------------------------------------------------------------------------
@@ -225,8 +226,37 @@ describe('issueRepairService', () => {
 
     expect(result.resolved).toBe(false);
     expect(result.attempts).toBe(1);
+    expect(result.remainingIssues).toEqual([baseIssue]);
     // Verifier should NOT have been called since patch didn't change anything
     expect(parseSemanticVerificationResponse).not.toHaveBeenCalled();
+  });
+
+  it('prefers the document language over content language when building prompts', async () => {
+    (createClientWithUserPreferences as ReturnType<typeof vi.fn>).mockResolvedValue({
+      client: mockClient,
+      contentLanguage: 'en',
+    });
+    (applySemanticPatchRefinement as ReturnType<typeof vi.fn>).mockResolvedValue({
+      refined: true,
+      content: '# Repaired PRD',
+      structure: { features: [], otherSections: {} },
+    });
+    mockClient.callWithFallback.mockResolvedValue({
+      content: JSON.stringify({ blockingIssues: [], passed: true }),
+      model: 'test-model',
+      usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+      finishReason: 'stop',
+    });
+    (parseSemanticVerificationResponse as ReturnType<typeof vi.fn>).mockReturnValue({
+      blockingIssues: [],
+      passed: true,
+      model: 'test-model',
+      usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+    });
+
+    await repairSingleIssue(makeOptions({ language: 'de' }));
+
+    expect(getLanguageInstruction).toHaveBeenCalledWith('de');
   });
 
   it('accumulates token usage across attempts', async () => {

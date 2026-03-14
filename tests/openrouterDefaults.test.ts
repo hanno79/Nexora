@@ -373,6 +373,26 @@ describe('openrouter safe defaults', () => {
     clearGlobalCooldown('test-cerebras-model');
   });
 
+  it('applies cooldowns for bare 429, ENOTFOUND, and socket hang up messages', async () => {
+    clearGlobalCooldown('test-rate-model');
+    clearGlobalCooldown('test-notfound-model');
+    clearGlobalCooldown('test-socket-model');
+
+    const client = new OpenRouterClient('test-key', 'development');
+    (client as any).applyFailureCooldown('test-rate-model', '429');
+    (client as any).applyFailureCooldown('test-notfound-model', 'ENOTFOUND api.openrouter.ai');
+    (client as any).applyFailureCooldown('test-socket-model', 'socket hang up');
+
+    const cooldowns = getAllActiveCooldowns();
+    expect(cooldowns['test-rate-model']?.reason).toBe('rate limited');
+    expect(cooldowns['test-notfound-model']?.reason).toBe('model not found');
+    expect(cooldowns['test-socket-model']?.reason).toBe('provider connection error');
+
+    clearGlobalCooldown('test-rate-model');
+    clearGlobalCooldown('test-notfound-model');
+    clearGlobalCooldown('test-socket-model');
+  });
+
   // --- Think Tag Stripping ---
 
   it('strips think tags from OpenRouter API response', async () => {

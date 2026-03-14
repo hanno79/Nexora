@@ -83,6 +83,7 @@ function normalizeDiagnosticIssues(issues: Array<Record<string, any>> | undefine
     sectionKey: String(issue.sectionKey || '').trim() || 'unspecified',
     message: String(issue.message || '').trim() || 'Diagnostic issue details unavailable.',
     ...(issue.suggestedAction ? { suggestedAction: issue.suggestedAction } : {}),
+    ...(issue.suggestedFix ? { suggestedFix: issue.suggestedFix } : {}),
     ...(issue.targetFields?.length ? { targetFields: Array.from(new Set(issue.targetFields)) } : {}),
   }));
 }

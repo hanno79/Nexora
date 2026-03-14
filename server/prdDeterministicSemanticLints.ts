@@ -2089,8 +2089,11 @@ const BOILERPLATE_PATTERNS_DE = [
 
 const BOILERPLATE_PATTERNS_EN = [
   /can be successfully executed with valid inputs/i,
+  /completes successfully with valid input/i,
   /produce understandable feedback without inconsistent state/i,
+  /produce clear feedback without leaving inconsistent state/i,
   /invalid inputs.*produce.*feedback/i,
+  /invalid input.*execution failures.*produce.*feedback/i,
   /is displayed correctly$/i,
   /works as expected$/i,
   /is user[\s-]?friendly and easy to understand/i,
@@ -2108,7 +2111,7 @@ const CLIENT_ONLY_INDICATORS = [
   /clientseitig/i, /client[\s-]?side/i, /statische?\s+bereitstellung/i,
   /static\s+deploy/i, /keine\s+serverseitige/i, /ohne\s+serverseitige/i,
   /no\s+server[\s-]?side/i,
-  /rein.*client/i, /purely?\s+client/i, /local\s*storage/i,
+  /rein.*client/i, /purely?\s+client/i,
 ];
 
 const BACKEND_STACK_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
@@ -2162,7 +2165,7 @@ function detectFeatureDuplicateFlow(structure: PRDStructure): DeterministicSeman
       const purposeSim = computeTrigramSimilarity(a.purpose, b.purpose);
       const combinedSim = mainSim * 0.6 + purposeSim * 0.4;
 
-      if (combinedSim < 0.5) continue;
+      if (combinedSim < 0.45) continue;
 
       const key = `${a.id}|${b.id}`;
       if (reported.has(key)) continue;
