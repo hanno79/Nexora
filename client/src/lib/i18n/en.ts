@@ -162,6 +162,8 @@ export const en = {
     reviewerModelDesc: "The model that critically reviews and improves content",
     verifierModel: "Verifier Model",
     verifierModelDesc: "The model that validates semantic and compiler verification results",
+    semanticRepairModel: "Semantic Repair Model",
+    semanticRepairModelDesc: "Model used for semantic repair of contradictions and inconsistencies",
     fallbackModel: "Fallback Model",
     fallbackModelDesc: "Used when the primary model is unavailable",
     fallbackModelDescFull: "Last resort if both Generator and Reviewer models fail. A free model is recommended here.",
@@ -444,6 +446,7 @@ export const en = {
     generator: "Generator",
     reviewer: "Reviewer",
     verifier: "Verifier",
+    semanticRepair: "Semantic Repair",
     elapsed: "elapsed",
     tokens: "tokens",
     startingIterative: "Starting iterative workflow...",
@@ -471,6 +474,9 @@ export const en = {
     guidedStartingFinalization: "Starting PRD generation...",
     guidedGenerationStarted: "Generating PRD...",
     compilingPRD: "Compiling and validating PRD...",
+    healthChecking: "Checking model availability...",
+    modelNotAvailable: "Generator model may not be available",
+    modelHealthError: "The configured generator model could not be reached. The generation may fall back to a different model.",
   },
 
   guidedAi: {

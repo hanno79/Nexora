@@ -46,12 +46,14 @@ const tierDefaultsSchema = z.object({
   generator: z.string().optional(),
   reviewer: z.string().optional(),
   verifier: z.string().optional(),
+  semanticRepair: z.string().optional(),
 });
 
 const tierModelSetSchema = z.object({
   generatorModel: z.string().optional(),
   reviewerModel: z.string().optional(),
   verifierModel: z.string().optional(),
+  semanticRepairModel: z.string().optional(),
   fallbackModel: z.string().optional(),
   fallbackChain: z.array(z.string()).optional(),
 });
@@ -62,6 +64,7 @@ export const aiPreferencesSchema = z.object({
   generatorModel: z.string().optional(),
   reviewerModel: z.string().optional(),
   verifierModel: z.string().optional(),
+  semanticRepairModel: z.string().optional(),
   fallbackModel: z.string().optional(),
   fallbackChain: z.array(z.string()).optional(),
   tier: aiTierSchema.optional(),

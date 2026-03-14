@@ -30,15 +30,18 @@ import {
   getDefaultFallbackChainForTier,
   sanitizeConfiguredModel,
   type ModelConfig,
+  type ModelTier,
 } from './openrouterModelConfig';
 
-type ModelRole = 'generator' | 'reviewer' | 'verifier';
+type ModelRole = 'generator' | 'reviewer' | 'verifier' | 'semantic_repair';
 type PreferredModelRole = ModelRole | 'fallback';
+function tierModelForRole(tierModels: ModelTier, role: ModelRole): string {  if (role === 'semantic_repair') return tierModels.semanticRepair;  return tierModels[role];}
 
 type PreferredModelsState = {
   generator?: string;
   reviewer?: string;
   verifier?: string;
+  semantic_repair?: string;
   fallback?: string;
 };
 
@@ -295,9 +298,12 @@ export async function executeOpenRouterFallback(
     const modelProvider = getBestDirectProvider(sanitized, tierProviderHint);
     if (modelProvider && modelProvider !== 'openrouter') {
       const providerCd = getProviderCooldownStatus(modelProvider);
-      if (providerCd) {
-        console.warn(`Skipping ${sanitized} — provider ${modelProvider} on cooldown: ${providerCd.reason}`);
+      if (providerCd && !isPrimary) {
+        console.warn(`Skipping fallback ${sanitized} — provider ${modelProvider} on cooldown: ${providerCd.reason}`);
         return;
+      }
+      if (providerCd && isPrimary) {
+        console.warn(`Provider ${modelProvider} on cooldown but attempting primary model ${sanitized} anyway`);
       }
     }
 
@@ -331,10 +337,14 @@ export async function executeOpenRouterFallback(
   const tierModels = MODEL_TIERS[tier];
   const roleDefault = modelType === 'generator'
     ? tierModels.generator
-    : (modelType === 'reviewer' ? tierModels.reviewer : tierModels.verifier);
+    : modelType === 'reviewer' ? tierModels.reviewer
+    : modelType === 'semantic_repair' ? tierModels.semanticRepair
+    : tierModels.verifier;
   const crossRoleCandidates: ModelRole[] = modelType === 'generator'
     ? ['reviewer', 'verifier']
-    : (modelType === 'reviewer' ? ['verifier', 'generator'] : ['reviewer', 'generator']);
+    : modelType === 'reviewer' ? ['verifier', 'generator']
+    : modelType === 'semantic_repair' ? ['reviewer', 'verifier', 'generator']
+    : ['reviewer', 'generator'];
   const allowCrossRoleFallback = process.env.ALLOW_CROSS_ROLE_MODEL_FALLBACK === 'true';
   const allowDirectProviderBaseFallback = tier !== 'development';
 
@@ -371,7 +381,7 @@ export async function executeOpenRouterFallback(
   if (allowCrossRoleFallback) {
     for (const role of crossRoleCandidates) {
       addIfNew(preferredModels[role], false);
-      addIfNew(tierModels[role], false);
+      addIfNew(tierModelForRole(tierModels, role), false);
     }
   }
 

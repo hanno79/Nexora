@@ -394,7 +394,7 @@ Create an improved version that incorporates the new requirements while keeping 
       },
       semanticRefineReviewer: async (refinePrompt: string) => {
         const refineResult = await client.callWithFallback(
-          'reviewer',
+          'semantic_repair',
           'You are a PRD semantic repair specialist. Return JSON only.' + langInstruction,
           refinePrompt,
           CONTENT_REVIEW_REFINE,

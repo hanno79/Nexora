@@ -2268,7 +2268,7 @@ describe('prdCompilerFinalizer', () => {
     expect(semanticVerifier).toHaveBeenCalledTimes(3);
   });
 
-  it('fails hard when semantic verifier still reports blockers after targeted repair', async () => {
+  it('accepts as degraded when semantic verifier reports persistent blockers after repair exhaustion', async () => {
     const original = buildSemanticVerifierPrd('- Release is complete.');
 
     const semanticVerifier = vi.fn(async () => ({
@@ -2283,7 +2283,9 @@ describe('prdCompilerFinalizer', () => {
       usage: usage(8),
     }));
 
-    await expect(finalizeWithCompilerGates({
+    // ÄNDERUNG 14.03.2026: Nach dem Exhaustion-Circuit-Breaker-Fix werden alle
+    // Gap-Reasons (inkl. same_issues_persisted) als degraded akzeptiert statt hart zu scheitern.
+    const result = await finalizeWithCompilerGates({
       initialResult: { content: original, model: 'mock/initial', usage: usage(40) },
       mode: 'generate',
       language: 'en',
@@ -2301,45 +2303,12 @@ describe('prdCompilerFinalizer', () => {
       }),
       semanticVerifier,
       enableContentReview: false,
-    })).rejects.toMatchObject({
-      failureStage: 'semantic_verifier',
-      semanticRepairApplied: true,
-      semanticRepairAttempted: true,
-      semanticRepairIssueCodes: ['cross_section_inconsistency'],
-      semanticRepairSectionKeys: ['definitionOfDone'],
-      repairGapReason: 'same_issues_persisted',
-      repairCycleCount: 2,
     });
 
-    try {
-      await finalizeWithCompilerGates({
-        initialResult: { content: original, model: 'mock/initial', usage: usage(40) },
-        mode: 'generate',
-        language: 'en',
-        originalRequest: 'Generate a verified PRD.',
-        repairReviewer: async () => ({ content: original, model: 'mock/repair', usage: usage(10) }),
-        semanticRefineReviewer: async () => ({
-          content: JSON.stringify({
-            sections: {
-              definitionOfDone: '- Release is complete after documentation review.',
-            },
-          }),
-          model: 'mock/reviewer',
-          usage: usage(12),
-          finishReason: 'stop',
-        }),
-        semanticVerifier,
-        enableContentReview: false,
-      });
-    } catch (error) {
-      expect(error).toBeInstanceOf(PrdCompilerQualityError);
-      const qualityError = error as PrdCompilerQualityError;
-      expect(qualityError.quality.issues.some(issue => issue.code === 'semantic_verifier_blocked')).toBe(true);
-      expect(qualityError.semanticRepairAttempted).toBe(true);
-      expect(qualityError.repairGapReason).toBe('same_issues_persisted');
-      expect(qualityError.postRepairSemanticBlockingIssues.map(issue => issue.sectionKey)).toEqual(['definitionOfDone']);
-      expect(qualityError.finalSemanticBlockingIssues.map(issue => issue.sectionKey)).toEqual(['definitionOfDone']);
-    }
+    expect(result.quality.issues.some(issue => issue.code === 'semantic_verifier_repair_exhausted')).toBe(true);
+    expect(result.semanticRepairAttempted).toBe(true);
+    expect(result.repairGapReason).toBe('same_issues_persisted');
+    expect(result.repairCycleCount).toBeGreaterThan(0);
   });
 
   it('retries semantic repair with smaller batches after truncation', async () => {

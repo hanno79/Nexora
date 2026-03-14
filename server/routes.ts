@@ -69,6 +69,7 @@ import {
   DEFAULT_FREE_FALLBACK_CHAIN,
   isOpenRouterConfigured,
   getOpenRouterConfigError,
+  createClientWithUserPreferences,
 } from "./openrouter";
 import { initializeModelRegistry } from "./modelRegistry";
 import { resolvePrdWorkflowMode } from "./prdWorkflowMode";
@@ -310,6 +311,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(preferences);
   }));
 
+  // AI Model Health Check endpoint
+  app.get('/api/settings/ai/health', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const userId = req.user.claims.sub;
+    let resolvedGeneratorModel = 'unknown';
+
+    try {
+      const { client } = await createClientWithUserPreferences(userId);
+      resolvedGeneratorModel = client.getPreferredModel('generator') || 'unknown';
+
+      // 15-second timeout via AbortController
+      const abortController = new AbortController();
+      const timeout = setTimeout(() => abortController.abort(), 15_000);
+
+      try {
+        const result = await client.callModel(
+          'generator',
+          'You are a test.',
+          'Reply OK.',
+          5,
+          0.0,
+          undefined,
+          { abortSignal: abortController.signal, phase: 'health-check' },
+        );
+        clearTimeout(timeout);
+        res.json({ healthy: true, model: result.model });
+      } catch (innerErr: any) {
+        clearTimeout(timeout);
+        const errorMessage = innerErr?.message || String(innerErr);
+        logger.warn('AI health check failed', { model: resolvedGeneratorModel, error: errorMessage });
+        res.json({ healthy: false, model: resolvedGeneratorModel, error: errorMessage });
+      }
+    } catch (outerErr: any) {
+      const errorMessage = outerErr?.message || String(outerErr);
+      logger.warn('AI health check setup failed', { error: errorMessage });
+      res.json({ healthy: false, model: resolvedGeneratorModel, error: errorMessage });
+    }
+  }));
+
   // Handler für AI-Settings Update (PATCH + POST)
   // POST wird für navigator.sendBeacon() benötigt (beforeunload/unmount flush)
   const handleAiSettingsUpdate = asyncHandler(async (req: AuthenticatedRequest, res) => {
@@ -355,6 +394,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       reviewerModel?: string;
       verifierModel?: string;
       fallbackModel?: string;
+      semanticRepairModel?: string;
       fallbackChain?: string[];
     } | undefined>;
     
@@ -375,6 +415,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             generatorModel: normalizeIncomingModel(modelSet?.generatorModel, tierDefaults.generator) ?? modelSet?.generatorModel,
             reviewerModel: normalizeIncomingModel(modelSet?.reviewerModel, tierDefaults.reviewer) ?? modelSet?.reviewerModel,
             verifierModel: normalizeIncomingModel(modelSet?.verifierModel, tierDefaults.verifier || tierDefaults.reviewer) ?? modelSet?.verifierModel,
+            semanticRepairModel: normalizeIncomingModel(modelSet?.semanticRepairModel, tierDefaults.semanticRepair || tierDefaults.reviewer) ?? modelSet?.semanticRepairModel,
             fallbackModel: normalizeIncomingModel(modelSet?.fallbackModel, getDefaultFallbackModelForTier(typedTier)) ?? modelSet?.fallbackModel,
             ...(Array.isArray(modelSet?.fallbackChain)
               ? { fallbackChain: modelSet!.fallbackChain.map(m => sanitizeConfiguredModel(m)).filter(Boolean) as string[] }
@@ -396,6 +437,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     if (preferences.verifierModel) {
       tierUpdate.verifierModel = normalizeIncomingModel(preferences.verifierModel, activeTierDefaults.verifier || activeTierDefaults.reviewer)!;
+    }
+    if (preferences.semanticRepairModel) {
+      tierUpdate.semanticRepairModel = normalizeIncomingModel(preferences.semanticRepairModel, activeTierDefaults.semanticRepair || activeTierDefaults.reviewer)!;
     }
     if (preferences.fallbackModel) {
       tierUpdate.fallbackModel = normalizeIncomingModel(preferences.fallbackModel, getDefaultFallbackModelForTier(activeTierKey))!;
@@ -446,6 +490,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ...(preferences.generatorModel ? { generatorModel: tierUpdate.generatorModel } : {}),
       ...(preferences.reviewerModel ? { reviewerModel: tierUpdate.reviewerModel } : {}),
       ...(preferences.verifierModel ? { verifierModel: tierUpdate.verifierModel } : {}),
+      ...(preferences.semanticRepairModel ? { semanticRepairModel: tierUpdate.semanticRepairModel } : {}),
       ...(preferences.fallbackModel ? { fallbackModel: tierUpdate.fallbackModel } : {}),
       ...(Array.isArray(preferences.fallbackChain) ? { fallbackChain: tierUpdate.fallbackChain } : {}),
       // WICHTIG: Die finalen tierModels setzen - das überschreibt ggf. preferences.tierModels

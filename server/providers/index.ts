@@ -182,6 +182,8 @@ export async function getAllAvailableModels(): Promise<AIModel[]> {
 // Hilfsfunktion um zu prüfen ob ein Provider konfiguriert ist
 export function isProviderConfigured(provider: AIProvider, apiKey?: string): boolean {
   if (!apiKey) return false;
+  // OpenRouter hat keine eigene Provider-Klasse — Key-Check reicht
+  if (provider === 'openrouter') return apiKey.length > 10;
   
   try {
     const instance = createProvider(provider, apiKey);

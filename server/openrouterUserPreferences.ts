@@ -19,7 +19,7 @@ import {
 } from './openrouterModelConfig';
 
 export type UserPreferenceClient = {
-  setPreferredModel(type: 'generator' | 'reviewer' | 'verifier' | 'fallback', model: string | undefined): void;
+  setPreferredModel(type: 'generator' | 'reviewer' | 'verifier' | 'semantic_repair' | 'fallback', model: string | undefined): void;
   setFallbackChain(models: string[]): void;
   setPreferredTier(tier: keyof ModelConfig): void;
 };
@@ -91,6 +91,10 @@ export async function applyUserPreferencesToClient(
   const resolvedVerifierModel =
     sanitizeConfiguredModel(verifierResolution.resolvedModel) ||
     tierDefaults.verifier;
+  const resolvedSemanticRepairModel =
+    sanitizeConfiguredModel(activeTierModels.semanticRepairModel || prefs.semanticRepairModel) ||
+    tierDefaults.semanticRepair ||
+    resolvedReviewerModel;
 
   if (log) {
     log('🤖 User AI preferences loaded:', {
@@ -98,12 +102,15 @@ export async function applyUserPreferencesToClient(
       tierGenerator: activeTierModels.generatorModel || '(not set)',
       tierReviewer: activeTierModels.reviewerModel || '(not set)',
       tierVerifier: activeTierModels.verifierModel || '(not set)',
+      tierSemanticRepair: activeTierModels.semanticRepairModel || '(not set)',
       globalGenerator: prefs.generatorModel || '(not set)',
       globalReviewer: prefs.reviewerModel || '(not set)',
       globalVerifier: prefs.verifierModel || '(not set)',
+      globalSemanticRepair: prefs.semanticRepairModel || '(not set)',
       resolvedGenerator: resolvedGeneratorModel,
       resolvedReviewer: resolvedReviewerModel,
       resolvedVerifier: resolvedVerifierModel,
+      resolvedSemanticRepair: resolvedSemanticRepairModel,
       verifierBlockedFamilies: verifierResolution.blockedFamilies,
       verifierOverrideApplied: verifierResolution.overrideApplied,
       verifierSameFamilyFallbackOnly: verifierResolution.sameFamilyFallbackOnly,
@@ -115,6 +122,7 @@ export async function applyUserPreferencesToClient(
   client.setPreferredModel('generator', resolvedGeneratorModel);
   client.setPreferredModel('reviewer', resolvedReviewerModel);
   client.setPreferredModel('verifier', resolvedVerifierModel);
+  client.setPreferredModel('semantic_repair', resolvedSemanticRepairModel);
   client.setPreferredModel('fallback', resolvedFallbackChain[0] ?? resolvedFallbackModel);
   client.setFallbackChain(resolvedFallbackChain);
   client.setPreferredTier(tier);

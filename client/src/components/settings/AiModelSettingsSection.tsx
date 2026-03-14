@@ -32,6 +32,7 @@ import {
   DEFAULT_GENERATOR_MODEL,
   DEFAULT_REVIEWER_MODEL,
   DEFAULT_VERIFIER_MODEL,
+  DEFAULT_SEMANTIC_REPAIR_MODEL,
   resolveInitialAiModelSettingsState,
   resolveTierModelSelection,
   type AiPreferencesResponse,
@@ -71,6 +72,7 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
   const [generatorModel, setGeneratorModel] = useState(DEFAULT_GENERATOR_MODEL);
   const [reviewerModel, setReviewerModel] = useState(DEFAULT_REVIEWER_MODEL);
   const [verifierModel, setVerifierModel] = useState(DEFAULT_VERIFIER_MODEL);
+  const [semanticRepairModel, setSemanticRepairModel] = useState(DEFAULT_SEMANTIC_REPAIR_MODEL);
   const [fallbackChain, setFallbackChain] = useState<string[]>([DEFAULT_FALLBACK_CHAIN[0]]);
   const [aiTier, setAiTier] = useState<AiTier>("development");
   const [modelFilter, setModelFilter] = useState<'all' | 'free' | 'paid'>('all');
@@ -130,6 +132,7 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
       setGeneratorModel(resolvedState.generatorModel);
       setReviewerModel(resolvedState.reviewerModel);
       setVerifierModel(resolvedState.verifierModel);
+      setSemanticRepairModel(resolvedState.semanticRepairModel);
       setFallbackChain(resolvedState.fallbackChain);
       setAiTier(resolvedState.aiTier);
       setTierDefaults(resolvedState.tierDefaults);
@@ -143,6 +146,7 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
         generatorModel: resolvedState.generatorModel,
         reviewerModel: resolvedState.reviewerModel,
         verifierModel: resolvedState.verifierModel,
+        semanticRepairModel: resolvedState.semanticRepairModel,
         fallbackChain: resolvedState.fallbackChain,
         aiTier: resolvedState.aiTier,
       });
@@ -176,6 +180,7 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
     generatorModel,
     reviewerModel,
     verifierModel,
+    semanticRepairModel,
     fallbackChain,
     aiTier,
   });
@@ -189,6 +194,7 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
             generatorModel?: string;
             reviewerModel?: string;
             verifierModel?: string;
+            semanticRepairModel?: string;
             fallbackChain?: string[];
             aiTier?: AiTier;
           }
@@ -196,6 +202,7 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
       const generatorModelToSave = modelSettings.generatorModel || generatorModel;
       const reviewerModelToSave = modelSettings.reviewerModel || reviewerModel;
       const verifierModelToSave = modelSettings.verifierModel || verifierModel;
+      const semanticRepairModelToSave = modelSettings.semanticRepairModel || semanticRepairModel;
       const fallbackChainToSave = modelSettings.fallbackChain || fallbackChain;
       const tierToSave = modelSettings.aiTier || aiTier;
 
@@ -204,6 +211,7 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
         generatorModel: generatorModelToSave,
         reviewerModel: reviewerModelToSave,
         verifierModel: verifierModelToSave,
+        semanticRepairModel: semanticRepairModelToSave,
         fallbackChain: fallbackChainToSave,
         aiTier: tierToSave,
         tierDefaults,
@@ -221,6 +229,7 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
           generatorModel,
           reviewerModel,
           verifierModel,
+          semanticRepairModel,
           fallbackChain,
         }),
       }));
@@ -250,6 +259,7 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
       generatorModel,
       reviewerModel,
       verifierModel,
+      semanticRepairModel,
       fallbackChain,
       aiTier,
     });
@@ -260,6 +270,7 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
       generatorModel,
       reviewerModel,
       verifierModel,
+      semanticRepairModel,
       fallbackChain,
       aiTier,
       tierDefaults,
@@ -299,6 +310,7 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
         generatorModel,
         reviewerModel,
         verifierModel,
+        semanticRepairModel,
         fallbackChain,
       }),
     };
@@ -314,6 +326,7 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
     if (nextSelection.generatorModel) setGeneratorModel(nextSelection.generatorModel);
     if (nextSelection.reviewerModel) setReviewerModel(nextSelection.reviewerModel);
     if (nextSelection.verifierModel) setVerifierModel(nextSelection.verifierModel);
+    if (nextSelection.semanticRepairModel) setSemanticRepairModel(nextSelection.semanticRepairModel);
     setFallbackChain(nextSelection.fallbackChain);
   };
 
@@ -498,6 +511,7 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
               </Select>
               <p className="text-xs text-muted-foreground">{t.settings.verifierModelDesc}</p>
             </div>
+            {/* Semantic Repair Model */}            <div className="space-y-2">              <Label htmlFor="semantic-repair-model">{t.settings.semanticRepairModel}</Label>              <Select value={semanticRepairModel} onValueChange={setSemanticRepairModel}>                <SelectTrigger id="semantic-repair-model" data-testid="select-semantic-repair-model">                  <SelectValue placeholder={allModelsLoading ? t.settings.loadingModels : t.settings.selectModel} />                </SelectTrigger>                <SelectContent>                  {allModelsLoading ? (                    <SelectItem value="loading" disabled>{t.settings.loadingModels}</SelectItem>                  ) : filteredModels.length === 0 ? (                    <SelectItem value="none" disabled>{t.settings.noModelsFound}</SelectItem>                  ) : (                    filteredModels.map(m => {                      const provider = providerInfoMap?.[m.provider];                      return (                        <SelectItem key={m.id} value={m.id}>                          <AiModelDisplayLabel                            name={m.name}                            isFree={m.isFree}                            providerDisplayName={provider?.displayName}                            providerColor={provider?.color}                          />                        </SelectItem>                      );                    })                  )}                </SelectContent>              </Select>              <p className="text-xs text-muted-foreground">{t.settings.semanticRepairModelDesc}</p>            </div>
 
             {/* Fallback Chain */}
             <div className="space-y-2">

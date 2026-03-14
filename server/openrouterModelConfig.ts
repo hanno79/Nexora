@@ -16,6 +16,7 @@ export interface ModelTier {
   generator: string;
   reviewer: string;
   verifier: string;
+  semanticRepair: string;
   cost: string;
 }
 
@@ -107,6 +108,7 @@ export const MODEL_TIERS: ModelConfig = {
     generator: DEFAULT_FREE_GENERATOR_MODEL,
     reviewer: DEFAULT_FREE_REVIEWER_MODEL,
     verifier: 'google/gemma-3-27b-it:free',
+    semanticRepair: DEFAULT_FREE_REVIEWER_MODEL,
     cost: '$0/Million Tokens',
   },
   production: {
@@ -114,17 +116,20 @@ export const MODEL_TIERS: ModelConfig = {
     reviewer: 'anthropic/claude-sonnet-4',
     verifier: 'mistralai/mistral-small-3.1-24b-instruct',
     cost: '~$0.10-0.30 pro PRD',
+    semanticRepair: 'anthropic/claude-sonnet-4',
   },
   premium: {
     generator: 'anthropic/claude-sonnet-4',
     reviewer: 'google/gemini-2.5-pro-preview',
     verifier: 'mistralai/mistral-small-3.1-24b-instruct',
     cost: '~$0.30-1.00 pro PRD',
+    semanticRepair: 'google/gemini-2.5-pro-preview',
   },
   abacus: {
     generator: 'route-llm',
     reviewer: 'route-llm',
     verifier: 'route-llm',
+    semanticRepair: 'route-llm',
     cost: '~$0.05-0.20 pro PRD (Credits)',
   },
 };

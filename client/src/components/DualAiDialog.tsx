@@ -65,7 +65,10 @@ export function DualAiDialog({
   const [generatorModel, setGeneratorModel] = useState('');
   const [reviewerModel, setReviewerModel] = useState('');
   const [verifierModel, setVerifierModel] = useState('');
+  const [semanticRepairModel, setSemanticRepairModel] = useState('');
   const [error, setError] = useState('');
+  const [healthStatus, setHealthStatus] = useState<{ healthy: boolean; model: string; error?: string } | null>(null);
+  const [healthChecking, setHealthChecking] = useState(false);
   const [runQualityStatus, setRunQualityStatus] = useState<'passed' | 'failed_quality' | 'failed_runtime' | null>(null);
   
   // Workflow-Modus: einfach, iterativ oder geführt (neu)
@@ -477,6 +480,14 @@ export function DualAiDialog({
         if (settings.generatorModel) setGeneratorModel(settings.generatorModel);
         if (settings.reviewerModel) setReviewerModel(settings.reviewerModel);
         if (settings.verifierModel) setVerifierModel(settings.verifierModel);
+        if (settings.semanticRepairModel) setSemanticRepairModel(settings.semanticRepairModel);
+        // After settings are loaded, run health check in background
+        setHealthChecking(true);
+        fetch('/api/settings/ai/health', { credentials: 'include' })
+          .then(res => res.json())
+          .then(data => setHealthStatus(data))
+          .catch(() => setHealthStatus(null))
+          .finally(() => setHealthChecking(false));
       }
     } catch (err) {
       console.error('Failed to load AI settings:', err);
@@ -944,6 +955,11 @@ export function DualAiDialog({
                     {t.dualAi.verifier}: {getShortModelName(verifierModel)}
                   </Badge>
                 )}
+                {semanticRepairModel && (
+                  <Badge variant="outline" className="text-xs">
+                    {t.dualAi.semanticRepair}: {getShortModelName(semanticRepairModel)}
+                  </Badge>
+                )}
               </div>
             )}
             {/* Fix 0.2: Mode transparency info line */}
@@ -993,6 +1009,23 @@ export function DualAiDialog({
               data-testid="textarea-dual-ai-input"
             />
           </div>
+
+          {/* Health check warning */}
+          {healthChecking && (
+            <div className="flex items-center gap-2 p-3 rounded-md bg-muted text-muted-foreground">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent shrink-0" />
+              <p className="text-sm">{t.dualAi.healthChecking}</p>
+            </div>
+          )}
+          {healthStatus && !healthStatus.healthy && !healthChecking && (
+            <div className="flex items-start gap-2 p-3 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
+              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+              <div className="text-sm">
+                <p className="font-medium">{t.dualAi.modelNotAvailable}</p>
+                <p className="mt-1">{healthStatus.error || t.dualAi.modelHealthError}</p>
+              </div>
+            </div>
+          )}
 
           {/* Fehleranzeige */}
           {error && (

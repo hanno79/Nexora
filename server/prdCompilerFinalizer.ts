@@ -427,6 +427,7 @@ const TARGETED_DETERMINISTIC_REPAIR_CODES = new Set([
   'rule_schema_property_coverage_missing',
   'deployment_runtime_contradiction',
   'section_content_degenerate',
+  'feature_enrichment_field_empty',
 ]);
 
 function isBroadStructuralRepairCase(quality: PrdQualityReport): boolean {
@@ -1117,13 +1118,30 @@ function toDeterministicContentIssues(
     }
     if (
       featureQualityFloorFailed
-      && ['timeline_feature_reference_mismatch', 'out_of_scope_future_leakage', 'out_of_scope_reintroduced'].includes(issue.code)
+      && ['out_of_scope_future_leakage', 'out_of_scope_reintroduced'].includes(issue.code)
     ) {
       continue;
     }
 
     const sectionKeyFromPath = normalizeSectionKeyFromEvidencePath(issue.evidencePath);
-    if (issue.code === 'feature_core_semantic_gap') {
+    // ÄNDERUNG 14.03.2026: Leere Enrichment-Felder gezielt auffuellen,
+    // bevor der Semantic Verifier sie als feature_section_semantic_mismatch meldet.
+    if (issue.code === 'feature_enrichment_field_empty') {
+      const featureSectionKey = sectionKeyFromPath?.startsWith('feature:') ? sectionKeyFromPath : null;
+      if (featureSectionKey) {
+        pushIssue({
+          code: issue.code,
+          sectionKey: featureSectionKey,
+          message: issue.message,
+          severity: 'error',
+          suggestedAction: 'enrich',
+          targetFields: uniqueTargetFields(issue.relatedPaths || []),
+        });
+      }
+      continue;
+    }
+
+        if (issue.code === 'feature_core_semantic_gap') {
       const featureSectionKey = sectionKeyFromPath?.startsWith('feature:') ? sectionKeyFromPath : 'systemVision';
       if (featureSectionKey.startsWith('feature:')) {
         // ÄNDERUNG 11.03.2026: Core-Semantik-Luecken muessen eng auf die
@@ -1167,24 +1185,6 @@ function toDeterministicContentIssues(
         severity: 'error',
         suggestedAction: 'rewrite',
       });
-      for (const pathValue of issue.relatedPaths || []) {
-        const sectionKey = normalizeSectionKeyFromEvidencePath(pathValue);
-        if (!sectionKey?.startsWith('feature:')) continue;
-        pushIssue({
-          code: issue.code,
-          sectionKey,
-          message: issue.message,
-          severity: 'error',
-          suggestedAction: 'enrich',
-          targetFields: uniqueTargetFields([
-            'name',
-            'purpose',
-            'mainFlow',
-            'trigger',
-            'acceptanceCriteria',
-          ]),
-        });
-      }
       continue;
     }
 
@@ -1516,8 +1516,12 @@ const ENRICHMENT_ONLY_FIELDS: ReadonlySet<string> = new Set([
 
 // ÄNDERUNG 13.03.2026: Soft-blocking Issues (Enrichment-Gaps, Section-Level-Widersprueche)
 // werden am Final Gate als degraded akzeptiert statt zu blockieren.
+// ÄNDERUNG 14.03.2026: Auch cross_section_inconsistency auf Features mit
+// Enrichment-Only-Feldern (z.B. dataImpact) ist unreparierbar — nicht nur
+// feature_section_semantic_mismatch. Beide betreffen optionale Detailfelder.
 function isEnrichmentOnlyIssue(issue: SemanticBlockingIssue): boolean {
-  if (issue.code !== 'feature_section_semantic_mismatch') return false;
+  if (issue.code !== 'feature_section_semantic_mismatch'
+      && issue.code !== 'cross_section_inconsistency') return false;
   if (!issue.sectionKey?.startsWith('feature:')) return false;
   if (!issue.targetFields?.length) return false;
   return issue.targetFields.every(field => ENRICHMENT_ONLY_FIELDS.has(field));
@@ -1546,11 +1550,20 @@ function isUnrepairableIssue(issue: SemanticBlockingIssue): boolean {
     || isSectionLevelContradiction(issue);
 }
 
+// ÄNDERUNG 14.03.2026: Timeline cross_section_inconsistency nach deterministischem
+// Rewrite ist unreparierbar — der LLM-Repair bekommt mainFlow als Target fuer ein
+// Timeline-Problem, was nachweislich zu repair_no_structural_change fuehrt.
+function isTimelineConsistencyIssue(issue: SemanticBlockingIssue): boolean {
+  return issue.code === 'cross_section_inconsistency'
+    && issue.sectionKey === 'timelineMilestones';
+}
+
 // Soft-blocking am Final Gate: unreparierbar + schema-Nitpicks auf nicht-Feature-Sections
-// (letztere werden im Repair-Loop VERSUCHT, aber blockieren nicht wenn sie bestehen bleiben)
+// + Timeline-Konsistenz-Issues (deterministischer Rewrite hat bereits korrigiert)
 function isSoftBlockingIssue(issue: SemanticBlockingIssue): boolean {
   return isUnrepairableIssue(issue)
-    || isNonFeatureSchemaMismatch(issue);
+    || isNonFeatureSchemaMismatch(issue)
+    || isTimelineConsistencyIssue(issue);
 }
 
 function partitionBlockingIssues(issues: SemanticBlockingIssue[]): {
@@ -2256,7 +2269,9 @@ export async function finalizeWithCompilerGates(
     ? timelineConsistencyBeforeVerifier.canonicalFeatureIds
     : (compiled.quality.canonicalFeatureIds || canonicalFeatureIds);
   timelineMismatchedFeatureIds = timelineConsistencyBeforeVerifier.timelineMismatchedFeatureIds;
-  if (featureQualityDiagnostics.featureQualityFloorPassed !== false && timelineMismatchedFeatureIds.length > 0) {
+  // ÄNDERUNG 14.03.2026: Quality-Floor-Gate entfernt — rewriteTimelineMilestonesFromFeatureMap
+  // modifiziert nur timelineMilestones, nie Features. compareCandidatePreference schuetzt vor Regression.
+  if (timelineMismatchedFeatureIds.length > 0) {
     const timelineRewrite = rewriteTimelineMilestonesFromFeatureMap(compiled.structure, language || 'en');
     if (timelineRewrite.changed && timelineRewrite.content) {
       const rewrittenStructure: PRDStructure = {
@@ -2630,16 +2645,15 @@ export async function finalizeWithCompilerGates(
         };
       }
 
-      // ÄNDERUNG 13.03.2026: Repair-Exhaustion Circuit-Breaker
-      // Wenn der Repair-Loop keine substantive oder strukturelle Aenderung bewirken konnte,
-      // sind die verbleibenden Issues offenbar unreparierbar → als degraded akzeptieren.
-      // repair_no_structural_change = Repair konnte GAR NICHTS aendern (staerkstes Erschoepfungssignal)
-      // repair_no_substantive_change = Repair hat geaendert aber nichts verbessert
+      // ÄNDERUNG 14.03.2026: Repair-Exhaustion Circuit-Breaker — alle Gap-Reasons
+      // sind Exhaustion-Signale, nicht nur structural/substantive:
+      // - repair_no_structural_change: Repair konnte nichts aendern
+      // - repair_no_substantive_change: Repair hat geaendert aber nicht verbessert
+      // - regression_detected: Repair hat anderes Feature gebrochen (Revert)
+      // - same_issues_persisted: Gleiche Issues nach Repair
+      // - emergent_issue_after_repair: Neue Issues nach Repair
       // Greift NUR wenn Repair tatsaechlich gelaufen ist (repairCycleCount > 0).
-      const isRepairExhausted = (
-        repairGapReason === 'repair_no_substantive_change'
-        || repairGapReason === 'repair_no_structural_change'
-      ) && repairCycleCount > 0;
+      const isRepairExhausted = !!repairGapReason && repairCycleCount > 0;
 
       if (isRepairExhausted) {
         const displayedExhausted = alignDisplayedCandidate(bestSubstantiveCurrent, bestSubstantiveCandidateSource);

@@ -164,6 +164,8 @@ export const de: Translations = {
     reviewerModelDesc: "Das Modell, das den Inhalt kritisch überprüft und verbessert",
     verifierModel: "Verifier-Modell",
     verifierModelDesc: "Das Modell für semantische und Compiler-Verifikation",
+    semanticRepairModel: "Semantisches Repair-Modell",
+    semanticRepairModelDesc: "Modell zur semantischen Reparatur von Widersprüchen und Inkonsistenzen",
     fallbackModel: "Ausweichmodell",
     fallbackModelDesc: "Wird verwendet, wenn das primäre Modell nicht verfügbar ist",
     fallbackModelDescFull: "Letzter Ausweg, wenn sowohl Generator- als auch Reviewer-Modell fehlschlagen. Ein kostenloses Modell wird hier empfohlen.",
@@ -446,6 +448,7 @@ export const de: Translations = {
     generator: "Generator",
     reviewer: "Reviewer",
     verifier: "Verifier",
+    semanticRepair: "Semantische Reparatur",
     elapsed: "vergangen",
     tokens: "Token",
     startingIterative: "Starte iterativen Workflow...",
@@ -473,6 +476,9 @@ export const de: Translations = {
     guidedStartingFinalization: "PRD-Generierung wird gestartet...",
     guidedGenerationStarted: "PRD wird generiert...",
     compilingPRD: "PRD wird kompiliert und validiert...",
+    healthChecking: "Modellverfuegbarkeit wird geprueft...",
+    modelNotAvailable: "Generator-Modell moeglicherweise nicht verfuegbar",
+    modelHealthError: "Das konfigurierte Generator-Modell konnte nicht erreicht werden. Die Generierung koennte auf ein anderes Modell zurueckfallen.",
   },
 
   guidedAi: {

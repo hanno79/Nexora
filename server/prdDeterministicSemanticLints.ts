@@ -711,8 +711,13 @@ function analyzeTimelineFeatureReferenceMismatch(structure: PRDStructure): Timel
       );
       if (!bestMatch) continue;
       if (bestMatch.id === referenceId) continue;
-      if (bestScore < 2) continue;
+      // ÄNDERUNG 14.03.2026: Threshold verschaerft, um False Positives bei
+      // feature-reichen PRDs mit geteiltem Vokabular (z.B. Gaming) zu vermeiden.
+      // Vorher: bestScore >= 2 und bestScore > referencedScore genuegten.
+      if (bestScore < 3) continue;
       if (bestScore <= referencedScore) continue;
+      const marginRequired = Math.max(2, Math.ceil(referencedScore * 0.5));
+      if (bestScore - referencedScore < marginRequired) continue;
 
       mismatchedFeatureIds.add(referenceId);
       const issueKey = `${referenceId}|${bestMatch.id}|${segment.line.toLowerCase()}`;
@@ -1778,6 +1783,65 @@ function collectDegenerateSectionIssues(
   return issues;
 }
 
+
+// ÄNDERUNG 14.03.2026: Erkennt leere Enrichment-Felder wenn Purpose/Name
+// semantisch relevante Begriffe enthaelt. Damit kann der deterministische
+// Repair das Feld VORHER auffuellen, bevor der Semantic Verifier es als
+// feature_section_semantic_mismatch meldet.
+const UI_INDICATOR_PATTERNS = [
+  /(?:ui|interface|screen|button|display|anzeige|men[uü]e?|dashboard|widget|ansicht|darstellung|visual|overlay|hud|profil|view|panel|modal|dialog|fenster|seite|page)/i,
+];
+const DATA_INDICATOR_PATTERNS = [
+  /(?:persist|speicher|storage|daten(?:bank)?|data(?:base)?|save|load|synchron|cache|migration|backup|export|import)/i,
+];
+const ENRICHMENT_FIELD_MIN_LENGTH = 30;
+
+function extractFeatureEmptyEnrichmentFieldIssues(
+  structure: PRDStructure
+): DeterministicSemanticIssue[] {
+  const issues: DeterministicSemanticIssue[] = [];
+  const features = structure.features || [];
+
+  for (const feature of features) {
+    const featureId = String(feature.id || '').trim();
+    if (!featureId) continue;
+    const purposeAndName = [
+      String(feature.name || '').trim(),
+      String(feature.purpose || '').trim(),
+    ].join(' ');
+    if (!purposeAndName) continue;
+
+    const uiImpactText = String(feature.uiImpact || '').trim();
+    const dataImpactText = String(feature.dataImpact || '').trim();
+
+    if (uiImpactText.length < ENRICHMENT_FIELD_MIN_LENGTH
+        && UI_INDICATOR_PATTERNS.some(p => p.test(purposeAndName))) {
+      issues.push({
+        code: 'feature_enrichment_field_empty',
+        message: `Feature "${featureId}: ${String(feature.name || '').trim()}" mentions UI concepts in its purpose but uiImpact is empty or too brief.`,
+        severity: 'warning',
+        evidencePath: `feature:${featureId}.uiImpact`,
+        evidenceSnippet: purposeAndName.slice(0, 220),
+        relatedPaths: ['uiImpact'],
+      });
+    }
+
+    if (dataImpactText.length < ENRICHMENT_FIELD_MIN_LENGTH
+        && DATA_INDICATOR_PATTERNS.some(p => p.test(purposeAndName))) {
+      issues.push({
+        code: 'feature_enrichment_field_empty',
+        message: `Feature "${featureId}: ${String(feature.name || '').trim()}" mentions data/persistence concepts in its purpose but dataImpact is empty or too brief.`,
+        severity: 'warning',
+        evidencePath: `feature:${featureId}.dataImpact`,
+        evidenceSnippet: purposeAndName.slice(0, 220),
+        relatedPaths: ['dataImpact'],
+      });
+    }
+  }
+
+  return issues;
+}
+
 export function collectDeterministicSemanticIssues(
   structure: PRDStructure,
   options: CollectSemanticIssuesOptions = {}
@@ -1957,6 +2021,8 @@ export function collectDeterministicSemanticIssues(
     options,
     visionFirst.diagnostics.primaryCapabilityAnchors,
   ));
+
+  issues.push(...extractFeatureEmptyEnrichmentFieldIssues(structure));
 
   if (!outOfScopeIsFallback) {
     issues.push(...extractOutOfScopeFutureLeakageIssues(String(structure.outOfScope || '')));

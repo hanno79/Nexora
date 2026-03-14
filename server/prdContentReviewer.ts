@@ -1144,17 +1144,11 @@ function buildSemanticRepairTargets(
     }
   }
 
-  if (targets.has('timelineMilestones')) {
-    for (const target of targets.values()) {
-      if (target.kind !== 'feature') continue;
-      target.targetFields = Array.from(new Set([
-        ...target.targetFields,
-        'name',
-        'purpose',
-        'mainFlow',
-      ]));
-    }
-  }
+  // ÄNDERUNG 14.03.2026: mainFlow-Injektion fuer Timeline-Targets ENTFERNT.
+  // Die deterministische Timeline-Rewrite (rewriteTimelineMilestonesFromFeatureMap)
+  // korrigiert F-XX-Referenzen direkt. Feature-Felder-Erweiterung bei Timeline-Targets
+  // fuehrt zu unmoeglich reparierbaren Auftraegen (Timeline-Problem → mainFlow-Target)
+  // und verursacht repair_no_structural_change in allen Zyklen.
 
   // Feature-Drift-Erkennung: Prüfe ob Feature-Inhalte zum Titel passen.
   // Bei Drift → alle Felder als Targets setzen und contentDrift markieren.
@@ -1308,11 +1302,11 @@ TASK
 PROJECT CONTEXT
 - Original request: ${String(originalRequest || '(missing)').slice(0, 600)}
 - Template guidance: ${templateInstruction}
-- System Vision: ${String(structure.systemVision || '(missing)').slice(0, 500)}
-- System Boundaries: ${String(structure.systemBoundaries || '(missing)').slice(0, 500)}
-- Domain Model: ${String(structure.domainModel || '(missing)').slice(0, 500)}
-- Global Business Rules: ${String(structure.globalBusinessRules || '(missing)').slice(0, 500)}
-- Out of Scope: ${String(structure.outOfScope || '(missing)').slice(0, 500)}
+- System Vision: ${String(structure.systemVision || '(missing)').slice(0, 1500)}
+- System Boundaries: ${String(structure.systemBoundaries || '(missing)').slice(0, 1500)}
+- Domain Model: ${String(structure.domainModel || '(missing)').slice(0, 1500)}
+- Global Business Rules: ${String(structure.globalBusinessRules || '(missing)').slice(0, 1500)}
+- Out of Scope: ${String(structure.outOfScope || '(missing)').slice(0, 1500)}
 - Feature Index:
 ${featureIndex}
 ${leadingFeatureWindow ? `- Leading Feature Window (fixed order; strengthen content instead of reordering):\n${leadingFeatureWindow}` : ''}
@@ -1518,6 +1512,13 @@ function parseSemanticPatchResponse(
   return { sections, features };
 }
 
+// ÄNDERUNG 14.03.2026: Lockerer Vergleich fuer Patch-Anwendung — nur Whitespace
+// normalisieren, nicht Gross/Kleinschreibung oder Sonderzeichen. Damit werden
+// semantische Aenderungen wie 'PostgreSQL' → 'LocalStorage' korrekt erkannt.
+function normalizeForPatchComparison(value: string): string {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
 function applySemanticPatchToStructure(params: {
   structure: PRDStructure;
   patch: NormalizedSemanticPatch;
@@ -1531,7 +1532,7 @@ function applySemanticPatchToStructure(params: {
     for (const [sectionKey, value] of Object.entries(params.patch.sections)) {
       const typedKey = sectionKey as PatchableSectionKey;
       const currentValue = String((nextStructure as any)[typedKey] || '').trim();
-      if (normalizeForMatch(currentValue) === normalizeForMatch(value)) continue;
+      if (normalizeForPatchComparison(currentValue) === normalizeForPatchComparison(value)) continue;
       (updatedSections as any)[typedKey] = value;
       changed = true;
       changedSections.add(String(typedKey));
@@ -1555,8 +1556,11 @@ function applySemanticPatchToStructure(params: {
 
         if (field === 'mainFlow' || field === 'alternateFlows' || field === 'acceptanceCriteria') {
           if (!Array.isArray(nextValue)) continue;
-          const normalizedCurrent = normalizeFeatureFieldValue(feature, field);
-          const normalizedNext = nextValue.map(entry => normalizeForMatch(entry)).join('|');
+          const currentArray = (feature as any)[field];
+          const normalizedCurrent = Array.isArray(currentArray)
+            ? currentArray.map((entry: unknown) => normalizeForPatchComparison(String(entry || ''))).join('|')
+            : normalizeForPatchComparison(String(currentArray || ''));
+          const normalizedNext = nextValue.map(entry => normalizeForPatchComparison(entry)).join('|');
           if (!normalizedNext || normalizedCurrent === normalizedNext) continue;
           (updatedFeature as any)[field] = nextValue;
           featureChanged = true;
@@ -1564,8 +1568,8 @@ function applySemanticPatchToStructure(params: {
         }
 
         if (typeof nextValue !== 'string') continue;
-        const normalizedCurrent = normalizeFeatureFieldValue(feature, field);
-        const normalizedNext = normalizeForMatch(nextValue);
+        const normalizedCurrent = normalizeForPatchComparison(String((feature as any)[field] || ''));
+        const normalizedNext = normalizeForPatchComparison(nextValue);
         if (!normalizedNext || normalizedCurrent === normalizedNext) continue;
         (updatedFeature as any)[field] = nextValue;
         featureChanged = true;

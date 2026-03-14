@@ -91,7 +91,7 @@ class OpenRouterClient {
   private apiKey: string;
   private baseUrl = 'https://openrouter.ai/api/v1';
   private tier: keyof ModelConfig;
-  private preferredModels: { generator?: string; reviewer?: string; verifier?: string; fallback?: string } = {};
+  private preferredModels: { generator?: string; reviewer?: string; verifier?: string; semantic_repair?: string; fallback?: string } = {};
   private preferredFallbackChain: string[] = [];
   private defaultExecutionContext: ModelCallExecutionContext = {};
   private runQuarantinedModels = new Map<string, string>();
@@ -114,11 +114,11 @@ class OpenRouterClient {
     return MODEL_TIERS[this.tier];
   }
 
-  setPreferredModel(type: 'generator' | 'reviewer' | 'verifier' | 'fallback', model: string | undefined): void {
+  setPreferredModel(type: 'generator' | 'reviewer' | 'verifier' | 'semantic_repair' | 'fallback', model: string | undefined): void {
     this.preferredModels[type] = model;
   }
 
-  getPreferredModel(type: 'generator' | 'reviewer' | 'verifier' | 'fallback'): string | undefined {
+  getPreferredModel(type: 'generator' | 'reviewer' | 'verifier' | 'semantic_repair' | 'fallback'): string | undefined {
     return this.preferredModels[type];
   }
 
@@ -196,7 +196,7 @@ class OpenRouterClient {
   }
 
   async callModel(
-    modelType: 'generator' | 'reviewer' | 'verifier',
+    modelType: 'generator' | 'reviewer' | 'verifier' | 'semantic_repair',
     systemPrompt: string,
     userPrompt: string,
     maxTokens: number = 6000,
@@ -214,10 +214,7 @@ class OpenRouterClient {
     if (this.preferredModels[modelType]) {
       modelName = this.preferredModels[modelType]!;
     } else {
-      const models = this.getModels();
-      modelName = modelType === 'generator'
-        ? models.generator
-        : (modelType === 'reviewer' ? models.reviewer : models.verifier);
+      const models = this.getModels();      if (modelType === 'generator') modelName = models.generator;      else if (modelType === 'reviewer') modelName = models.reviewer;      else if (modelType === 'semantic_repair') modelName = models.semanticRepair;      else modelName = models.verifier;
     }
 
     // ÄNDERUNG 04.03.2026: Versuche direkten Provider-Aufruf fuer bestimmte Modelle
@@ -532,7 +529,7 @@ class OpenRouterClient {
   }
 
   async callWithFallback(
-    modelType: 'generator' | 'reviewer' | 'verifier',
+    modelType: 'generator' | 'reviewer' | 'verifier' | 'semantic_repair',
     systemPrompt: string,
     userPrompt: string,
     maxTokens: number = 4000,

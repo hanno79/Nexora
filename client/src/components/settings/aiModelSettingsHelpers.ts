@@ -1,16 +1,17 @@
 export type AiTier = "development" | "production" | "premium" | "abacus";
 
 export interface TierDefaults {
-  development?: { generator?: string; reviewer?: string; verifier?: string };
-  production?: { generator?: string; reviewer?: string; verifier?: string };
-  premium?: { generator?: string; reviewer?: string; verifier?: string };
-  abacus?: { generator?: string; reviewer?: string; verifier?: string };
+  development?: { generator?: string; reviewer?: string; verifier?: string; semanticRepair?: string };
+  production?: { generator?: string; reviewer?: string; verifier?: string; semanticRepair?: string };
+  premium?: { generator?: string; reviewer?: string; verifier?: string; semanticRepair?: string };
+  abacus?: { generator?: string; reviewer?: string; verifier?: string; semanticRepair?: string };
 }
 
 export interface TierModelSelection {
   generatorModel?: string;
   reviewerModel?: string;
   verifierModel?: string;
+  semanticRepairModel?: string;
   fallbackModel?: string;
   fallbackChain?: string[];
 }
@@ -18,6 +19,7 @@ export interface TierModelSelection {
 export interface AiPreferencesResponse {
   generatorModel?: string;
   reviewerModel?: string;
+  semanticRepairModel?: string;
   verifierModel?: string;
   fallbackChain?: string[];
   fallbackModel?: string;
@@ -35,6 +37,7 @@ export interface ResolvedAiModelSettingsState {
   generatorModel: string;
   reviewerModel: string;
   verifierModel: string;
+  semanticRepairModel: string;
   fallbackChain: string[];
   aiTier: AiTier;
   tierDefaults: TierDefaults;
@@ -52,6 +55,7 @@ export interface AiSettingsPayloadInput {
   reviewerModel: string;
   verifierModel: string;
   fallbackChain: string[];
+  semanticRepairModel: string;
   aiTier: AiTier;
   tierDefaults: TierDefaults;
   iterativeMode: boolean;
@@ -64,6 +68,7 @@ export interface AiSettingsPayloadInput {
 export const DEFAULT_GENERATOR_MODEL = "nvidia/nemotron-3-nano-30b-a3b:free";
 export const DEFAULT_REVIEWER_MODEL = "arcee-ai/trinity-large-preview:free";
 export const DEFAULT_VERIFIER_MODEL = "google/gemma-3-27b-it:free";
+export const DEFAULT_SEMANTIC_REPAIR_MODEL = "arcee-ai/trinity-large-preview:free";
 export const DEFAULT_FALLBACK_CHAIN = [
   "google/gemma-3-27b-it:free",
   "meta-llama/llama-3.3-70b-instruct:free",
@@ -84,6 +89,7 @@ export function buildAiModelSettingsKey(params: {
   generatorModel: string;
   reviewerModel: string;
   verifierModel: string;
+  semanticRepairModel: string;
   fallbackChain: string[];
   aiTier: AiTier;
 }): string {
@@ -94,12 +100,14 @@ export function buildTierModelSelection(params: {
   generatorModel: string;
   reviewerModel: string;
   verifierModel: string;
+  semanticRepairModel: string;
   fallbackChain: string[];
 }): TierModelSelection {
   return {
     generatorModel: params.generatorModel,
     reviewerModel: params.reviewerModel,
     verifierModel: params.verifierModel,
+    semanticRepairModel: params.semanticRepairModel,
     fallbackChain: params.fallbackChain,
   };
 }
@@ -119,6 +127,10 @@ export function resolveInitialAiModelSettingsState(
       aiPreferences?.verifierModel ||
       aiPreferences?.reviewerModel ||
       DEFAULT_VERIFIER_MODEL,
+    semanticRepairModel:
+      aiPreferences?.semanticRepairModel ||
+      aiPreferences?.reviewerModel ||
+      DEFAULT_SEMANTIC_REPAIR_MODEL,
     fallbackChain: [...fallbackChain],
     aiTier: aiPreferences?.tier || "development",
     tierDefaults: aiPreferences?.tierDefaults || {},
@@ -139,6 +151,7 @@ export function resolveTierModelSelection(params: {
   generatorModel?: string;
   reviewerModel?: string;
   verifierModel?: string;
+  semanticRepairModel?: string;
   fallbackChain: string[];
 } {
   const saved = params.savedTierModels[params.tier];
@@ -147,6 +160,7 @@ export function resolveTierModelSelection(params: {
       generatorModel: saved.generatorModel,
       reviewerModel: saved.reviewerModel,
       verifierModel: saved.verifierModel,
+      semanticRepairModel: saved.semanticRepairModel,
       fallbackChain: saved.fallbackChain ? [...saved.fallbackChain] : [...DEFAULT_FALLBACK_CHAIN],
     };
   }
@@ -156,6 +170,7 @@ export function resolveTierModelSelection(params: {
     generatorModel: defaults?.generator,
     reviewerModel: defaults?.reviewer,
     verifierModel: defaults?.verifier ?? defaults?.reviewer,
+    semanticRepairModel: defaults?.semanticRepair ?? defaults?.reviewer,
     fallbackChain: [...DEFAULT_FALLBACK_CHAIN],
   };
 }
@@ -167,6 +182,7 @@ export function buildAiSettingsPayload(params: AiSettingsPayloadInput) {
       generatorModel: params.generatorModel,
       reviewerModel: params.reviewerModel,
       verifierModel: params.verifierModel,
+      semanticRepairModel: params.semanticRepairModel,
       fallbackChain: params.fallbackChain,
     }),
   };
@@ -175,6 +191,7 @@ export function buildAiSettingsPayload(params: AiSettingsPayloadInput) {
     generatorModel: params.generatorModel,
     reviewerModel: params.reviewerModel,
     verifierModel: params.verifierModel,
+    semanticRepairModel: params.semanticRepairModel,
     fallbackModel: params.fallbackChain[0] || DEFAULT_FALLBACK_CHAIN[0],
     fallbackChain: params.fallbackChain,
     tier: params.aiTier,
