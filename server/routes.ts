@@ -25,6 +25,7 @@ import { insertPrdSchema, users, aiPreferencesSchema } from "@shared/schema";
 // Legacy Anthropic import removed – legacy endpoint disabled (see below)
 import { generatePDF, generateWord } from "./exportUtils";
 import { generateClaudeMD } from "./claudemdGenerator";
+import { repairSingleIssue } from "./issueRepairService";
 import { initializeTemplates } from "./initTemplates";
 import { db, pool } from "./db";
 import { eq, inArray } from "drizzle-orm";
@@ -1069,7 +1070,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(400).json({ message: 'issue with code, sectionKey, and message is required' });
     }
 
-    const { repairSingleIssue } = await import('./issueRepairService');
+    const validActions = ['rewrite', 'enrich'] as const;
+    const suggestedAction = validActions.includes(issue.suggestedAction)
+      ? issue.suggestedAction as 'rewrite' | 'enrich'
+      : 'rewrite';
+
     const { logAiUsage } = await import('./aiUsageLogger');
 
     const result = await repairSingleIssue({
@@ -1078,7 +1083,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         code: issue.code,
         sectionKey: issue.sectionKey,
         message: issue.message,
-        suggestedAction: issue.suggestedAction,
+        suggestedAction,
         targetFields: issue.targetFields,
         suggestedFix: issue.suggestedFix,
       },

@@ -21,8 +21,7 @@ import { createClientWithUserPreferences } from './openrouter';
 import { getLanguageInstruction } from './dualAiPrompts';
 import { CONTENT_REVIEW_REFINE, SEMANTIC_VERIFICATION } from './tokenBudgets';
 import type { TokenUsage } from '@shared/schema';
-
-type SupportedLanguage = 'de' | 'en';
+import type { SupportedLanguage } from './prdTemplateIntent';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -125,10 +124,10 @@ export async function repairSingleIssue(options: IssueRepairOptions): Promise<Is
       templateCategory,
       originalRequest: originalRequest || '',
       langInstruction,
-      totalUsage,
     });
 
-    lastModel = lastModel || verifyResult.model;
+    addUsage(totalUsage, verifyResult.usage);
+    lastModel = verifyResult.model;
     const matchingIssue = verifyResult.blockingIssues.find(
       bi => bi.code === issue.code && bi.sectionKey === issue.sectionKey,
     );
@@ -162,8 +161,9 @@ export async function repairSingleIssue(options: IssueRepairOptions): Promise<Is
     templateCategory,
     originalRequest: originalRequest || '',
     langInstruction,
-    totalUsage,
   });
+
+  addUsage(totalUsage, finalVerify.usage);
 
   return buildResult(
     currentContent,
@@ -204,9 +204,8 @@ async function runVerification(params: {
   templateCategory?: string;
   originalRequest: string;
   langInstruction: string;
-  totalUsage: TokenUsage;
-}): Promise<SemanticVerificationResult> {
-  const { client, content, structure, language, templateCategory, originalRequest, langInstruction, totalUsage } = params;
+}): Promise<SemanticVerificationResult & { usage: TokenUsage }> {
+  const { client, content, structure, language, templateCategory, originalRequest, langInstruction } = params;
 
   const verifierInput = {
     content,
@@ -227,11 +226,11 @@ async function runVerification(params: {
     0.1,
   );
 
-  addUsage(totalUsage, verifyResult.usage);
-
-  return parseSemanticVerificationResponse({
+  const parsed = parseSemanticVerificationResponse({
     content: verifyResult.content,
     model: verifyResult.model,
     usage: verifyResult.usage,
   });
+
+  return { ...parsed, usage: verifyResult.usage };
 }
