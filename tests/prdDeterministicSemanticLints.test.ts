@@ -1538,3 +1538,96 @@ describe('feature_field_truncated', () => {
     expect(truncated).toHaveLength(0);
   });
 });
+
+describe('acceptance_criteria_non_measurable', () => {
+  it('detects ACs that are purely vague without measurable criteria', () => {
+    const structure = makeMinimalStructure({
+      features: [
+        {
+          id: 'F-01', name: 'Dashboard', rawContent: '',
+          purpose: 'Show analytics',
+          mainFlow: ['User opens dashboard.'],
+          acceptanceCriteria: [
+            'Das Dashboard ist korrekt und ansprechend.',
+            'Alle Funktionen sind korrekt implementiert.',
+            'Die Benutzeroberflaehe ist intuitiv und benutzerfreundlich.',
+          ],
+        },
+      ],
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure, { language: 'de' });
+    const nonMeasurable = issues.filter(i => i.code === 'acceptance_criteria_non_measurable');
+    expect(nonMeasurable.length).toBeGreaterThanOrEqual(1);
+    expect(nonMeasurable[0].message).toContain('F-01');
+  });
+
+  it('does not flag ACs with concrete measurable values', () => {
+    const structure = makeMinimalStructure({
+      features: [
+        {
+          id: 'F-01', name: 'Login', rawContent: '',
+          purpose: 'Auth',
+          mainFlow: ['User logs in.'],
+          acceptanceCriteria: [
+            'Login returns a JWT token within 500ms.',
+            'Three failed attempts trigger a 15-minute lockout.',
+            'Error message displays when credentials are invalid.',
+          ],
+        },
+      ],
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure);
+    const nonMeasurable = issues.filter(i => i.code === 'acceptance_criteria_non_measurable');
+    expect(nonMeasurable).toHaveLength(0);
+  });
+});
+
+describe('request_fulfillment_gap', () => {
+  it('detects when "mindestens drei Powerups" are not named in the PRD', () => {
+    const structure = makeMinimalStructure({
+      features: [
+        {
+          id: 'F-01', name: 'Power-Up System', rawContent: '',
+          purpose: 'Provides power-ups during gameplay',
+          mainFlow: ['A power-up appears randomly.', 'Player collects it.'],
+          acceptanceCriteria: ['Power-ups appear during gameplay.'],
+        },
+      ],
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure, {
+      language: 'de',
+      originalRequest: 'Ueberlege dir mindestens drei verschiedene Powerups oder einsetzbare Faehigkeiten.',
+    });
+    const gap = issues.filter(i => i.code === 'request_fulfillment_gap');
+    expect(gap.length).toBeGreaterThanOrEqual(1);
+    expect(gap[0].message).toContain('drei');
+  });
+
+  it('does not flag when the required count is met in the PRD', () => {
+    const structure = makeMinimalStructure({
+      features: [
+        {
+          id: 'F-01', name: 'Power-Up System', rawContent: '',
+          purpose: 'Provides Powerups: Line Clear, Slow Fall, Double Points, Shield',
+          mainFlow: [
+            'Line Clear Powerup removes bottom row.',
+            'Slow Fall Powerup reduces speed.',
+            'Double Points Powerup doubles score.',
+            'Shield Powerup prevents game over once.',
+          ],
+          acceptanceCriteria: ['All 4 Powerups function correctly.'],
+        },
+      ],
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure, {
+      language: 'de',
+      originalRequest: 'Ueberlege dir mindestens drei verschiedene Powerups.',
+    });
+    const gap = issues.filter(i => i.code === 'request_fulfillment_gap');
+    expect(gap).toHaveLength(0);
+  });
+});

@@ -19,6 +19,7 @@ interface CollectSemanticIssuesOptions {
   fallbackSections?: string[];
   contextHint?: string;
   baselineStructure?: PRDStructure;
+  originalRequest?: string;
 }
 
 interface TextScope {
@@ -2045,6 +2046,10 @@ export function collectDeterministicSemanticIssues(
   }
 
   issues.push(...detectFeatureFieldTruncation(structure));
+  issues.push(...detectAcceptanceCriteriaNonMeasurable(structure, options.language));
+  if (options.originalRequest) {
+    issues.push(...detectRequestFulfillmentGap(structure, options.originalRequest, options.language));
+  }
 
   return issues;
 }
@@ -2389,6 +2394,135 @@ function detectFeatureFieldTruncation(structure: PRDStructure): DeterministicSem
           severity: 'warning',
           evidencePath: `feature:${feature.id}`,
           evidenceSnippet: value.slice(0, 120),
+        });
+      }
+    }
+  }
+
+  return issues;
+}
+
+// ---------------------------------------------------------------------------
+// Lint #6: Acceptance Criteria Non-Measurable
+// ---------------------------------------------------------------------------
+
+const VAGUE_ONLY_PATTERNS = [
+  /^(?:(?:der|die|das|the)\s+)?\S+\s+(?:ist|sind|wird|werden|is|are)\s+(?:korrekt|intuitiv|ansprechend|benutzerfreundlich|correct|intuitive|appealing|user[\s-]?friendly|properly|functional|responsive)\b/i,
+  /^(?:alle|all)\s+.{5,40}\s+(?:sind|werden|are|is)\s+(?:korrekt|correctly|properly)\s+(?:implementiert|implemented|umgesetzt)/i,
+  /funktioniert\s+(?:korrekt|wie\s+erwartet|einwandfrei)$/i,
+  /works?\s+(?:correctly|as\s+expected|properly)$/i,
+];
+
+const MEASURABILITY_SIGNALS = [
+  /\d+/,
+  /\b(?:ms|sekunden?|seconds?|minuten?|minutes?|fps|prozent|percent|%)\b/i,
+  /\b(?:genau|exakt|exactly|precisely|innerhalb|within|maximal|mindestens|at\s+least|at\s+most)\b/i,
+  /\b(?:returns?|gibt.*zurueck|zeigt.*an|displays?|erhaelt|receives?|speichert|saves?|loescht|deletes?|erstellt|creates?)\b/i,
+  /\b(?:fehlermeldung|error\s+message|validierung|validation|status\s+code)\b/i,
+];
+
+function detectAcceptanceCriteriaNonMeasurable(
+  structure: PRDStructure,
+  language?: SupportedLanguage,
+): DeterministicSemanticIssue[] {
+  const issues: DeterministicSemanticIssue[] = [];
+  const features = structure.features || [];
+
+  for (const feature of features) {
+    const acs = feature.acceptanceCriteria || [];
+    if (acs.length < 2) continue;
+
+    const nonMeasurableCount = acs.filter(ac => {
+      const trimmed = ac.trim();
+      if (!trimmed || trimmed.length < 15) return false;
+      const isVagueOnly = VAGUE_ONLY_PATTERNS.some(p => p.test(trimmed));
+      const hasMeasurability = MEASURABILITY_SIGNALS.some(p => p.test(trimmed));
+      return isVagueOnly || !hasMeasurability;
+    }).length;
+
+    const ratio = nonMeasurableCount / acs.length;
+    if (ratio < 0.6) continue;
+
+    issues.push({
+      code: 'acceptance_criteria_non_measurable',
+      message: `${feature.id} "${feature.name}" has ${nonMeasurableCount}/${acs.length} acceptance criteria without measurable/testable conditions. Add concrete values, thresholds, or verifiable outcomes.`,
+      severity: 'warning',
+      evidencePath: `feature:${feature.id}`,
+      evidenceSnippet: acs.find(ac => !MEASURABILITY_SIGNALS.some(p => p.test(ac)))?.slice(0, 200),
+    });
+  }
+
+  return issues;
+}
+
+// ---------------------------------------------------------------------------
+// Lint #7: Request Fulfillment Gap
+// ---------------------------------------------------------------------------
+
+const QUANTITY_PATTERNS_DE = [
+  /(?:mindestens|wenigstens|minimum|mind\.)\s+(\d+|zwei|drei|vier|fuenf|fünf|sechs|sieben|acht|neun|zehn)\s+(?:verschiedene\s+)?(\S+)/gi,
+];
+
+const QUANTITY_PATTERNS_EN = [
+  /(?:at\s+least|minimum|no\s+fewer\s+than)\s+(\d+|two|three|four|five|six|seven|eight|nine|ten)\s+(?:different\s+)?(\S+)/gi,
+];
+
+const WORD_TO_NUM: Record<string, number> = {
+  zwei: 2, drei: 3, vier: 4, fuenf: 5, fünf: 5, sechs: 6, sieben: 7, acht: 8, neun: 9, zehn: 10,
+  two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+};
+
+function parseQuantity(value: string): number {
+  const num = parseInt(value, 10);
+  if (!isNaN(num)) return num;
+  return WORD_TO_NUM[value.toLowerCase()] || 0;
+}
+
+function detectRequestFulfillmentGap(
+  structure: PRDStructure,
+  originalRequest: string,
+  language?: SupportedLanguage,
+): DeterministicSemanticIssue[] {
+  const issues: DeterministicSemanticIssue[] = [];
+  if (!originalRequest || originalRequest.length < 20) return issues;
+
+  const patterns = language === 'en'
+    ? QUANTITY_PATTERNS_EN
+    : [...QUANTITY_PATTERNS_DE, ...QUANTITY_PATTERNS_EN];
+
+  for (const pattern of patterns) {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(originalRequest)) !== null) {
+      const requiredCount = parseQuantity(match[1]);
+      const subjectRaw = match[2].toLowerCase().replace(/[.,;:!?]/g, '');
+      if (requiredCount < 2 || !subjectRaw) continue;
+
+      const subjectVariants = [subjectRaw, subjectRaw.replace(/s$/, ''), subjectRaw + 's'];
+      const allFeatureContent = (structure.features || [])
+        .map(f => [f.name, f.purpose || '', ...(f.mainFlow || []), ...(f.acceptanceCriteria || [])].join(' '))
+        .join(' ')
+        .toLowerCase();
+      const domainContent = [
+        structure.domainModel || '',
+        structure.globalBusinessRules || '',
+      ].join(' ').toLowerCase();
+
+      const combinedContent = allFeatureContent + ' ' + domainContent;
+      const subjectMentions = subjectVariants.reduce((count, variant) => {
+        const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp('\\b' + escaped + '\\b', 'gi');
+        const matches = combinedContent.match(regex);
+        return Math.max(count, matches?.length || 0);
+      }, 0);
+
+      if (subjectMentions < requiredCount) {
+        issues.push({
+          code: 'request_fulfillment_gap',
+          message: `Original request requires "${match[0].trim()}" but the PRD only references "${subjectRaw}" ${subjectMentions} time(s). Consider adding ${requiredCount} explicitly named items.`,
+          severity: 'warning',
+          evidencePath: 'featureCatalogueIntro',
+          evidenceSnippet: match[0].trim(),
         });
       }
     }

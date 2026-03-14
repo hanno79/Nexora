@@ -95,6 +95,8 @@ export interface FinalizeWithCompilerGatesOptions {
     truncated?: boolean;
   }) => void;
   cancelCheck?: (stage: string) => void;
+  /** Enable automatic repair of deterministic quality warnings before semantic verification. Default: false. */
+  enableQualityAutoRepair?: boolean;
 }
 
 export interface FinalizeWithCompilerGatesResult {
@@ -2303,10 +2305,19 @@ export async function finalizeWithCompilerGates(
   // -------------------------------------------------------------------------
   // Auto-Repair Pass: fix deterministic quality warnings before semantic verification
   // -------------------------------------------------------------------------
+  const QUALITY_REPAIR_CODES = new Set([
+    'feature_duplicate_flow',
+    'acceptance_criteria_boilerplate',
+    'deployment_stack_mismatch',
+    'nfr_architecture_mismatch',
+    'feature_field_truncated',
+    'acceptance_criteria_non_measurable',
+    'request_fulfillment_gap',
+  ]);
   const qualityRepairReviewer = options.semanticRefineReviewer || options.contentRefineReviewer;
-  if (qualityRepairReviewer && compiled.quality?.issues?.length) {
+  if (options.enableQualityAutoRepair && qualityRepairReviewer && compiled.quality?.issues?.length) {
     const qualityWarnings = compiled.quality.issues.filter(
-      (issue) => issue.severity === 'warning' && issue.evidencePath
+      (issue) => issue.severity === 'warning' && issue.evidencePath && QUALITY_REPAIR_CODES.has(issue.code)
     );
     if (qualityWarnings.length > 0) {
       options.onStageProgress?.({ type: 'quality_repair_start' as any, issueCount: qualityWarnings.length });

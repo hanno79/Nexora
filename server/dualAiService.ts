@@ -367,6 +367,7 @@ Create an improved version that incorporates the new requirements while keeping 
       templateCategory,
       originalRequest: userInput || reviewContent || cleanedFinalContent.slice(0, 400),
       maxRepairPasses: 3,
+      enableQualityAutoRepair: true,
       repairReviewer: async (repairPrompt: string, _pass: number) => {
         const repairResult = await client.callWithFallback(
           'reviewer',
@@ -1926,6 +1927,7 @@ Your task:
         templateCategory: opts.templateCategory,
         originalRequest: opts.workflowInputText || currentPRD.slice(0, 400),
         maxRepairPasses: 3,
+        enableQualityAutoRepair: true,
         cancelCheck: opts.throwIfCancelled,
         repairReviewer: async (repairPrompt: string, _pass: number) => {
           const repairResult = await this.callIterativeModel(opts, {
