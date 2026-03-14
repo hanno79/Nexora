@@ -2038,10 +2038,13 @@ export function collectDeterministicSemanticIssues(
   issues.push(...detectAcceptanceCriteriaBoilerplate(structure, options.language));
   if (!systemBoundariesAreFallback && !deploymentIsFallback) {
     issues.push(...detectDeploymentStackMismatch(structure));
+    issues.push(...detectDeploymentStackMismatchReverse(structure));
   }
   if (!systemBoundariesAreFallback) {
     issues.push(...detectNfrArchitectureMismatch(structure));
   }
+
+  issues.push(...detectFeatureFieldTruncation(structure));
 
   return issues;
 }
@@ -2076,12 +2079,24 @@ const BOILERPLATE_PATTERNS_DE = [
   /erzeugen? verst[äa]ndliches feedback ohne inkonsistenten zustand/i,
   /kann erfolgreich durchgef[üu]hrt werden/i,
   /ung[üu]ltige eingaben.*erzeugen.*feedback/i,
+  /wird korrekt angezeigt$/i,
+  /funktioniert wie erwartet$/i,
+  /ist benutzerfreundlich und leicht verst[äa]ndlich/i,
+  /wird erfolgreich durchgef[üu]hrt$/i,
+  /^das feature funktioniert korrekt/i,
+  /^die funktionalit[äa]t ist korrekt implementiert/i,
 ];
 
 const BOILERPLATE_PATTERNS_EN = [
   /can be successfully executed with valid inputs/i,
   /produce understandable feedback without inconsistent state/i,
   /invalid inputs.*produce.*feedback/i,
+  /is displayed correctly$/i,
+  /works as expected$/i,
+  /is user[\s-]?friendly and easy to understand/i,
+  /is successfully completed$/i,
+  /^the feature works correctly/i,
+  /^the functionality is correctly implemented/i,
 ];
 
 function isBoilerplateAcceptanceCriterion(text: string, language?: SupportedLanguage): boolean {
@@ -2222,16 +2237,50 @@ function detectDeploymentStackMismatch(structure: PRDStructure): DeterministicSe
     }
   }
 
-  if (foundBackend.length === 0) return issues;
+  if (foundBackend.length > 0) {
+    issues.push({
+      code: 'deployment_stack_mismatch',
+      message: `System Boundaries describe a client-only architecture, but Deployment references backend technologies: ${foundBackend.join(', ')}. Remove or justify these entries.`,
+      severity: 'warning',
+      evidencePath: 'deployment',
+      evidenceSnippet: deployment.slice(0, 250),
+      relatedPaths: ['systemBoundaries', 'deployment'],
+    });
+  }
 
-  issues.push({
-    code: 'deployment_stack_mismatch',
-    message: `System Boundaries describe a client-only architecture, but Deployment references backend technologies: ${foundBackend.join(', ')}. Remove or justify these entries.`,
-    severity: 'warning',
-    evidencePath: 'deployment',
-    evidenceSnippet: deployment.slice(0, 250),
-    relatedPaths: ['systemBoundaries', 'deployment'],
-  });
+  return issues;
+}
+
+function detectDeploymentStackMismatchReverse(structure: PRDStructure): DeterministicSemanticIssue[] {
+  const issues: DeterministicSemanticIssue[] = [];
+  const boundaries = String(structure.systemBoundaries || '');
+  const deployment = String(structure.deployment || '');
+
+  if (!boundaries || !deployment) return issues;
+
+  const archType = detectArchitectureType(boundaries);
+  if (archType !== 'server') return issues;
+
+  const clientOnlyDeployment = [
+    /\bgithub[\s-]?pages\b/i,
+    /\bstatic[\s-]?hosting\b/i,
+    /\bstatische?\s+bereitstellung\b/i,
+  ];
+  const hasBackendDeployment = /\b(?:docker|kubernetes|k8s|node\.?js|api[\s-]?server|backend|heroku|railway|render\.com)\b/i.test(deployment);
+
+  if (hasBackendDeployment) return issues;
+
+  const isStaticOnly = clientOnlyDeployment.some(p => p.test(deployment));
+  if (isStaticOnly) {
+    issues.push({
+      code: 'deployment_stack_mismatch',
+      message: `System Boundaries describe a server/API architecture, but Deployment only references static hosting. Add server deployment details.`,
+      severity: 'warning',
+      evidencePath: 'deployment',
+      evidenceSnippet: deployment.slice(0, 250),
+      relatedPaths: ['systemBoundaries', 'deployment'],
+    });
+  }
 
   return issues;
 }
@@ -2275,6 +2324,71 @@ function detectNfrArchitectureMismatch(structure: PRDStructure): DeterministicSe
       evidenceSnippet: match2[0],
       relatedPaths: ['systemBoundaries', 'nonFunctional'],
     });
+  }
+
+  // Additional server-side NFR patterns irrelevant for client-only apps
+  const serverNfrPatterns: Array<{ pattern: RegExp; label: string }> = [
+    { pattern: /datenbank[\s-]?replikation|database[\s-]?replication/i, label: 'database replication' },
+    { pattern: /load[\s-]?balancer|lastverteilung/i, label: 'load balancer' },
+    { pattern: /horizontale?\s+skalierung|horizontal\s+scaling/i, label: 'horizontal scaling' },
+    { pattern: /server[\s-]?cluster|auto[\s-]?scaling/i, label: 'server cluster/auto-scaling' },
+    { pattern: /read[\s-]?replica|write[\s-]?replica/i, label: 'database replicas' },
+  ];
+
+  for (const { pattern, label } of serverNfrPatterns) {
+    const serverMatch = nfr.match(pattern);
+    if (serverMatch) {
+      issues.push({
+        code: 'nfr_architecture_mismatch',
+        message: `NFR references "${label}" but System Boundaries describe a client-only app. This infrastructure requirement doesn't apply.`,
+        severity: 'warning',
+        evidencePath: 'nonFunctional',
+        evidenceSnippet: serverMatch[0],
+        relatedPaths: ['systemBoundaries', 'nonFunctional'],
+      });
+    }
+  }
+
+  return issues;
+}
+
+// ---------------------------------------------------------------------------
+// Lint #5: Feature Field Truncation
+// ---------------------------------------------------------------------------
+
+const FEATURE_TEXT_FIELDS: Array<{ key: keyof FeatureSpec; label: string }> = [
+  { key: 'purpose', label: 'Purpose' },
+  { key: 'trigger', label: 'Trigger' },
+  { key: 'preconditions', label: 'Preconditions' },
+  { key: 'postconditions', label: 'Postconditions' },
+  { key: 'dataImpact', label: 'Data Impact' },
+  { key: 'uiImpact', label: 'UI Impact' },
+];
+
+function detectFeatureFieldTruncation(structure: PRDStructure): DeterministicSemanticIssue[] {
+  const issues: DeterministicSemanticIssue[] = [];
+  const features = structure.features || [];
+
+  for (const feature of features) {
+    for (const { key, label } of FEATURE_TEXT_FIELDS) {
+      const value = String((feature as Record<string, unknown>)[key] || '').trim();
+      if (!value || value.length < 10) continue;
+
+      // Check: text starts with lowercase without list marker (likely truncated beginning)
+      const firstChar = value.charAt(0);
+      const startsLower = /^[a-zäöü]/.test(firstChar);
+      const hasListPrefix = /^[-*•\d]/.test(firstChar);
+
+      if (startsLower && !hasListPrefix) {
+        issues.push({
+          code: 'feature_field_truncated',
+          message: `${feature.id} ${label} appears truncated — starts with lowercase "${value.slice(0, 40)}...". Likely missing context from a prior sentence.`,
+          severity: 'warning',
+          evidencePath: `feature:${feature.id}`,
+          evidenceSnippet: value.slice(0, 120),
+        });
+      }
+    }
   }
 
   return issues;

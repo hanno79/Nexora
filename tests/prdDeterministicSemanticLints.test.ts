@@ -1386,4 +1386,122 @@ describe('nfr_architecture_mismatch', () => {
     const mismatch = issues.filter(i => i.code === 'nfr_architecture_mismatch');
     expect(mismatch).toHaveLength(0);
   });
+
+  it('detects load balancer NFR for client-only app', () => {
+    const structure = makeMinimalStructure({
+      systemBoundaries: 'Eine rein clientseitige Webanwendung. Keine serverseitige Logik.',
+      nonFunctional: 'Load Balancer fuer hohe Ausfallsicherheit. Horizontale Skalierung bei Lastspitzen.',
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure);
+    const mismatch = issues.filter(i => i.code === 'nfr_architecture_mismatch');
+    expect(mismatch.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('deployment_stack_mismatch (reverse)', () => {
+  it('detects static-only deployment for server architecture', () => {
+    const structure = makeMinimalStructure({
+      systemBoundaries: 'The system includes a backend API server with REST endpoints and database persistence.',
+      deployment: 'Statische Bereitstellung auf GitHub Pages.',
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure);
+    const mismatch = issues.filter(i => i.code === 'deployment_stack_mismatch');
+    expect(mismatch.length).toBeGreaterThanOrEqual(1);
+    expect(mismatch[0].message).toContain('server');
+  });
+
+  it('does not flag server deployment for server architecture', () => {
+    const structure = makeMinimalStructure({
+      systemBoundaries: 'The system includes a backend API server with PostgreSQL.',
+      deployment: 'Docker container on Kubernetes with Node.js API.',
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure);
+    const mismatch = issues.filter(i => i.code === 'deployment_stack_mismatch');
+    expect(mismatch).toHaveLength(0);
+  });
+});
+
+describe('acceptance_criteria_boilerplate (extended patterns)', () => {
+  it('detects "wird korrekt angezeigt" as boilerplate (DE)', () => {
+    const structure = makeMinimalStructure({
+      features: [
+        {
+          id: 'F-01', name: 'Dashboard', rawContent: '',
+          purpose: 'Show dashboard overview',
+          mainFlow: ['User opens dashboard.'],
+          acceptanceCriteria: [
+            'Das Dashboard wird korrekt angezeigt',
+            'Die Daten funktionieren wie erwartet',
+          ],
+        },
+      ],
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure, { language: 'de' });
+    const boilerplate = issues.filter(i => i.code === 'acceptance_criteria_boilerplate');
+    expect(boilerplate.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('detects "works as expected" as boilerplate (EN)', () => {
+    const structure = makeMinimalStructure({
+      features: [
+        {
+          id: 'F-01', name: 'Dashboard', rawContent: '',
+          purpose: 'Show dashboard overview',
+          mainFlow: ['User opens dashboard.'],
+          acceptanceCriteria: [
+            'The dashboard is displayed correctly',
+            'The feature works as expected',
+          ],
+        },
+      ],
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure, { language: 'en' });
+    const boilerplate = issues.filter(i => i.code === 'acceptance_criteria_boilerplate');
+    expect(boilerplate.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('feature_field_truncated', () => {
+  it('detects truncated UI Impact starting with lowercase', () => {
+    const structure = makeMinimalStructure({
+      features: [
+        {
+          id: 'F-01', name: 'Progress View', rawContent: '',
+          purpose: 'Display player progress',
+          mainFlow: ['User clicks progress button.'],
+          uiImpact: 'button auf dem Startbildschirm oder waehrend einer Spielsession.',
+          acceptanceCriteria: ['Progress is shown.'],
+        },
+      ],
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure);
+    const truncated = issues.filter(i => i.code === 'feature_field_truncated');
+    expect(truncated.length).toBeGreaterThanOrEqual(1);
+    expect(truncated[0].message).toContain('F-01');
+    expect(truncated[0].message).toContain('UI Impact');
+  });
+
+  it('does not flag properly starting text', () => {
+    const structure = makeMinimalStructure({
+      features: [
+        {
+          id: 'F-01', name: 'Login', rawContent: '',
+          purpose: 'Authenticate users via email and password',
+          mainFlow: ['User enters credentials.'],
+          uiImpact: 'The login form shows validation errors inline.',
+          acceptanceCriteria: ['Login works with valid credentials.'],
+        },
+      ],
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure);
+    const truncated = issues.filter(i => i.code === 'feature_field_truncated');
+    expect(truncated).toHaveLength(0);
+  });
 });
