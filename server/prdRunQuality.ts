@@ -76,6 +76,7 @@ export interface CompilerRunDiagnostics extends CompilerDiagnostics {
   earlyRepairAttempted?: boolean;
   earlyRepairApplied?: boolean;
   primaryEarlyDriftReason?: string;
+  qualityIssues?: CompilerDiagnosticIssue[];
   runtimeFailureCode?: RuntimeFailureCode;
   providerFailureSummary?: string;
   providerFailureCounts?: ProviderFailureCounts;
@@ -94,6 +95,23 @@ function toDiagnosticIssue(issue: SemanticBlockingIssue): CompilerDiagnosticIssu
     message: String(issue.message || '').trim() || 'Blocking semantic inconsistency.',
     ...(issue.suggestedAction ? { suggestedAction: issue.suggestedAction } : {}),
     ...(issue.targetFields?.length ? { targetFields: Array.from(new Set(issue.targetFields)) } : {}),
+  };
+}
+
+export function deterministicIssueToDiagnostic(issue: {
+  code: string;
+  message: string;
+  severity: string;
+  evidencePath?: string;
+}): CompilerDiagnosticIssue {
+  const sectionKey = issue.evidencePath?.startsWith('feature:')
+    ? issue.evidencePath
+    : issue.evidencePath || 'systemVision';
+  return {
+    code: issue.code,
+    sectionKey,
+    message: issue.message,
+    suggestedAction: sectionKey.startsWith('feature:') ? 'enrich' : 'rewrite',
   };
 }
 
@@ -434,6 +452,9 @@ export function buildCompilerRunDiagnostics(params: {
     repairAttempts: Math.max(0, params.repairAttempts ?? params.base?.repairAttempts ?? 0),
     topRootCauseCodes: topCauseCodes,
     qualityIssueCodes,
+    qualityIssues: issues
+      .filter(i => i.severity === 'warning')
+      .map(deterministicIssueToDiagnostic),
     failureStage: params.failureStage,
     semanticVerifierVerdict: params.semanticVerifierVerdict ?? params.base?.semanticVerifierVerdict,
     primaryGateReason:
@@ -864,6 +885,7 @@ export function mergeDiagnosticsIntoIterationLog(
     repairAttempts: diagnostics.repairAttempts,
     topRootCauseCodes: diagnostics.topRootCauseCodes,
     qualityIssueCodes: diagnostics.qualityIssueCodes,
+    qualityIssues: diagnostics.qualityIssues || [],
     failureStage: diagnostics.failureStage || null,
     semanticVerifierVerdict: diagnostics.semanticVerifierVerdict || null,
     primaryGateReason: diagnostics.primaryGateReason || null,

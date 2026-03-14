@@ -35,6 +35,7 @@ export type ClientCompilerDiagnostics = {
   repairAttempts?: number;
   topRootCauseCodes?: string[];
   qualityIssueCodes?: string[];
+  qualityIssues?: ClientCompilerIssue[];
   failureStage?: string | null;
   semanticVerifierVerdict?: 'pass' | 'fail' | null;
   primaryGateReason?: string | null;
@@ -197,6 +198,7 @@ function mapCompilerCoreFields(value: Record<string, any>): Partial<ClientCompil
     repairAttempts: typeof value.repairAttempts === 'number' ? value.repairAttempts : undefined,
     topRootCauseCodes: toStringArray(value.topRootCauseCodes),
     qualityIssueCodes: toStringArray(value.qualityIssueCodes),
+    qualityIssues: toCompilerIssueArray(value.qualityIssues),
     failureStage: typeof value.failureStage === 'string' ? value.failureStage : undefined,
     semanticVerifierVerdict:
       value.semanticVerifierVerdict === 'pass' || value.semanticVerifierVerdict === 'fail'

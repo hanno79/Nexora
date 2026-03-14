@@ -127,6 +127,16 @@ function formatBlockingIssueMessage(issue: ClientCompilerIssue): string {
   return `${issue.message} Target fields: ${issue.targetFields.join(", ")}.`;
 }
 
+function getCompilerIssueIdentity(issue: ClientCompilerIssue): string {
+  return [
+    issue.code,
+    issue.sectionKey,
+    issue.message,
+    issue.suggestedFix || "",
+    issue.targetFields?.join("|") || "",
+  ].join("::");
+}
+
 function humanizeRepairGapReason(value?: string | null): string {
   return value ? humanizeDiagnosticCode(value) : "—";
 }
@@ -137,8 +147,8 @@ function renderDiagnosticIssueGroup(params: {
   issues?: ClientCompilerIssue[];
   testId: string;
   showFixButtons?: boolean;
-  onFixIssue?: (issue: ClientCompilerIssue, index: number) => void;
-  repairingIndex?: number | null;
+  onFixIssue?: (issue: ClientCompilerIssue) => void;
+  repairingIssueKey?: string | null;
   isAnyRepairActive?: boolean;
 }) {
   if (!params.issues || params.issues.length === 0) return null;
@@ -151,37 +161,40 @@ function renderDiagnosticIssueGroup(params: {
         </span>
         <Badge variant="outline">{params.passLabel}</Badge>
       </div>
-      {params.issues.map((issue, index) => (
-        <div
-          key={`${params.passLabel}-${issue.sectionKey}-${issue.code}-${index}`}
-          className="rounded border border-input/70 bg-background/60 px-3 py-2"
-        >
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">{issue.code}</Badge>
-            <span className="text-xs text-muted-foreground">{formatSectionLabel(issue.sectionKey)}</span>
-            {issue.suggestedAction && (
-              <span className="text-xs text-muted-foreground">action: {issue.suggestedAction}</span>
-            )}
-            {params.showFixButtons && params.onFixIssue && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="ml-auto h-6 px-2 text-xs"
-                disabled={params.isAnyRepairActive === true}
-                onClick={() => params.onFixIssue!(issue, index)}
-              >
-                {params.repairingIndex === index ? (
-                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                ) : (
-                  <Wrench className="h-3 w-3 mr-1" />
-                )}
-                {params.repairingIndex === index ? "..." : "Fix"}
-              </Button>
-            )}
+      {params.issues.map((issue, index) => {
+        const issueKey = getCompilerIssueIdentity(issue);
+        return (
+          <div
+            key={`${params.passLabel}-${issueKey}-${index}`}
+            className="rounded border border-input/70 bg-background/60 px-3 py-2"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">{issue.code}</Badge>
+              <span className="text-xs text-muted-foreground">{formatSectionLabel(issue.sectionKey)}</span>
+              {issue.suggestedAction && (
+                <span className="text-xs text-muted-foreground">action: {issue.suggestedAction}</span>
+              )}
+              {params.showFixButtons && params.onFixIssue && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="ml-auto h-6 px-2 text-xs"
+                  disabled={params.isAnyRepairActive === true}
+                  onClick={() => params.onFixIssue!(issue)}
+                >
+                  {params.repairingIssueKey === issueKey ? (
+                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                  ) : (
+                    <Wrench className="h-3 w-3 mr-1" />
+                  )}
+                  {params.repairingIssueKey === issueKey ? "..." : "Fix"}
+                </Button>
+              )}
+            </div>
+            <p className="mt-1 text-sm text-foreground">{formatBlockingIssueMessage(issue)}</p>
           </div>
-          <p className="mt-1 text-sm text-foreground">{formatBlockingIssueMessage(issue)}</p>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -313,7 +326,7 @@ export default function Editor() {
   const [mobileSheetTab, setMobileSheetTab] = useState<"comments" | "versions">("comments");
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
-  const [repairingIssueIndex, setRepairingIssueIndex] = useState<number | null>(null);
+  const [repairingIssueKey, setRepairingIssueKey] = useState<string | null>(null);
   const [repairAllInProgress, setRepairAllInProgress] = useState(false);
   const [repairProgress, setRepairProgress] = useState<{ current: number; total: number } | null>(null);
 
@@ -438,9 +451,9 @@ export default function Editor() {
     });
   };
 
-  const handleFixSingleIssue = async (issue: ClientCompilerIssue, index: number) => {
-    if (repairingIssueIndex !== null || !content) return;
-    setRepairingIssueIndex(index);
+  const handleFixSingleIssue = async (issue: ClientCompilerIssue) => {
+    if (repairingIssueKey !== null || !content) return;
+    setRepairingIssueKey(getCompilerIssueIdentity(issue));
     try {
       const response = await apiRequest("POST", "/api/ai/repair-issue", {
         prdContent: content,
@@ -477,22 +490,25 @@ export default function Editor() {
       });
       return false;
     } finally {
-      setRepairingIssueIndex(null);
+      setRepairingIssueKey(null);
     }
   };
 
   const handleFixAllIssues = async () => {
-    const issues = compilerDiagnostics?.finalSemanticBlockingIssues
-      ?? compilerDiagnostics?.semanticBlockingIssues;
-    if (!issues?.length || repairAllInProgress) return;
+    const issuesSnapshot = [
+      ...(compilerDiagnostics?.finalSemanticBlockingIssues
+        ?? compilerDiagnostics?.semanticBlockingIssues
+        ?? []),
+    ];
+    if (!issuesSnapshot.length || repairAllInProgress) return;
 
     setRepairAllInProgress(true);
     let fixedCount = 0;
     let failedCount = 0;
 
-    for (let i = 0; i < issues.length; i++) {
-      setRepairProgress({ current: i + 1, total: issues.length });
-      const resolved = await handleFixSingleIssue(issues[i], i);
+    for (let i = 0; i < issuesSnapshot.length; i++) {
+      setRepairProgress({ current: i + 1, total: issuesSnapshot.length });
+      const resolved = await handleFixSingleIssue(issuesSnapshot[i]);
       if (resolved) {
         fixedCount++;
       } else {
@@ -1322,7 +1338,7 @@ export default function Editor() {
                               ? compilerDiagnostics.finalSemanticBlockingIssues
                               : compilerDiagnostics.semanticBlockingIssues;
                           if (!finalIssues?.length) return null;
-                          const isAnyRepairActive = repairingIssueIndex !== null || repairAllInProgress;
+                          const isAnyRepairActive = repairingIssueKey !== null || repairAllInProgress;
                           return (
                             <>
                               <div className="flex items-center justify-between gap-2">
@@ -1357,7 +1373,32 @@ export default function Editor() {
                                 testId: "diag-final-blocking-issues",
                                 showFixButtons: true,
                                 onFixIssue: handleFixSingleIssue,
-                                repairingIndex: repairingIssueIndex,
+                                repairingIssueKey,
+                                isAnyRepairActive,
+                              })}
+                            </>
+                          );
+                        })()}
+                        {(() => {
+                          const qualityIssues = compilerDiagnostics.qualityIssues;
+                          if (!qualityIssues?.length) return null;
+                          const isAnyRepairActive = repairingIssueKey !== null || repairAllInProgress;
+                          return (
+                            <>
+                              <div className="flex items-center justify-between gap-2 mt-3">
+                                <span className="text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                                  Quality Warnings
+                                </span>
+                                <Badge variant="outline" className="text-amber-600 border-amber-300">{qualityIssues.length}</Badge>
+                              </div>
+                              {renderDiagnosticIssueGroup({
+                                title: "Quality Improvement Suggestions",
+                                passLabel: "quality",
+                                issues: qualityIssues,
+                                testId: "diag-quality-issues",
+                                showFixButtons: true,
+                                onFixIssue: handleFixSingleIssue,
+                                repairingIssueKey,
                                 isAnyRepairActive,
                               })}
                             </>
