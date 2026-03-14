@@ -258,7 +258,7 @@ export const aiUsage = pgTable("ai_usage", {
 export type AiUsage = typeof aiUsage.$inferSelect;
 
 export const insertAiUsageSchema = createInsertSchema(aiUsage, {
-  modelType: z.enum(['generator', 'reviewer', 'verifier']),
+  modelType: z.enum(['generator', 'reviewer', 'verifier', 'semantic_repair']),
   tier: aiTierSchema,
   inputTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),

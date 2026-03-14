@@ -118,7 +118,7 @@ export function resolveInitialAiModelSettingsState(
   const fallbackChain =
     aiPreferences?.fallbackChain ??
     (aiPreferences?.fallbackModel ? [aiPreferences.fallbackModel] : null) ??
-    [DEFAULT_FALLBACK_CHAIN[0]];
+    [...DEFAULT_FALLBACK_CHAIN];
 
   return {
     generatorModel: aiPreferences?.generatorModel || DEFAULT_GENERATOR_MODEL,

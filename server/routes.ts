@@ -312,7 +312,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
 
   // AI Model Health Check endpoint
-  app.get('/api/settings/ai/health', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  app.get('/api/settings/ai/health', isAuthenticated, aiRateLimiter, asyncHandler(async (req: AuthenticatedRequest, res) => {
     const userId = req.user.claims.sub;
     let resolvedGeneratorModel = 'unknown';
 
