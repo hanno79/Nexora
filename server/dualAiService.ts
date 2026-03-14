@@ -27,10 +27,13 @@ import {
   ITERATIVE_IMPROVE_GENERATOR_PROMPT,
   BEST_PRACTICE_ANSWERER_PROMPT,
   FINAL_REVIEWER_PROMPT,
+  applyCompilerDiagnosticsPatch,
+  createEmptyCompilerDiagnostics,
   getLanguageInstruction,
   type DualAiRequest,
   type DualAiResponse,
   type GeneratorResponse,
+  type InitializedCompilerDiagnostics,
   type ReviewerResponse,
   type IterativeResponse,
   type IterationData,
@@ -140,7 +143,7 @@ interface IterationLoopState {
   freezeActivated: boolean;
   blockedRegenerationAttempts: number;
   iterativeEnrichedStructure: PRDStructure | undefined;
-  diagnostics: CompilerDiagnostics;
+  diagnostics: InitializedCompilerDiagnostics;
   modelsUsed: Set<string>;
   iterations: IterationData[];
   allDriftWarnings: Map<number, string[]>;
@@ -461,50 +464,63 @@ Create an improved version that incorporates the new requirements while keeping 
       if (!(error instanceof PrdCompilerQualityError)) throw error;
       if (error.failureStage === 'semantic_verifier') throw error;
 
-      const triedModels = error.repairAttempts.map(a => a.model);
-      const fallbackModel = pickNextFallbackModel(client, primaryGenerator, triedModels);
-      if (!fallbackModel) throw error;
-
-      dualAiLog(`⚡ Quality fallback: ${primaryGenerator} → ${fallbackModel}`);
-      client.setPreferredModel('generator', fallbackModel);
-      qualityFallbackUsed = true;
-
-      try {
-        // Re-generate draft with stronger fallback model
-        const fallbackGenerationStartedAt = Date.now();
-        const fallbackDraft = await client.callWithFallback(
-          'generator',
-          GENERATOR_SYSTEM_PROMPT + langInstruction,
-          generatorPrompt || `Erstelle ein vollständiges PRD basierend auf:\n\n${userInput}`,
-          PRD_GENERATION
-        );
-        timings.fallbackGenerationDurationMs = (timings.fallbackGenerationDurationMs || 0) + (Date.now() - fallbackGenerationStartedAt);
-        compilerFinalized = await finalizeWithCompilerGates({
-          initialResult: {
-            content: this.extractCleanPRD(fallbackDraft.content),
-            model: fallbackDraft.model,
-            usage: fallbackDraft.usage,
-            finishReason: fallbackDraft.finishReason,
-          },
-          ...finalizerOpts,
-        });
-        dualAiLog(`✅ Quality fallback succeeded with ${fallbackModel}`);
-      } catch (fallbackError) {
-        if ((fallbackError as any)?.name === 'AbortError' || (fallbackError as any)?.code === 'ERR_CLIENT_DISCONNECT') {
-          throw fallbackError;
-        }
-        if (fallbackError instanceof PrdCompilerQualityError && fallbackError.failureStage === 'semantic_verifier') {
-          throw fallbackError;
-        }
-        const degraded = pickBestDegradedResult(error, fallbackError);
+      const shouldSkipFallbackGeneration = effectiveMode === 'review-only'
+        || (!generatorPrompt?.trim() && !String(userInput || '').trim());
+      if (shouldSkipFallbackGeneration) {
+        dualAiWarn('⚠️ Skipping fallback regeneration to preserve the current PRD');
+        const degraded = pickBestDegradedResult(error, null);
         if (degraded) {
-          dualAiLog(`⚠️ Both models failed quality gates — returning best degraded result`);
+          dualAiLog('↩️ Preserving the best available draft after skipped fallback regeneration');
           compilerFinalized = degraded;
         } else {
           throw error;
         }
-      } finally {
-        client.setPreferredModel('generator', primaryGenerator);
+      } else {
+        const triedModels = error.repairAttempts.map(a => a.model);
+        const fallbackModel = pickNextFallbackModel(client, primaryGenerator, triedModels);
+        if (!fallbackModel) throw error;
+
+        dualAiLog(`⚡ Quality fallback: ${primaryGenerator} → ${fallbackModel}`);
+        client.setPreferredModel('generator', fallbackModel);
+        qualityFallbackUsed = true;
+
+        try {
+          // Re-generate draft with stronger fallback model
+          const fallbackGenerationStartedAt = Date.now();
+          const fallbackDraft = await client.callWithFallback(
+            'generator',
+            GENERATOR_SYSTEM_PROMPT + langInstruction,
+            generatorPrompt || `Erstelle ein vollständiges PRD basierend auf:\n\n${userInput}`,
+            PRD_GENERATION
+          );
+          timings.fallbackGenerationDurationMs = (timings.fallbackGenerationDurationMs || 0) + (Date.now() - fallbackGenerationStartedAt);
+          compilerFinalized = await finalizeWithCompilerGates({
+            initialResult: {
+              content: this.extractCleanPRD(fallbackDraft.content),
+              model: fallbackDraft.model,
+              usage: fallbackDraft.usage,
+              finishReason: fallbackDraft.finishReason,
+            },
+            ...finalizerOpts,
+          });
+          dualAiLog(`✅ Quality fallback succeeded with ${fallbackModel}`);
+        } catch (fallbackError) {
+          if ((fallbackError as any)?.name === 'AbortError' || (fallbackError as any)?.code === 'ERR_CLIENT_DISCONNECT') {
+            throw fallbackError;
+          }
+          if (fallbackError instanceof PrdCompilerQualityError && fallbackError.failureStage === 'semantic_verifier') {
+            throw fallbackError;
+          }
+          const degraded = pickBestDegradedResult(error, fallbackError);
+          if (degraded) {
+            dualAiLog(`⚠️ Both models failed quality gates — returning best degraded result`);
+            compilerFinalized = degraded;
+          } else {
+            throw error;
+          }
+        } finally {
+          client.setPreferredModel('generator', primaryGenerator);
+        }
       }
     }
     timings.compilerFinalizationDurationMs = Date.now() - compilerFinalizationStartedAt;
@@ -626,7 +642,7 @@ Create an improved version that incorporates the new requirements while keeping 
   private async callIterativeModel(
     opts: IterationOpts,
     params: {
-      role: 'generator' | 'reviewer' | 'verifier';
+      role: Parameters<OpenRouterClient['callWithFallback']>[0];
       systemPrompt: string;
       userPrompt: string;
       maxTokens: number;
@@ -736,38 +752,7 @@ Create an improved version that incorporates the new requirements while keeping 
       freezeActivated: false,
       blockedRegenerationAttempts: 0,
       iterativeEnrichedStructure: undefined,
-      diagnostics: {
-        structuredFeatureCount: 0,
-        totalFeatureCount: 0,
-        jsonSectionUpdates: 0,
-        markdownSectionRegens: 0,
-        fullRegenerations: 0,
-        featurePreservations: 0,
-        featureIntegrityRestores: 0,
-        featureQualityRegressions: 0,
-        autoRecoveredFeatures: 0,
-        avgFeatureCompleteness: 0,
-        driftEvents: 0,
-        featureFreezeActive: false,
-        blockedRegenerationAttempts: 0,
-        freezeSeedSource: 'none',
-        nfrGlobalCategoryAdds: 0,
-        nfrFeatureCriteriaAdds: 0,
-        jsonRetryAttempts: 0,
-        jsonRepairSuccesses: 0,
-        aggregatedFeatureCount: 0,
-        languageFixRequired: false,
-        boilerplateHits: 0,
-        metaLeakHits: 0,
-        earlyDriftDetected: false,
-        earlyDriftCodes: [],
-        earlyDriftSections: [],
-        blockedAddedFeatures: [],
-        earlySemanticLintCodes: [],
-        earlyRepairAttempted: false,
-        earlyRepairApplied: false,
-        primaryEarlyDriftReason: undefined,
-      },
+      diagnostics: createEmptyCompilerDiagnostics(),
       modelsUsed: new Set<string>(),
       iterations: [],
       allDriftWarnings: new Map(),
@@ -775,6 +760,11 @@ Create an improved version that incorporates the new requirements while keeping 
       allIntegrityRestorations: new Map(),
       allSectionRegens: new Map(),
     };
+    const featureDiagnostics = state.diagnostics.featureDiagnostics;
+    const featureFreezeDiagnostics = state.diagnostics.featureFreezeDiagnostics;
+    const generationDiagnostics = state.diagnostics.generationDiagnostics;
+    const repairDiagnostics = state.diagnostics.repairDiagnostics;
+    const semanticDiagnostics = state.diagnostics.semanticDiagnostics;
 
     dualAiLog("❄️ Feature Freeze Engine initialisiert (wartet auf erste Kompilierung)");
 
@@ -788,7 +778,7 @@ Create an improved version that incorporates the new requirements while keeping 
           state.freezeBaselineStructure = baselineStructure;
           state.featuresFrozen = true;
           state.freezeActivated = true;
-          state.diagnostics.freezeSeedSource = 'existingContent';
+          featureFreezeDiagnostics.freezeSeedSource = 'existingContent';
           dualAiLog("🧊 FEATURE CATALOGUE FROZEN – Baseline loaded from existing content");
           dualAiLog("   " + baselineStructure.features.length + " baseline feature(s) locked");
         }
@@ -877,11 +867,11 @@ Create an improved version that incorporates the new requirements while keeping 
     try {
       const structured = hardenedStructure || parsePRDToStructure(finalPRD);
       logStructureValidation(structured);
-      state.diagnostics.totalFeatureCount = structured.features.length;
-      state.diagnostics.structuredFeatureCount = structured.features.filter(f =>
+      featureDiagnostics.totalFeatureCount = structured.features.length;
+      featureDiagnostics.structuredFeatureCount = structured.features.filter(f =>
         f.purpose || f.actors || f.mainFlow || f.acceptanceCriteria
       ).length;
-      state.diagnostics.avgFeatureCompleteness = structured.features.length > 0
+      featureDiagnostics.avgFeatureCompleteness = structured.features.length > 0
         ? Number((structured.features.reduce((sum, f) => sum + countFeatureCompleteness(f), 0) / structured.features.length).toFixed(2))
         : 0;
     } catch (parseError: any) {
@@ -889,16 +879,16 @@ Create an improved version that incorporates the new requirements while keeping 
     }
 
     // FEATURE FREEZE: Set final diagnostic values
-    state.diagnostics.featureFreezeActive = state.featuresFrozen;
-    state.diagnostics.blockedRegenerationAttempts = state.blockedRegenerationAttempts;
+    featureFreezeDiagnostics.featureFreezeActive = state.featuresFrozen;
+    featureFreezeDiagnostics.blockedRegenerationAttempts = state.blockedRegenerationAttempts;
 
     // FEATURE FREEZE: Final summary logging
     dualAiLog('\n📊 Feature Freeze Engine Summary:');
     dualAiLog('   Freeze Active: ' + state.featuresFrozen);
     dualAiLog('   Blocked Attempts: ' + state.blockedRegenerationAttempts);
     dualAiLog('   Final Feature Count: ' + (state.previousStructure?.features.length || 0));
-    dualAiLog('   Avg Feature Completeness: ' + (state.diagnostics.avgFeatureCompleteness || 0));
-    dualAiLog('   Quality Regressions Recovered: ' + (state.diagnostics.featureQualityRegressions || 0));
+    dualAiLog('   Avg Feature Completeness: ' + (featureDiagnostics.avgFeatureCompleteness || 0));
+    dualAiLog('   Quality Regressions Recovered: ' + (featureDiagnostics.featureQualityRegressions || 0));
 
     const validation = this.validateFinalOutputConsistency({
       finalPRD,
@@ -906,9 +896,9 @@ Create an improved version that incorporates the new requirements while keeping 
       freezeBaselineFeatureCount: state.freezeBaselineStructure?.features.length || 0,
       featuresFrozen: state.featuresFrozen,
     });
-    state.diagnostics.finalValidationPassed = validation.errors.length === 0;
-    state.diagnostics.finalValidationErrors = validation.errors.length;
-    state.diagnostics.finalSanitizerApplied = validation.sanitizerApplied;
+    generationDiagnostics.finalValidationPassed = validation.errors.length === 0;
+    generationDiagnostics.finalValidationErrors = validation.errors.length;
+    generationDiagnostics.finalSanitizerApplied = validation.sanitizerApplied;
     if (validation.errors.length > 0) {
       dualAiWarn('⚠️ Final output consistency issues detected:');
       for (const err of validation.errors) {
@@ -961,17 +951,17 @@ Create an improved version that incorporates the new requirements while keeping 
       freezeBaselineFeatureCount: state.freezeBaselineStructure?.features.length || 0,
       featuresFrozen: state.featuresFrozen,
     });
-    state.diagnostics.finalValidationPassed = postCanonicalValidation.errors.length === 0;
-    state.diagnostics.finalValidationErrors = postCanonicalValidation.errors.length;
-    state.diagnostics.finalSanitizerApplied = postCanonicalValidation.sanitizerApplied;
+    generationDiagnostics.finalValidationPassed = postCanonicalValidation.errors.length === 0;
+    generationDiagnostics.finalValidationErrors = postCanonicalValidation.errors.length;
+    generationDiagnostics.finalSanitizerApplied = postCanonicalValidation.sanitizerApplied;
     if (postCanonicalValidation.errors.length > 0) {
       dualAiWarn('⚠️ Final output consistency issues detected:');
       for (const err of postCanonicalValidation.errors) {
         dualAiWarn(`   - ${err}`);
       }
     }
-    state.diagnostics.artifactWriteConsistency = true;
-    state.diagnostics.artifactWriteIssues = 0;
+    generationDiagnostics.artifactWriteConsistency = true;
+    generationDiagnostics.artifactWriteIssues = 0;
     const shouldWriteArtifacts = process.env.WRITE_ITERATIVE_ARTIFACTS === 'true';
     if (shouldWriteArtifacts) {
       try {
@@ -987,8 +977,8 @@ Create an improved version that incorporates the new requirements while keeping 
           diagnostics: state.diagnostics,
           compilerArtifact,
         });
-        state.diagnostics.artifactWriteConsistency = artifactWriteResult.ok;
-        state.diagnostics.artifactWriteIssues = artifactWriteResult.issues.length;
+        generationDiagnostics.artifactWriteConsistency = artifactWriteResult.ok;
+        generationDiagnostics.artifactWriteIssues = artifactWriteResult.issues.length;
         if (!artifactWriteResult.ok) {
           dualAiWarn('⚠️ Service-level artifact write consistency issues detected:');
           for (const issue of artifactWriteResult.issues) {
@@ -998,8 +988,8 @@ Create an improved version that incorporates the new requirements while keeping 
           dualAiLog(`🗂️ Service artifacts updated: ${artifactWriteResult.files.join(', ')}`);
         }
       } catch (artifactError: any) {
-        state.diagnostics.artifactWriteConsistency = false;
-        state.diagnostics.artifactWriteIssues = 1;
+        generationDiagnostics.artifactWriteConsistency = false;
+        generationDiagnostics.artifactWriteIssues = 1;
         dualAiWarn(`⚠️ Service artifact write failed: ${artifactError.message}`);
       }
     } else {
@@ -1040,6 +1030,8 @@ Create an improved version that incorporates the new requirements while keeping 
     opts: IterationOpts
   ): Promise<IterationCallResult> {
     const previousIteration = state.iterations[state.iterations.length - 1];
+    const featureDiagnostics = state.diagnostics.featureDiagnostics;
+    const generationDiagnostics = state.diagnostics.generationDiagnostics;
 
     // Step 1: AI #1 (Generator) - Creates PRD draft + asks questions
     // Try section-level regeneration first (iterations >= 2 only)
@@ -1083,17 +1075,17 @@ Create an improved version that incorporates the new requirements while keeping 
             );
             regenContent = jsonResult.updatedContent;
             usedJsonMode = true;
-            state.diagnostics.jsonSectionUpdates++;
-            state.diagnostics.jsonRetryAttempts = (state.diagnostics.jsonRetryAttempts || 0) + (jsonResult.diagnostics?.retryAttempts || 1);
-            state.diagnostics.jsonRepairSuccesses = (state.diagnostics.jsonRepairSuccesses || 0) + (jsonResult.diagnostics?.repairSuccesses || 0);
+            featureDiagnostics.jsonSectionUpdates = (featureDiagnostics.jsonSectionUpdates || 0) + 1;
+            generationDiagnostics.jsonRetryAttempts = (generationDiagnostics.jsonRetryAttempts || 0) + (jsonResult.diagnostics?.retryAttempts || 1);
+            generationDiagnostics.jsonRepairSuccesses = (generationDiagnostics.jsonRepairSuccesses || 0) + (jsonResult.diagnostics?.repairSuccesses || 0);
             dualAiLog(`✅ Iteration ${i}: JSON structured section update succeeded for "${String(targetSection)}" (attempts: ${jsonResult.diagnostics?.retryAttempts || 1})`);
           } catch (jsonError: any) {
             const retryCount = (jsonError as any).retryCount || 1;
-            state.diagnostics.jsonRetryAttempts = (state.diagnostics.jsonRetryAttempts || 0) + retryCount;
+            generationDiagnostics.jsonRetryAttempts = (generationDiagnostics.jsonRetryAttempts || 0) + retryCount;
             dualAiWarn(`⚠️ Iteration ${i}: JSON Mode failed after ${retryCount} attempts. Falling back to Markdown. Error: ${jsonError.message}`);
             if (strictMode) {
               dualAiError(`🚨 STRICT MODE: JSON failed for "${String(targetSection)}" after all retries. Diagnostic drift event raised.`);
-              state.diagnostics.driftEvents++;
+              generationDiagnostics.driftEvents = (generationDiagnostics.driftEvents || 0) + 1;
             }
           }
 
@@ -1107,7 +1099,7 @@ Create an improved version that incorporates the new requirements while keeping 
               opts.client,
               opts.langInstruction
             );
-            state.diagnostics.markdownSectionRegens++;
+            featureDiagnostics.markdownSectionRegens = (featureDiagnostics.markdownSectionRegens || 0) + 1;
             dualAiLog(`✅ Iteration ${i}: Markdown section regeneration complete for "${String(targetSection)}"`);
           }
 
@@ -1183,7 +1175,7 @@ Create an improved version that incorporates the new requirements while keeping 
     }
 
     if (!genResult) {
-      state.diagnostics.fullRegenerations++;
+      featureDiagnostics.fullRegenerations = (featureDiagnostics.fullRegenerations || 0) + 1;
       dualAiLog(`🤖 AI #1: Generating PRD draft and identifying gaps...`);
 
       let generatorPrompt: string;
@@ -1191,41 +1183,9 @@ Create an improved version that incorporates the new requirements while keeping 
       const improveAnchorContext = opts.isImprovement
         ? this.buildImproveAnchorContext(state.freezeBaselineStructure)
         : '';
-
-      if (i === 1) {
-        if (opts.isImprovement) {
-          generatorPrompt = `IMPORTANT: You are IMPROVING an EXISTING PRD. Do NOT start from scratch!
-
-EXISTING PRD (PRESERVE THIS STRUCTURE AND CONTENT):
-${opts.existingContent}
-
-${improveAnchorContext}
-
-${templateInstruction}
-
-${opts.additionalRequirements ? `ADDITIONAL REQUIREMENTS TO INTEGRATE:
-${opts.additionalRequirements}
-
-Your task:
-1. KEEP all existing sections and their content
-2. ADD the new requirements into the appropriate existing sections
-3. ENHANCE and EXPAND existing content where relevant
-4. Do NOT remove or replace existing content unless it contradicts the new requirements
-5. Do NOT add new features, personas, deployment models, or infrastructure domains unless the user explicitly requested them
-6. Ask questions about any unclear aspects of the new requirements` : `Your task:
-1. KEEP all existing sections and their content
-2. ENHANCE and EXPAND existing content with more details
-3. Identify gaps and missing information
-4. Do NOT add new features, personas, deployment models, or infrastructure domains
-5. Ask questions to improve specific sections inside the existing scope`}`;
-        } else {
-          generatorPrompt = `INITIAL INPUT:\n${opts.additionalRequirements || opts.existingContent}\n\n${templateInstruction}\n\nCreate an initial PRD draft and ask questions about open points.`;
-        }
-      } else {
-        // FEATURE FREEZE: Add freeze rules to prompt when frozen and iteration >= 2
-        let freezeRule = '';
-        if (state.featuresFrozen && i >= 2) {
-          freezeRule = `
+      let freezeRule = '';
+      if (state.featuresFrozen && i >= 2) {
+        freezeRule = `
 
 === CRITICAL SYSTEM RULE ===
 The Feature Catalogue is FROZEN.
@@ -1249,9 +1209,39 @@ ${opts.isImprovement
 If you modify or remove existing features, your output will be discarded.
 === END CRITICAL RULE ===
 `;
-          dualAiLog('🔒 Feature Freeze Rule added to generator prompt');
-        }
+        dualAiLog('🔒 Feature Freeze Rule added to generator prompt');
+      }
 
+      if (i === 1) {
+        if (opts.isImprovement) {
+          generatorPrompt = `IMPORTANT: You are IMPROVING an EXISTING PRD. Do NOT start from scratch!
+
+EXISTING PRD (PRESERVE THIS STRUCTURE AND CONTENT):
+${opts.existingContent}
+
+${improveAnchorContext}
+
+${templateInstruction}${freezeRule}
+
+${opts.additionalRequirements ? `ADDITIONAL REQUIREMENTS TO INTEGRATE:
+${opts.additionalRequirements}
+
+Your task:
+1. KEEP all existing sections and their content
+2. ADD the new requirements into the appropriate existing sections
+3. ENHANCE and EXPAND existing content where relevant
+4. Do NOT remove or replace existing content unless it contradicts the new requirements
+5. Do NOT add new features, personas, deployment models, or infrastructure domains unless the user explicitly requested them
+6. Ask questions about any unclear aspects of the new requirements` : `Your task:
+1. KEEP all existing sections and their content
+2. ENHANCE and EXPAND existing content with more details
+3. Identify gaps and missing information
+4. Do NOT add new features, personas, deployment models, or infrastructure domains
+5. Ask questions to improve specific sections inside the existing scope`}`;
+        } else {
+          generatorPrompt = `INITIAL INPUT:\n${opts.additionalRequirements || opts.existingContent}\n\n${templateInstruction}${freezeRule}\n\nCreate an initial PRD draft and ask questions about open points.`;
+        }
+      } else {
         generatorPrompt = `CURRENT PRD (DO NOT DISCARD - BUILD UPON IT):
 ${state.currentPRD}
 
@@ -1260,7 +1250,7 @@ ${previousIteration.answererOutput}
 
 ${improveAnchorContext}
 
-${templateInstruction}
+${templateInstruction}${freezeRule}
 
 Your task:
 1. PRESERVE all existing sections and content
@@ -1341,6 +1331,8 @@ Your task:
     // Feature Identification Layer + Expansion Engine (iterations 1–2 = grow window)
     // Iteration 1: initial feature discovery. Iteration 2: Q&A-informed feature growth.
     // Freeze activates after iteration 2 expansion completes.
+    const featureFreezeDiagnostics = state.diagnostics.featureFreezeDiagnostics;
+    const semanticDiagnostics = state.diagnostics.semanticDiagnostics;
     if (i <= 2) {
       let iterationStructure: PRDStructure | null = null;
       try {
@@ -1369,13 +1361,13 @@ Your task:
       });
 
       if (opts.isImprovement && expansion.blockedFeatureIds && expansion.blockedFeatureIds.length > 0) {
-        state.diagnostics.blockedAddedFeatures = Array.from(new Set([
-          ...(state.diagnostics.blockedAddedFeatures || []),
+        featureFreezeDiagnostics.blockedAddedFeatures = Array.from(new Set([
+          ...(featureFreezeDiagnostics.blockedAddedFeatures || []),
           ...expansion.blockedFeatureIds,
         ]));
-        state.diagnostics.earlyDriftDetected = true;
-        state.diagnostics.earlyDriftCodes = Array.from(new Set([
-          ...(state.diagnostics.earlyDriftCodes || []),
+        semanticDiagnostics.earlyDriftDetected = true;
+        semanticDiagnostics.earlyDriftCodes = Array.from(new Set([
+          ...(semanticDiagnostics.earlyDriftCodes || []),
           'improve_new_feature_blocked',
         ]));
         this.emitIterativeProgress(opts, {
@@ -1405,7 +1397,7 @@ Your task:
         if (compiledCount > 0 && !state.freezeActivated && i >= 2) {
           state.featuresFrozen = true;
           state.freezeActivated = true;
-          state.diagnostics.freezeSeedSource = 'compiledExpansion';
+          featureFreezeDiagnostics.freezeSeedSource = 'compiledExpansion';
           dualAiLog('🧊 FEATURE CATALOGUE FROZEN – Grow window closed after iteration 2');
           dualAiLog('   ' + compiledCount + ' feature(s) in compiled state');
           if (state.freezeBaselineStructure?.features.length) {
@@ -1564,6 +1556,9 @@ Your task:
       dualAiWarn('   Rolled back to previous merged PRD and continuing with next iteration');
       return true;
     };
+    const featureDiagnostics = state.diagnostics.featureDiagnostics;
+    const generationDiagnostics = state.diagnostics.generationDiagnostics;
+    const semanticDiagnostics = state.diagnostics.semanticDiagnostics;
 
     // FEATURE FREEZE: Validate no feature loss when frozen
     if (state.featuresFrozen && state.freezeBaselineStructure) {
@@ -1641,18 +1636,18 @@ Your task:
         const warnings = logStructuralDrift(i, diff);
         if (warnings.length > 0) {
           state.allDriftWarnings.set(i, warnings);
-          state.diagnostics.driftEvents += warnings.length;
+          generationDiagnostics.driftEvents = (generationDiagnostics.driftEvents || 0) + warnings.length;
           if (opts.isImprovement && diff.missingSections.includes('featureCatalogueIntro')) {
-            state.diagnostics.earlyDriftDetected = true;
-            state.diagnostics.earlyDriftCodes = Array.from(new Set([
-              ...(state.diagnostics.earlyDriftCodes || []),
+            semanticDiagnostics.earlyDriftDetected = true;
+            semanticDiagnostics.earlyDriftCodes = Array.from(new Set([
+              ...(semanticDiagnostics.earlyDriftCodes || []),
               'section_anchor_mismatch',
             ]));
-            state.diagnostics.earlyDriftSections = Array.from(new Set([
-              ...(state.diagnostics.earlyDriftSections || []),
+            semanticDiagnostics.earlyDriftSections = Array.from(new Set([
+              ...(semanticDiagnostics.earlyDriftSections || []),
               'featureCatalogueIntro',
             ]));
-            state.diagnostics.primaryEarlyDriftReason = state.diagnostics.primaryEarlyDriftReason
+            semanticDiagnostics.primaryEarlyDriftReason = semanticDiagnostics.primaryEarlyDriftReason
               || 'Section featureCatalogueIntro drifted away from the baseline anchor during iteration.';
           }
         }
@@ -1663,7 +1658,7 @@ Your task:
           preservedPRD = assembleStructureToMarkdown(currentStructure);
           forceReassembleFromStructure = true;
           state.allPreservationActions.set(i, [...diff.removedFeatures]);
-          state.diagnostics.featurePreservations += diff.removedFeatures.length;
+          featureDiagnostics.featurePreservations = (featureDiagnostics.featurePreservations || 0) + diff.removedFeatures.length;
           dualAiLog(`✅ Iteration ${i}: Feature preservation complete, PRD reassembled`);
         }
 
@@ -1675,9 +1670,9 @@ Your task:
             preservedPRD = assembleStructureToMarkdown(currentStructure);
             forceReassembleFromStructure = true;
             state.allIntegrityRestorations.set(i, integrityResult.restorations);
-            state.diagnostics.featureIntegrityRestores += integrityResult.restorations.length;
-            state.diagnostics.autoRecoveredFeatures = (state.diagnostics.autoRecoveredFeatures || 0) + integrityResult.restorations.length;
-            state.diagnostics.featureQualityRegressions = (state.diagnostics.featureQualityRegressions || 0) +
+            featureDiagnostics.featureIntegrityRestores = (featureDiagnostics.featureIntegrityRestores || 0) + integrityResult.restorations.length;
+            featureDiagnostics.autoRecoveredFeatures = (featureDiagnostics.autoRecoveredFeatures || 0) + integrityResult.restorations.length;
+            featureDiagnostics.featureQualityRegressions = (featureDiagnostics.featureQualityRegressions || 0) +
               integrityResult.restorations.filter(r => r.qualityRegression).length;
             dualAiLog(`🛡️ Iteration ${i}: Feature integrity enforced, ${integrityResult.restorations.length} feature(s) restored`);
           }
@@ -1702,7 +1697,7 @@ Your task:
             i,
             Array.from(new Set([...existing, ...freezeDiff.removedFeatures]))
           );
-          state.diagnostics.featurePreservations += freezeDiff.removedFeatures.length;
+          featureDiagnostics.featurePreservations = (featureDiagnostics.featurePreservations || 0) + freezeDiff.removedFeatures.length;
         }
 
         if (!featureWriteLockActive) {
@@ -1713,9 +1708,9 @@ Your task:
             forceReassembleFromStructure = true;
             const existing = state.allIntegrityRestorations.get(i) || [];
             state.allIntegrityRestorations.set(i, [...existing, ...freezeIntegrity.restorations]);
-            state.diagnostics.featureIntegrityRestores += freezeIntegrity.restorations.length;
-            state.diagnostics.autoRecoveredFeatures = (state.diagnostics.autoRecoveredFeatures || 0) + freezeIntegrity.restorations.length;
-            state.diagnostics.featureQualityRegressions = (state.diagnostics.featureQualityRegressions || 0) +
+            featureDiagnostics.featureIntegrityRestores = (featureDiagnostics.featureIntegrityRestores || 0) + freezeIntegrity.restorations.length;
+            featureDiagnostics.autoRecoveredFeatures = (featureDiagnostics.autoRecoveredFeatures || 0) + freezeIntegrity.restorations.length;
+            featureDiagnostics.featureQualityRegressions = (featureDiagnostics.featureQualityRegressions || 0) +
               freezeIntegrity.restorations.filter(r => r.qualityRegression).length;
             dualAiLog(`🛡️ Freeze baseline integrity enforced, ${freezeIntegrity.restorations.length} feature(s) restored`);
           }
@@ -1747,13 +1742,13 @@ Your task:
           forceReassembleFromStructure = true;
         }
         if (deltaResult.blockedAddedFeatures.length > 0) {
-          state.diagnostics.blockedAddedFeatures = Array.from(new Set([
-            ...(state.diagnostics.blockedAddedFeatures || []),
+          state.diagnostics.featureFreezeDiagnostics.blockedAddedFeatures = Array.from(new Set([
+            ...(state.diagnostics.featureFreezeDiagnostics.blockedAddedFeatures || []),
             ...deltaResult.blockedAddedFeatures,
           ]));
-          state.diagnostics.earlyDriftDetected = true;
-          state.diagnostics.earlyDriftCodes = Array.from(new Set([
-            ...(state.diagnostics.earlyDriftCodes || []),
+          semanticDiagnostics.earlyDriftDetected = true;
+          semanticDiagnostics.earlyDriftCodes = Array.from(new Set([
+            ...(semanticDiagnostics.earlyDriftCodes || []),
             'improve_new_feature_blocked',
           ]));
           dualAiWarn(`🚫 Iteration ${i}: blocked improve-mode feature delta additions (${deltaResult.blockedAddedFeatures.join(', ')})`);
@@ -1861,6 +1856,7 @@ Your task:
   ): Promise<{ finalPRD: string; hardenedStructure: PRDStructure | undefined; compilerRepairTokens: number; compilerArtifact?: import('./compilerArtifact').CompilerArtifactSummary }> {
     let currentPRD = state.currentPRD;
     let compilerArtifact: import('./compilerArtifact').CompilerArtifactSummary | undefined;
+    const generationDiagnostics = state.diagnostics.generationDiagnostics;
 
     // Final hardening: guarantee all required non-feature sections are present in final output.
     let finalHardenedStructure: PRDStructure | undefined;
@@ -1895,8 +1891,8 @@ Your task:
       let hardenedStructure = this.enforceCanonicalFeatureStructure(finalScaffold.structure, opts.resolvedLanguage);
       const nfrHardening = this.enforceNfrCoverage(hardenedStructure, opts.resolvedLanguage);
       hardenedStructure = nfrHardening.structure;
-      state.diagnostics.nfrGlobalCategoryAdds = (state.diagnostics.nfrGlobalCategoryAdds || 0) + nfrHardening.globalCategoryAdds;
-      state.diagnostics.nfrFeatureCriteriaAdds = (state.diagnostics.nfrFeatureCriteriaAdds || 0) + nfrHardening.featureCriteriaAdds;
+      generationDiagnostics.nfrGlobalCategoryAdds = (generationDiagnostics.nfrGlobalCategoryAdds || 0) + nfrHardening.globalCategoryAdds;
+      generationDiagnostics.nfrFeatureCriteriaAdds = (generationDiagnostics.nfrFeatureCriteriaAdds || 0) + nfrHardening.featureCriteriaAdds;
       hardenedStructure = this.normalizeSectionAliases(hardenedStructure);
       finalHardenedStructure = hardenedStructure;
       currentPRD = assembleStructureToMarkdown(hardenedStructure);
@@ -1963,7 +1959,7 @@ Your task:
         },
         semanticRefineReviewer: async (refinePrompt: string) => {
           const refineResult = await this.callIterativeModel(opts, {
-            role: 'reviewer',
+            role: 'semantic_repair',
             systemPrompt: 'You are a PRD semantic repair specialist. Return JSON only.' + opts.langInstruction,
             userPrompt: refinePrompt,
             maxTokens: CONTENT_REVIEW_REFINE,
@@ -2079,7 +2075,7 @@ Your task:
       currentPRD = this.sanitizeFinalMarkdown(compilerFinalized.content);
       finalHardenedStructure = compilerFinalized.structure;
       compilerArtifact = summarizeFinalizerResult(compilerFinalized);
-      Object.assign(state.diagnostics, buildCompilerArtifactDiagnostics(compilerArtifact));
+      applyCompilerDiagnosticsPatch(state.diagnostics, buildCompilerArtifactDiagnostics(compilerArtifact));
       compilerRepairTokens = compilerFinalized.repairAttempts.reduce(
         (sum, attempt) => sum + attempt.usage.total_tokens,
         0
@@ -2840,7 +2836,10 @@ Your task:
       }
     }
 
-    const blockingIssues = issues.filter(issue => issue.code !== 'improve_new_feature_blocked');
+    const blockingIssues = issues.filter(issue =>
+      issue.code !== 'improve_new_feature_blocked'
+      && issue.severity === 'error'
+    );
     const primaryReason = blockingIssues.length > 0
       ? (() => {
           const first = blockingIssues[0];
@@ -2881,35 +2880,37 @@ Your task:
     repairAttempted?: boolean,
     repairApplied?: boolean,
   ): void {
-    state.diagnostics.earlyDriftDetected =
-      !!state.diagnostics.earlyDriftDetected
+    const semanticDiagnostics = state.diagnostics.semanticDiagnostics;
+    const featureFreezeDiagnostics = state.diagnostics.featureFreezeDiagnostics;
+    semanticDiagnostics.earlyDriftDetected =
+      !!semanticDiagnostics.earlyDriftDetected
       || evaluation.blockingIssues.length > 0
       || evaluation.blockedAddedFeatures.length > 0;
-    state.diagnostics.earlyDriftCodes = Array.from(new Set([
-      ...(state.diagnostics.earlyDriftCodes || []),
+    semanticDiagnostics.earlyDriftCodes = Array.from(new Set([
+      ...(semanticDiagnostics.earlyDriftCodes || []),
       ...evaluation.blockingIssues.map(issue => issue.code),
       ...(evaluation.blockedAddedFeatures.length > 0 ? ['improve_new_feature_blocked'] : []),
     ]));
-    state.diagnostics.earlyDriftSections = Array.from(new Set([
-      ...(state.diagnostics.earlyDriftSections || []),
+    semanticDiagnostics.earlyDriftSections = Array.from(new Set([
+      ...(semanticDiagnostics.earlyDriftSections || []),
       ...evaluation.blockingIssues.map(issue => issue.sectionKey),
     ]));
-    state.diagnostics.blockedAddedFeatures = Array.from(new Set([
-      ...(state.diagnostics.blockedAddedFeatures || []),
+    featureFreezeDiagnostics.blockedAddedFeatures = Array.from(new Set([
+      ...(featureFreezeDiagnostics.blockedAddedFeatures || []),
       ...evaluation.blockedAddedFeatures,
     ]));
-    state.diagnostics.earlySemanticLintCodes = Array.from(new Set([
-      ...(state.diagnostics.earlySemanticLintCodes || []),
+    semanticDiagnostics.earlySemanticLintCodes = Array.from(new Set([
+      ...(semanticDiagnostics.earlySemanticLintCodes || []),
       ...evaluation.semanticLintCodes,
     ]));
     if (repairAttempted !== undefined) {
-      state.diagnostics.earlyRepairAttempted = repairAttempted;
+      semanticDiagnostics.earlyRepairAttempted = repairAttempted;
     }
     if (repairApplied !== undefined) {
-      state.diagnostics.earlyRepairApplied = repairApplied;
+      semanticDiagnostics.earlyRepairApplied = repairApplied;
     }
     if (evaluation.primaryReason) {
-      state.diagnostics.primaryEarlyDriftReason = evaluation.primaryReason;
+      semanticDiagnostics.primaryEarlyDriftReason = evaluation.primaryReason;
     }
   }
 
@@ -2921,6 +2922,9 @@ Your task:
     opts: IterationOpts;
   }): Promise<{ preservedPRD: string; candidateStructure: PRDStructure | null }> {
     const { iterationNumber, preservedPRD, candidateStructure, state, opts } = params;
+    const featureFreezeDiagnostics = state.diagnostics.featureFreezeDiagnostics;
+    const semanticDiagnostics = state.diagnostics.semanticDiagnostics;
+    const repairDiagnostics = state.diagnostics.repairDiagnostics;
     if (!opts.isImprovement || !candidateStructure || !state.freezeBaselineStructure) {
       return { preservedPRD, candidateStructure };
     }
@@ -2930,7 +2934,7 @@ Your task:
       candidateStructure,
       workflowInputText: opts.workflowInputText,
       language: opts.resolvedLanguage,
-      blockedAddedFeatures: state.diagnostics.blockedAddedFeatures,
+      blockedAddedFeatures: featureFreezeDiagnostics.blockedAddedFeatures,
     });
     this.applyImproveDriftDiagnostics(state, initialEvaluation);
 
@@ -2954,8 +2958,8 @@ Your task:
     let repairedStructure = candidateStructure;
     let finalEvaluation = initialEvaluation;
 
-    if (!state.diagnostics.earlyRepairAttempted) {
-      state.diagnostics.earlyRepairAttempted = true;
+    if (!semanticDiagnostics.earlyRepairAttempted) {
+      semanticDiagnostics.earlyRepairAttempted = true;
       this.emitIterativeProgress(opts, {
         type: 'early_drift_repair_start',
         iteration: iterationNumber,
@@ -2972,7 +2976,7 @@ Your task:
         originalRequest: opts.workflowInputText,
         reviewer: async (refinePrompt: string) => {
           const refineResult = await this.callIterativeModel(opts, {
-            role: 'reviewer',
+            role: 'semantic_repair',
             systemPrompt: 'You are a PRD semantic repair specialist. Return JSON only.' + opts.langInstruction,
             userPrompt: refinePrompt,
             maxTokens: CONTENT_REVIEW_REFINE,
@@ -2992,8 +2996,8 @@ Your task:
       for (const attempt of repairResult.reviewerAttempts || []) {
         if (attempt.model) {
           state.modelsUsed.add(attempt.model);
-          state.diagnostics.reviewerModelIds = Array.from(new Set([
-            ...(state.diagnostics.reviewerModelIds || []),
+          repairDiagnostics.reviewerModelIds = Array.from(new Set([
+            ...(repairDiagnostics.reviewerModelIds || []),
             attempt.model,
           ]));
         }
@@ -3014,7 +3018,7 @@ Your task:
             candidateStructure: repairedStructure,
             workflowInputText: opts.workflowInputText,
             language: opts.resolvedLanguage,
-            blockedAddedFeatures: state.diagnostics.blockedAddedFeatures,
+            blockedAddedFeatures: featureFreezeDiagnostics.blockedAddedFeatures,
           })
         : initialEvaluation;
 
@@ -3052,8 +3056,8 @@ Your task:
         earlyDriftSections: finalEvaluation.blockingIssues.map(issue => issue.sectionKey),
         blockedAddedFeatures: finalEvaluation.blockedAddedFeatures,
         earlySemanticLintCodes: finalEvaluation.semanticLintCodes,
-        earlyRepairAttempted: !!state.diagnostics.earlyRepairAttempted,
-        earlyRepairApplied: !!state.diagnostics.earlyRepairApplied,
+        earlyRepairAttempted: !!semanticDiagnostics.earlyRepairAttempted,
+        earlyRepairApplied: !!semanticDiagnostics.earlyRepairApplied,
         primaryEarlyDriftReason: finalEvaluation.primaryReason || initialEvaluation.primaryReason,
       }
     );
@@ -4483,4 +4487,3 @@ export function getDualAiService(): DualAiService {
   }
   return dualAiService;
 }
-

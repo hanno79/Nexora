@@ -1050,6 +1050,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(review);
   }));
 
+  // -------------------------------------------------------------------------
+  // POST /api/ai/repair-issue — targeted single-issue repair
+  // -------------------------------------------------------------------------
+  app.post('/api/ai/repair-issue', isAuthenticated, aiRateLimiter, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    if (!isOpenRouterConfigured()) {
+      return res.status(503).json({ message: getOpenRouterConfigError() });
+    }
+
+    const { prdContent, issue, language, templateCategory, originalRequest, prdId } = req.body;
+    const userId = req.user.claims.sub;
+    const aiPreferenceUserId = resolveAiPreferenceUserId(req, userId);
+
+    if (!prdContent || typeof prdContent !== 'string') {
+      return res.status(400).json({ message: 'prdContent is required' });
+    }
+    if (!issue || typeof issue.code !== 'string' || typeof issue.sectionKey !== 'string' || typeof issue.message !== 'string') {
+      return res.status(400).json({ message: 'issue with code, sectionKey, and message is required' });
+    }
+
+    const { repairSingleIssue } = await import('./issueRepairService');
+    const { logAiUsage } = await import('./aiUsageLogger');
+
+    const result = await repairSingleIssue({
+      prdContent,
+      issue: {
+        code: issue.code,
+        sectionKey: issue.sectionKey,
+        message: issue.message,
+        suggestedAction: issue.suggestedAction,
+        targetFields: issue.targetFields,
+        suggestedFix: issue.suggestedFix,
+      },
+      language: language === 'de' ? 'de' : 'en',
+      templateCategory,
+      originalRequest,
+      userId: aiPreferenceUserId,
+      maxAttempts: 3,
+    });
+
+    // Log usage
+    await logAiUsage(userId, 'semantic_repair', result.model, 'unknown', result.tokenUsage, prdId).catch(() => {});
+
+    res.json(result);
+  }));
+
   app.post('/api/ai/generate-iterative', isAuthenticated, aiRateLimiter, async (req, res) => {
     const authReq = req as unknown as AuthenticatedRequest;
     const requestStartedAt = Date.now();

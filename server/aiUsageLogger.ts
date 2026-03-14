@@ -12,7 +12,7 @@ import { getModelPricing } from "./modelPricing";
  */
 export async function logAiUsage(
   userId: string,
-  modelType: 'generator' | 'reviewer',
+  modelType: InsertAiUsage['modelType'],
   model: string,
   tier: InsertAiUsage['tier'],
   usage: {

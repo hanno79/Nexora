@@ -471,14 +471,22 @@ export const de: Translations = {
     existingContentUsedAsContext: "bestehender Inhalt als Kontext verwendet",
     doneWithWarnings: "Inhalt mit Warnungen generiert",
     qualityGateFailed: "Compiler-Quality-Gate ist nach der finalen Verifikation fehlgeschlagen.",
-    // ÄNDERUNG 02.03.2025: Neue Übersetzungen für Guided Finalisierung im DualAiDialog
+    // CHANGE 02.03.2025: New translations for Guided Finalization in DualAiDialog
     guidedFinalizing: "PRD wird basierend auf Guided-Antworten generiert...",
     guidedStartingFinalization: "PRD-Generierung wird gestartet...",
     guidedGenerationStarted: "PRD wird generiert...",
     compilingPRD: "PRD wird kompiliert und validiert...",
-    healthChecking: "Modellverfuegbarkeit wird geprueft...",
-    modelNotAvailable: "Generator-Modell moeglicherweise nicht verfuegbar",
-    modelHealthError: "Das konfigurierte Generator-Modell konnte nicht erreicht werden. Die Generierung koennte auf ein anderes Modell zurueckfallen.",
+    healthChecking: "Modellverfügbarkeit wird geprüft...",
+    modelNotAvailable: "Generator-Modell möglicherweise nicht verfügbar",
+    modelHealthError: "Das konfigurierte Generator-Modell konnte nicht erreicht werden. Die Generierung könnte auf ein anderes Modell zurückfallen.",
+    fixIssue: "Beheben",
+    fixAllIssues: "Alle Issues beheben",
+    fixingIssue: "Issue wird behoben...",
+    fixingProgress: "Issue {current}/{total} wird behoben...",
+    issueFixed: "Issue erfolgreich behoben",
+    issueNotFixable: "Dieses Issue konnte nicht automatisch behoben werden",
+    allIssuesFixed: "Alle Issues erfolgreich behoben",
+    someIssuesRemain: "{count} Issue(s) konnten nicht behoben werden",
   },
 
   guidedAi: {

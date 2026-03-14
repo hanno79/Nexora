@@ -13,6 +13,7 @@ export type ClientCompilerIssue = {
   message: string;
   suggestedAction?: string;
   targetFields?: string[];
+  suggestedFix?: string;
 };
 
 export type ClientCompilerDiagnostics = {
@@ -154,6 +155,7 @@ function toCompilerIssueArray(value: unknown): ClientCompilerIssue[] | undefined
         message,
         suggestedAction: typeof entry.suggestedAction === 'string' ? entry.suggestedAction : undefined,
         targetFields: toStringArray(entry.targetFields),
+        suggestedFix: typeof entry.suggestedFix === 'string' && entry.suggestedFix.trim().length > 0 ? entry.suggestedFix : undefined,
       };
       return issue;
     })

@@ -524,7 +524,7 @@ Your task is to review the final PRD at the highest level and polish it.
 REVIEW CHECKLIST:
 
 ✓ COMPLETENESS
-- Are ALL 14 mandatory sections present and substantial?
+- Are ALL 12 mandatory sections present and substantial?
 - Is the System Vision concise and clear?
 - Is the System Boundaries & Operating Model complete (deployment, runtime, persistence)?
 - Is the Functional Feature Catalogue present with F-XX specs?
@@ -658,44 +658,18 @@ interface CompilerDiagnosticIssue {
   targetFields?: string[];
 }
 
-interface CompilerDiagnostics {
-  structuredFeatureCount: number;
-  totalFeatureCount: number;
-  jsonSectionUpdates: number;
-  markdownSectionRegens: number;
-  fullRegenerations: number;
-  featurePreservations: number;
-  featureIntegrityRestores: number;
+interface FeatureDiagnostics {
+  structuredFeatureCount?: number;
+  totalFeatureCount?: number;
+  jsonSectionUpdates?: number;
+  markdownSectionRegens?: number;
+  fullRegenerations?: number;
+  featurePreservations?: number;
+  featureIntegrityRestores?: number;
   featureQualityRegressions?: number;
   autoRecoveredFeatures?: number;
   avgFeatureCompleteness?: number;
-  driftEvents: number;
-  // Feature Freeze Engine
-  featureFreezeActive?: boolean;
-  blockedRegenerationAttempts?: number;
-  freezeSeedSource?: 'none' | 'existingContent' | 'compiledExpansion';
-  nfrGlobalCategoryAdds?: number;
-  nfrFeatureCriteriaAdds?: number;
-  // JSON Mode Robustness
-  jsonRetryAttempts?: number;
-  jsonRepairSuccesses?: number;
-  finalValidationPassed?: boolean;
-  finalValidationErrors?: number;
-  finalSanitizerApplied?: boolean;
-  artifactWriteConsistency?: boolean;
-  artifactWriteIssues?: number;
   aggregatedFeatureCount?: number;
-  languageFixRequired?: boolean;
-  boilerplateHits?: number;
-  metaLeakHits?: number;
-  repairAttempts?: number;
-  repairModelIds?: string[];
-  reviewerModelIds?: string[];
-  verifierModelIds?: string[];
-  contentRefined?: boolean;
-  contentReviewIssueCodes?: string[];
-  semanticVerifierVerdict?: 'pass' | 'fail';
-  primaryGateReason?: string;
   structuralParseReason?: string;
   rawFeatureHeadingSamples?: string[];
   normalizationApplied?: boolean;
@@ -708,11 +682,51 @@ interface CompilerDiagnostics {
   timelineMismatchedFeatureIds?: string[];
   timelineRewrittenFromFeatureMap?: boolean;
   timelineRewriteAppliedLines?: number;
-  semanticBlockingCodes?: string[];
-  semanticBlockingIssues?: CompilerDiagnosticIssue[];
-  initialSemanticBlockingIssues?: CompilerDiagnosticIssue[];
-  postRepairSemanticBlockingIssues?: CompilerDiagnosticIssue[];
-  finalSemanticBlockingIssues?: CompilerDiagnosticIssue[];
+  collapsedFeatureNameIds?: string[];
+  placeholderFeatureIds?: string[];
+  acceptanceBoilerplateFeatureIds?: string[];
+  featureQualityFloorFeatureIds?: string[];
+  featureQualityFloorFailedFeatureIds?: string[];
+  featureQualityFloorPassed?: boolean;
+  primaryFeatureQualityReason?: string;
+  emptyMainFlowFeatureIds?: string[];
+  placeholderPurposeFeatureIds?: string[];
+  placeholderAlternateFlowFeatureIds?: string[];
+  thinAcceptanceCriteriaFeatureIds?: string[];
+}
+
+interface FeatureFreezeDiagnostics {
+  featureFreezeActive?: boolean;
+  blockedRegenerationAttempts?: number;
+  freezeSeedSource?: 'none' | 'existingContent' | 'compiledExpansion';
+  blockedAddedFeatures?: string[];
+}
+
+interface GenerationDiagnostics {
+  driftEvents?: number;
+  nfrGlobalCategoryAdds?: number;
+  nfrFeatureCriteriaAdds?: number;
+  jsonRetryAttempts?: number;
+  jsonRepairSuccesses?: number;
+  finalValidationPassed?: boolean;
+  finalValidationErrors?: number;
+  finalSanitizerApplied?: boolean;
+  artifactWriteConsistency?: boolean;
+  artifactWriteIssues?: number;
+  languageFixRequired?: boolean;
+  boilerplateHits?: number;
+  metaLeakHits?: number;
+  contentRefined?: boolean;
+  contentReviewIssueCodes?: string[];
+  activePhase?: string;
+  lastProgressEvent?: string;
+}
+
+interface RepairDiagnostics {
+  repairAttempts?: number;
+  repairModelIds?: string[];
+  reviewerModelIds?: string[];
+  verifierModelIds?: string[];
   semanticRepairApplied?: boolean;
   semanticRepairAttempted?: boolean;
   semanticRepairIssueCodes?: string[];
@@ -729,53 +743,298 @@ interface CompilerDiagnostics {
   degradedCandidateSource?: 'pre_repair_best' | 'post_targeted_repair';
   displayedCandidateSource?: 'passed' | 'pre_repair_best' | 'post_targeted_repair';
   diagnosticsAlignedWithDisplayedCandidate?: boolean;
-  collapsedFeatureNameIds?: string[];
-  placeholderFeatureIds?: string[];
-  acceptanceBoilerplateFeatureIds?: string[];
-  featureQualityFloorFeatureIds?: string[];
-  featureQualityFloorFailedFeatureIds?: string[];
-  featureQualityFloorPassed?: boolean;
-  primaryFeatureQualityReason?: string;
-  emptyMainFlowFeatureIds?: string[];
-  placeholderPurposeFeatureIds?: string[];
-  placeholderAlternateFlowFeatureIds?: string[];
-  thinAcceptanceCriteriaFeatureIds?: string[];
   semanticRepairChangedSections?: string[];
   semanticRepairStructuralChange?: boolean;
+}
+
+interface SemanticDiagnostics {
+  semanticVerifierVerdict?: 'pass' | 'fail';
+  semanticBlockingCodes?: string[];
+  semanticBlockingIssues?: CompilerDiagnosticIssue[];
+  initialSemanticBlockingIssues?: CompilerDiagnosticIssue[];
+  postRepairSemanticBlockingIssues?: CompilerDiagnosticIssue[];
+  finalSemanticBlockingIssues?: CompilerDiagnosticIssue[];
   semanticVerifierSameFamilyFallback?: boolean;
   semanticVerifierBlockedFamilies?: string[];
   earlyDriftDetected?: boolean;
   earlyDriftCodes?: string[];
   earlyDriftSections?: string[];
-  blockedAddedFeatures?: string[];
   earlySemanticLintCodes?: string[];
   earlyRepairAttempted?: boolean;
   earlyRepairApplied?: boolean;
   primaryEarlyDriftReason?: string;
+}
+
+interface ProviderFailureCounts {
+  rateLimited: number;
+  timedOut: number;
+  provider4xx: number;
+  emptyResponse: number;
+}
+
+interface LastModelAttemptDiagnostics {
+  role: string;
+  model: string;
+  phase?: string;
+  provider?: string;
+  status?: string;
+  startedAt?: string;
+  endedAt?: string;
+  durationMs?: number;
+  finishReason?: string;
+  errorMessage?: string;
+}
+
+interface ProviderDiagnostics {
   runtimeFailureCode?: 'provider_exhaustion' | 'provider_auth' | 'provider_unavailable';
   providerFailureSummary?: string;
-  providerFailureCounts?: {
-    rateLimited: number;
-    timedOut: number;
-    provider4xx: number;
-    emptyResponse: number;
-  };
+  providerFailureCounts?: ProviderFailureCounts;
   providerFailedModels?: string[];
   providerFailureStage?: 'compiler_repair' | 'content_review' | 'semantic_repair' | 'semantic_verification' | 'final_review';
-  activePhase?: string;
-  lastProgressEvent?: string;
-  lastModelAttempt?: {
-    role: string;
-    model: string;
-    phase?: string;
-    provider?: string;
-    status?: string;
-    startedAt?: string;
-    endedAt?: string;
-    durationMs?: number;
-    finishReason?: string;
-    errorMessage?: string;
+  lastModelAttempt?: LastModelAttemptDiagnostics;
+}
+
+interface CompilerDiagnostics {
+  featureDiagnostics?: FeatureDiagnostics;
+  featureFreezeDiagnostics?: FeatureFreezeDiagnostics;
+  generationDiagnostics?: GenerationDiagnostics;
+  repairDiagnostics?: RepairDiagnostics;
+  semanticDiagnostics?: SemanticDiagnostics;
+  providerDiagnostics?: ProviderDiagnostics;
+}
+
+interface InitializedCompilerDiagnostics extends CompilerDiagnostics {
+  featureDiagnostics: FeatureDiagnostics;
+  featureFreezeDiagnostics: FeatureFreezeDiagnostics;
+  generationDiagnostics: GenerationDiagnostics;
+  repairDiagnostics: RepairDiagnostics;
+  semanticDiagnostics: SemanticDiagnostics;
+  providerDiagnostics: ProviderDiagnostics;
+}
+
+function cloneArray<T>(value: T[] | undefined): T[] | undefined {
+  return Array.isArray(value) ? [...value] : undefined;
+}
+
+function cloneIssues(value: CompilerDiagnosticIssue[] | undefined): CompilerDiagnosticIssue[] | undefined {
+  return Array.isArray(value)
+    ? value.map(issue => ({
+        ...issue,
+        ...(Array.isArray(issue.targetFields) ? { targetFields: [...issue.targetFields] } : {}),
+      }))
+    : undefined;
+}
+
+function mergeIssueGroups<T extends CompilerDiagnosticIssue[] | undefined>(value: T): T {
+  return (cloneIssues(value) as T);
+}
+
+function mergeLastModelAttempt(
+  value: LastModelAttemptDiagnostics | undefined,
+): LastModelAttemptDiagnostics | undefined {
+  return value ? { ...value } : undefined;
+}
+
+function mergeSubDiagnostics<T extends Record<string, any>, K extends keyof T>(
+  base: T | undefined,
+  patch: Partial<T> | undefined,
+  arrayFields: readonly K[],
+): T {
+  const merged: T = {
+    ...(base || {}),
+    ...(patch || {}),
+  } as T;
+
+  for (const field of arrayFields) {
+    const patchValue = patch?.[field];
+    const baseValue = base?.[field];
+    (merged as Record<string, unknown>)[field as string] = patchValue !== undefined
+      ? cloneArray(patchValue as any[] | undefined)
+      : cloneArray(baseValue as any[] | undefined);
+  }
+
+  return merged;
+}
+
+function mergeCompilerDiagnostics(
+  base: CompilerDiagnostics | undefined,
+  patch: Partial<CompilerDiagnostics> | undefined,
+): CompilerDiagnostics {
+  return {
+    featureDiagnostics: mergeSubDiagnostics(base?.featureDiagnostics, patch?.featureDiagnostics, [
+      'rawFeatureHeadingSamples',
+      'primaryCapabilityAnchors',
+      'featurePriorityWindow',
+      'coreFeatureIds',
+      'supportFeatureIds',
+      'canonicalFeatureIds',
+      'timelineMismatchedFeatureIds',
+      'collapsedFeatureNameIds',
+      'placeholderFeatureIds',
+      'acceptanceBoilerplateFeatureIds',
+      'featureQualityFloorFeatureIds',
+      'featureQualityFloorFailedFeatureIds',
+      'emptyMainFlowFeatureIds',
+      'placeholderPurposeFeatureIds',
+      'placeholderAlternateFlowFeatureIds',
+      'thinAcceptanceCriteriaFeatureIds',
+    ] as const),
+    featureFreezeDiagnostics: mergeSubDiagnostics(base?.featureFreezeDiagnostics, patch?.featureFreezeDiagnostics, [
+      'blockedAddedFeatures',
+    ] as const),
+    generationDiagnostics: mergeSubDiagnostics(base?.generationDiagnostics, patch?.generationDiagnostics, [
+      'contentReviewIssueCodes',
+    ] as const),
+    repairDiagnostics: mergeSubDiagnostics(base?.repairDiagnostics, patch?.repairDiagnostics, [
+      'repairModelIds',
+      'reviewerModelIds',
+      'verifierModelIds',
+      'semanticRepairIssueCodes',
+      'semanticRepairSectionKeys',
+      'compilerRepairFinishReasons',
+      'repairDegradationSignals',
+      'semanticRepairChangedSections',
+    ] as const),
+    semanticDiagnostics: {
+      ...mergeSubDiagnostics(base?.semanticDiagnostics, patch?.semanticDiagnostics, [
+        'semanticBlockingCodes',
+        'semanticVerifierBlockedFamilies',
+        'earlyDriftCodes',
+        'earlyDriftSections',
+        'earlySemanticLintCodes',
+      ] as const),
+      semanticBlockingIssues:
+        patch?.semanticDiagnostics?.semanticBlockingIssues !== undefined
+          ? mergeIssueGroups(patch.semanticDiagnostics.semanticBlockingIssues)
+          : mergeIssueGroups(base?.semanticDiagnostics?.semanticBlockingIssues),
+      initialSemanticBlockingIssues:
+        patch?.semanticDiagnostics?.initialSemanticBlockingIssues !== undefined
+          ? mergeIssueGroups(patch.semanticDiagnostics.initialSemanticBlockingIssues)
+          : mergeIssueGroups(base?.semanticDiagnostics?.initialSemanticBlockingIssues),
+      postRepairSemanticBlockingIssues:
+        patch?.semanticDiagnostics?.postRepairSemanticBlockingIssues !== undefined
+          ? mergeIssueGroups(patch.semanticDiagnostics.postRepairSemanticBlockingIssues)
+          : mergeIssueGroups(base?.semanticDiagnostics?.postRepairSemanticBlockingIssues),
+      finalSemanticBlockingIssues:
+        patch?.semanticDiagnostics?.finalSemanticBlockingIssues !== undefined
+          ? mergeIssueGroups(patch.semanticDiagnostics.finalSemanticBlockingIssues)
+          : mergeIssueGroups(base?.semanticDiagnostics?.finalSemanticBlockingIssues),
+    },
+    providerDiagnostics: {
+      ...mergeSubDiagnostics(base?.providerDiagnostics, patch?.providerDiagnostics, [
+        'providerFailedModels',
+      ] as const),
+      providerFailureCounts:
+        patch?.providerDiagnostics?.providerFailureCounts !== undefined
+          ? { ...patch.providerDiagnostics.providerFailureCounts }
+          : base?.providerDiagnostics?.providerFailureCounts
+            ? { ...base.providerDiagnostics.providerFailureCounts }
+            : undefined,
+      lastModelAttempt:
+        patch?.providerDiagnostics?.lastModelAttempt !== undefined
+          ? mergeLastModelAttempt(patch.providerDiagnostics.lastModelAttempt)
+          : mergeLastModelAttempt(base?.providerDiagnostics?.lastModelAttempt),
+    },
   };
+}
+
+function createEmptyCompilerDiagnostics(): InitializedCompilerDiagnostics {
+  return {
+    featureDiagnostics: {
+      structuredFeatureCount: 0,
+      totalFeatureCount: 0,
+      jsonSectionUpdates: 0,
+      markdownSectionRegens: 0,
+      fullRegenerations: 0,
+      featurePreservations: 0,
+      featureIntegrityRestores: 0,
+      featureQualityRegressions: 0,
+      autoRecoveredFeatures: 0,
+      avgFeatureCompleteness: 0,
+      aggregatedFeatureCount: 0,
+    },
+    featureFreezeDiagnostics: {
+      featureFreezeActive: false,
+      blockedRegenerationAttempts: 0,
+      freezeSeedSource: 'none',
+      blockedAddedFeatures: [],
+    },
+    generationDiagnostics: {
+      driftEvents: 0,
+      nfrGlobalCategoryAdds: 0,
+      nfrFeatureCriteriaAdds: 0,
+      jsonRetryAttempts: 0,
+      jsonRepairSuccesses: 0,
+      finalValidationPassed: false,
+      finalValidationErrors: 0,
+      finalSanitizerApplied: false,
+      artifactWriteConsistency: true,
+      artifactWriteIssues: 0,
+      languageFixRequired: false,
+      boilerplateHits: 0,
+      metaLeakHits: 0,
+      contentRefined: false,
+      contentReviewIssueCodes: [],
+    },
+    repairDiagnostics: {
+      repairAttempts: 0,
+      repairModelIds: [],
+      reviewerModelIds: [],
+      verifierModelIds: [],
+      semanticRepairApplied: false,
+      semanticRepairAttempted: false,
+      semanticRepairIssueCodes: [],
+      semanticRepairSectionKeys: [],
+      semanticRepairTruncated: false,
+      repairCycleCount: 0,
+      compilerRepairTruncationCount: 0,
+      compilerRepairFinishReasons: [],
+      repairRejected: false,
+      repairDegradationSignals: [],
+      degradedCandidateAvailable: false,
+      semanticRepairChangedSections: [],
+      semanticRepairStructuralChange: false,
+    },
+    semanticDiagnostics: {
+      semanticBlockingCodes: [],
+      semanticBlockingIssues: [],
+      initialSemanticBlockingIssues: [],
+      postRepairSemanticBlockingIssues: [],
+      finalSemanticBlockingIssues: [],
+      semanticVerifierSameFamilyFallback: false,
+      semanticVerifierBlockedFamilies: [],
+      earlyDriftDetected: false,
+      earlyDriftCodes: [],
+      earlyDriftSections: [],
+      earlySemanticLintCodes: [],
+      earlyRepairAttempted: false,
+      earlyRepairApplied: false,
+    },
+    providerDiagnostics: {},
+  };
+}
+
+function applyCompilerDiagnosticsPatch(
+  target: InitializedCompilerDiagnostics,
+  patch: Partial<CompilerDiagnostics> | undefined,
+): InitializedCompilerDiagnostics {
+  const merged = mergeCompilerDiagnostics(target, patch);
+
+  target.featureDiagnostics = target.featureDiagnostics || {};
+  target.featureFreezeDiagnostics = target.featureFreezeDiagnostics || {};
+  target.generationDiagnostics = target.generationDiagnostics || {};
+  target.repairDiagnostics = target.repairDiagnostics || {};
+  target.semanticDiagnostics = target.semanticDiagnostics || {};
+  target.providerDiagnostics = target.providerDiagnostics || {};
+
+  Object.assign(target.featureDiagnostics, merged.featureDiagnostics || {});
+  Object.assign(target.featureFreezeDiagnostics, merged.featureFreezeDiagnostics || {});
+  Object.assign(target.generationDiagnostics, merged.generationDiagnostics || {});
+  Object.assign(target.repairDiagnostics, merged.repairDiagnostics || {});
+  Object.assign(target.semanticDiagnostics, merged.semanticDiagnostics || {});
+  Object.assign(target.providerDiagnostics, merged.providerDiagnostics || {});
+
+  return target;
 }
 
 interface IterativeResponse {
@@ -805,6 +1064,21 @@ export type {
   IterationData,
   IterativeResponse,
   CompilerDiagnostics,
+  InitializedCompilerDiagnostics,
   CompilerDiagnosticIssue,
+  FeatureDiagnostics,
+  FeatureFreezeDiagnostics,
+  GenerationDiagnostics,
+  RepairDiagnostics,
+  SemanticDiagnostics,
+  ProviderDiagnostics,
+  ProviderFailureCounts,
+  LastModelAttemptDiagnostics,
   RunStageTimings,
+};
+
+export {
+  applyCompilerDiagnosticsPatch,
+  createEmptyCompilerDiagnostics,
+  mergeCompilerDiagnostics,
 };

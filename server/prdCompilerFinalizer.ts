@@ -1141,7 +1141,7 @@ function toDeterministicContentIssues(
       continue;
     }
 
-        if (issue.code === 'feature_core_semantic_gap') {
+    if (issue.code === 'feature_core_semantic_gap') {
       const featureSectionKey = sectionKeyFromPath?.startsWith('feature:') ? sectionKeyFromPath : 'systemVision';
       if (featureSectionKey.startsWith('feature:')) {
         // ÄNDERUNG 11.03.2026: Core-Semantik-Luecken muessen eng auf die
@@ -1375,7 +1375,7 @@ function shouldRepair(
   return false;
 }
 
-function toSemanticContentIssues(issues: SemanticBlockingIssue[]): ContentIssue[] {
+export function toSemanticContentIssues(issues: SemanticBlockingIssue[]): ContentIssue[] {
   return issues.map(issue => {
     const sectionKey = String(issue.sectionKey || '').trim() || 'systemVision';
     const isFeatureIssue = sectionKey.startsWith('feature:');

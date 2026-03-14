@@ -21,7 +21,9 @@ import {
   RefreshCw,
   Keyboard,
   Eye,
-  Pencil
+  Pencil,
+  Wrench,
+  Loader2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -134,6 +136,10 @@ function renderDiagnosticIssueGroup(params: {
   passLabel: string;
   issues?: ClientCompilerIssue[];
   testId: string;
+  showFixButtons?: boolean;
+  onFixIssue?: (issue: ClientCompilerIssue, index: number) => void;
+  repairingIndex?: number | null;
+  isAnyRepairActive?: boolean;
 }) {
   if (!params.issues || params.issues.length === 0) return null;
 
@@ -155,6 +161,22 @@ function renderDiagnosticIssueGroup(params: {
             <span className="text-xs text-muted-foreground">{formatSectionLabel(issue.sectionKey)}</span>
             {issue.suggestedAction && (
               <span className="text-xs text-muted-foreground">action: {issue.suggestedAction}</span>
+            )}
+            {params.showFixButtons && params.onFixIssue && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-auto h-6 px-2 text-xs"
+                disabled={params.isAnyRepairActive === true}
+                onClick={() => params.onFixIssue!(issue, index)}
+              >
+                {params.repairingIndex === index ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : (
+                  <Wrench className="h-3 w-3 mr-1" />
+                )}
+                {params.repairingIndex === index ? "..." : "Fix"}
+              </Button>
             )}
           </div>
           <p className="mt-1 text-sm text-foreground">{formatBlockingIssueMessage(issue)}</p>
@@ -255,7 +277,7 @@ export default function Editor() {
   const [, params] = useRoute("/editor/:id");
   const [, navigate] = useLocation();
   const { toast } = useToast();
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const onMutationError = useMutationErrorHandler();
   const { getTemplateById, getTemplateName, getTemplateIcon } = useTemplates();
   const prdId = params?.id;
@@ -291,6 +313,9 @@ export default function Editor() {
   const [mobileSheetTab, setMobileSheetTab] = useState<"comments" | "versions">("comments");
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+  const [repairingIssueIndex, setRepairingIssueIndex] = useState<number | null>(null);
+  const [repairAllInProgress, setRepairAllInProgress] = useState(false);
+  const [repairProgress, setRepairProgress] = useState<{ current: number; total: number } | null>(null);
 
   const { data: prd, isLoading } = useQuery<Prd>({
     queryKey: prdDetailQueryKey,
@@ -411,6 +436,80 @@ export default function Editor() {
         || (failedRuntime ? t.editor.failedRuntimeDiagnosticsOnly : t.editor.failedQualityDiagnosticsOnly),
       ...((failedQuality || failedRuntime) ? {} : { variant: "destructive" as const }),
     });
+  };
+
+  const handleFixSingleIssue = async (issue: ClientCompilerIssue, index: number) => {
+    if (repairingIssueIndex !== null || !content) return;
+    setRepairingIssueIndex(index);
+    try {
+      const response = await apiRequest("POST", "/api/ai/repair-issue", {
+        prdContent: content,
+        issue,
+        language: language === "de" ? "de" : "en",
+        templateCategory: prd?.templateId ? getTemplateById(prd.templateId)?.category : undefined,
+        prdId,
+      });
+      const result = await response.json();
+      if (result.repairedContent) {
+        setContent(result.repairedContent);
+      }
+      if (result.resolved) {
+        // Update diagnostics: remove the fixed issue
+        setCompilerDiagnostics(prev => {
+          if (!prev) return prev;
+          const remaining = result.remainingIssues as ClientCompilerIssue[] | undefined;
+          return {
+            ...prev,
+            finalSemanticBlockingIssues: remaining?.length ? remaining : undefined,
+            semanticBlockingIssues: remaining?.length ? remaining : undefined,
+          };
+        });
+        toast({ title: t.dualAi.issueFixed });
+      } else {
+        toast({ title: t.dualAi.issueNotFixable, variant: "destructive" });
+      }
+      return result.resolved as boolean;
+    } catch (err: any) {
+      toast({
+        title: t.common.error,
+        description: err.message || "Repair failed",
+        variant: "destructive",
+      });
+      return false;
+    } finally {
+      setRepairingIssueIndex(null);
+    }
+  };
+
+  const handleFixAllIssues = async () => {
+    const issues = compilerDiagnostics?.finalSemanticBlockingIssues
+      ?? compilerDiagnostics?.semanticBlockingIssues;
+    if (!issues?.length || repairAllInProgress) return;
+
+    setRepairAllInProgress(true);
+    let fixedCount = 0;
+    let failedCount = 0;
+
+    for (let i = 0; i < issues.length; i++) {
+      setRepairProgress({ current: i + 1, total: issues.length });
+      const resolved = await handleFixSingleIssue(issues[i], i);
+      if (resolved) {
+        fixedCount++;
+      } else {
+        failedCount++;
+      }
+    }
+
+    setRepairAllInProgress(false);
+    setRepairProgress(null);
+
+    if (failedCount === 0) {
+      toast({ title: t.dualAi.allIssuesFixed });
+    } else {
+      toast({
+        title: t.dualAi.someIssuesRemain.replace("{count}", String(failedCount)),
+      });
+    }
   };
 
   const handleDualAiContentGenerated = (newContent: string, response: any) => {
@@ -1217,15 +1316,53 @@ export default function Editor() {
                           issues: compilerDiagnostics.postRepairSemanticBlockingIssues,
                           testId: "diag-post-repair-blocking-issues",
                         })}
-                        {renderDiagnosticIssueGroup({
-                          title: "Unresolved Final Issues",
-                          passLabel: "final",
-                          issues:
+                        {(() => {
+                          const finalIssues =
                             (compilerDiagnostics.finalSemanticBlockingIssues && compilerDiagnostics.finalSemanticBlockingIssues.length > 0)
                               ? compilerDiagnostics.finalSemanticBlockingIssues
-                              : compilerDiagnostics.semanticBlockingIssues,
-                          testId: "diag-final-blocking-issues",
-                        })}
+                              : compilerDiagnostics.semanticBlockingIssues;
+                          if (!finalIssues?.length) return null;
+                          const isAnyRepairActive = repairingIssueIndex !== null || repairAllInProgress;
+                          return (
+                            <>
+                              <div className="flex items-center justify-between gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-xs"
+                                  disabled={isAnyRepairActive}
+                                  onClick={handleFixAllIssues}
+                                >
+                                  {repairAllInProgress ? (
+                                    <>
+                                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                      {repairProgress
+                                        ? t.dualAi.fixingProgress
+                                            .replace("{current}", String(repairProgress.current))
+                                            .replace("{total}", String(repairProgress.total))
+                                        : t.dualAi.fixingIssue}
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Wrench className="h-3 w-3 mr-1" />
+                                      {t.dualAi.fixAllIssues}
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+                              {renderDiagnosticIssueGroup({
+                                title: "Unresolved Final Issues",
+                                passLabel: "final",
+                                issues: finalIssues,
+                                testId: "diag-final-blocking-issues",
+                                showFixButtons: true,
+                                onFixIssue: handleFixSingleIssue,
+                                repairingIndex: repairingIssueIndex,
+                                isAnyRepairActive,
+                              })}
+                            </>
+                          );
+                        })()}
                         {((compilerDiagnostics.primaryCapabilityAnchors?.length ?? 0) > 0
                           || (compilerDiagnostics.featurePriorityWindow?.length ?? 0) > 0
                           || (compilerDiagnostics.coreFeatureIds?.length ?? 0) > 0

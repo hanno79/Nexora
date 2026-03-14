@@ -115,15 +115,15 @@ export const MODEL_TIERS: ModelConfig = {
     generator: 'google/gemini-2.5-flash',
     reviewer: 'anthropic/claude-sonnet-4',
     verifier: 'mistralai/mistral-small-3.1-24b-instruct',
-    cost: '~$0.10-0.30 pro PRD',
     semanticRepair: 'anthropic/claude-sonnet-4',
+    cost: '~$0.10-0.30 pro PRD',
   },
   premium: {
     generator: 'anthropic/claude-sonnet-4',
     reviewer: 'google/gemini-2.5-pro-preview',
     verifier: 'mistralai/mistral-small-3.1-24b-instruct',
-    cost: '~$0.30-1.00 pro PRD',
     semanticRepair: 'google/gemini-2.5-pro-preview',
+    cost: '~$0.30-1.00 pro PRD',
   },
   abacus: {
     generator: 'route-llm',

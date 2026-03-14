@@ -476,6 +476,14 @@ export const en = {
     healthChecking: "Checking model availability...",
     modelNotAvailable: "Generator model may not be available",
     modelHealthError: "The configured generator model could not be reached. The generation may fall back to a different model.",
+    fixIssue: "Fix",
+    fixAllIssues: "Fix All Issues",
+    fixingIssue: "Fixing issue...",
+    fixingProgress: "Fixing issue {current}/{total}...",
+    issueFixed: "Issue fixed successfully",
+    issueNotFixable: "Could not fix this issue automatically",
+    allIssuesFixed: "All issues fixed successfully",
+    someIssuesRemain: "{count} issue(s) could not be fixed",
   },
 
   guidedAi: {

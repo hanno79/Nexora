@@ -1,6 +1,6 @@
 import type { TokenUsage } from '@shared/schema';
 import type { PrdQualityReport } from './prdCompiler';
-import type { CompilerDiagnosticIssue } from './dualAiPrompts';
+import type { CompilerDiagnosticIssue, CompilerDiagnostics } from './dualAiPrompts';
 import type {
   FinalizeWithCompilerGatesResult,
   CompilerModelResult,
@@ -79,9 +79,9 @@ export interface CompilerArtifactSummary {
 
 function normalizeDiagnosticIssues(issues: Array<Record<string, any>> | undefined): CompilerDiagnosticIssue[] {
   return (issues || []).map(issue => ({
-    code: String(issue.code || '').trim() || 'cross_section_inconsistency',
-    sectionKey: String(issue.sectionKey || '').trim() || 'systemVision',
-    message: String(issue.message || '').trim() || 'Blocking semantic inconsistency.',
+    code: String(issue.code || '').trim() || 'unknown',
+    sectionKey: String(issue.sectionKey || '').trim() || 'unspecified',
+    message: String(issue.message || '').trim() || 'Diagnostic issue details unavailable.',
     ...(issue.suggestedAction ? { suggestedAction: issue.suggestedAction } : {}),
     ...(issue.targetFields?.length ? { targetFields: Array.from(new Set(issue.targetFields)) } : {}),
   }));
@@ -161,72 +161,75 @@ export function summarizeFinalizerResult(
   };
 }
 
-export function buildCompilerArtifactDiagnostics(summary: CompilerArtifactSummary): Record<string, unknown> {
+export function buildCompilerArtifactDiagnostics(summary: CompilerArtifactSummary): Partial<CompilerDiagnostics> {
   const semanticVerification = summary.semanticVerification;
 
   return {
-    repairAttempts: summary.repairAttempts.length,
-    repairModelIds: summary.repairModelIds,
-    reviewerModelIds: summary.reviewerModelIds,
-    verifierModelIds: summary.verifierModelIds,
-    contentRefined: !!summary.contentRefined,
-    contentReviewIssueCodes: summary.contentReviewIssueCodes,
-    semanticBlockingIssues: summary.semanticBlockingIssues,
-    initialSemanticBlockingIssues: summary.initialSemanticBlockingIssues,
-    postRepairSemanticBlockingIssues: summary.postRepairSemanticBlockingIssues,
-    finalSemanticBlockingIssues: summary.finalSemanticBlockingIssues,
-    semanticVerifierVerdict: semanticVerification?.verdict,
-    structuralParseReason: summary.structuralParseReason || null,
-    rawFeatureHeadingSamples: summary.rawFeatureHeadingSamples || [],
-    normalizationApplied: typeof summary.normalizationApplied === 'boolean' ? summary.normalizationApplied : null,
-    normalizedFeatureCountRecovered: typeof summary.normalizedFeatureCountRecovered === 'number'
-      ? summary.normalizedFeatureCountRecovered
-      : null,
-    primaryCapabilityAnchors: summary.primaryCapabilityAnchors || [],
-    featurePriorityWindow: summary.featurePriorityWindow || [],
-    coreFeatureIds: summary.coreFeatureIds || [],
-    supportFeatureIds: summary.supportFeatureIds || [],
-    canonicalFeatureIds: summary.canonicalFeatureIds || [],
-    timelineMismatchedFeatureIds: summary.timelineMismatchedFeatureIds || [],
-    timelineRewrittenFromFeatureMap: !!summary.timelineRewrittenFromFeatureMap,
-    timelineRewriteAppliedLines: typeof summary.timelineRewriteAppliedLines === 'number'
-      ? summary.timelineRewriteAppliedLines
-      : null,
-    semanticBlockingCodes: semanticVerification?.blockingIssues?.map(issue => issue.code) || [],
-    semanticRepairApplied: !!summary.semanticRepairApplied,
-    semanticRepairAttempted: !!summary.semanticRepairAttempted,
-    semanticRepairIssueCodes: summary.semanticRepairIssueCodes,
-    semanticRepairSectionKeys: summary.semanticRepairSectionKeys,
-    semanticRepairTruncated: !!summary.semanticRepairTruncated,
-    repairGapReason: summary.repairGapReason || null,
-    repairCycleCount: summary.repairCycleCount || 0,
-    compilerRepairTruncationCount: summary.compilerRepairTruncationCount || 0,
-    compilerRepairFinishReasons: summary.compilerRepairFinishReasons || [],
-    repairRejected: !!summary.repairRejected,
-    repairRejectedReason: summary.repairRejectedReason || null,
-    repairDegradationSignals: summary.repairDegradationSignals || [],
-    degradedCandidateAvailable: !!summary.degradedCandidateAvailable,
-    degradedCandidateSource: summary.degradedCandidateSource || null,
-    displayedCandidateSource: summary.displayedCandidateSource || null,
-    diagnosticsAlignedWithDisplayedCandidate:
-      typeof summary.diagnosticsAlignedWithDisplayedCandidate === 'boolean'
-        ? summary.diagnosticsAlignedWithDisplayedCandidate
-        : null,
-    collapsedFeatureNameIds: summary.collapsedFeatureNameIds || [],
-    placeholderFeatureIds: summary.placeholderFeatureIds || [],
-    acceptanceBoilerplateFeatureIds: summary.acceptanceBoilerplateFeatureIds || [],
-    featureQualityFloorFeatureIds: summary.featureQualityFloorFeatureIds || [],
-    featureQualityFloorFailedFeatureIds: summary.featureQualityFloorFailedFeatureIds || [],
-    featureQualityFloorPassed: typeof summary.featureQualityFloorPassed === 'boolean' ? summary.featureQualityFloorPassed : null,
-    primaryFeatureQualityReason: summary.primaryFeatureQualityReason || null,
-    emptyMainFlowFeatureIds: summary.emptyMainFlowFeatureIds || [],
-    placeholderPurposeFeatureIds: summary.placeholderPurposeFeatureIds || [],
-    placeholderAlternateFlowFeatureIds: summary.placeholderAlternateFlowFeatureIds || [],
-    thinAcceptanceCriteriaFeatureIds: summary.thinAcceptanceCriteriaFeatureIds || [],
-    semanticRepairChangedSections: summary.semanticRepairChangedSections || [],
-    semanticRepairStructuralChange: !!summary.semanticRepairStructuralChange,
-    earlySemanticLintCodes: summary.earlySemanticLintCodes,
-    semanticVerifierSameFamilyFallback: summary.semanticVerifierSameFamilyFallback,
-    semanticVerifierBlockedFamilies: summary.semanticVerifierBlockedFamilies,
+    featureDiagnostics: {
+      structuralParseReason: summary.structuralParseReason || undefined,
+      rawFeatureHeadingSamples: summary.rawFeatureHeadingSamples || [],
+      normalizationApplied: typeof summary.normalizationApplied === 'boolean' ? summary.normalizationApplied : undefined,
+      normalizedFeatureCountRecovered: typeof summary.normalizedFeatureCountRecovered === 'number'
+        ? summary.normalizedFeatureCountRecovered
+        : undefined,
+      primaryCapabilityAnchors: summary.primaryCapabilityAnchors || [],
+      featurePriorityWindow: summary.featurePriorityWindow || [],
+      coreFeatureIds: summary.coreFeatureIds || [],
+      supportFeatureIds: summary.supportFeatureIds || [],
+      canonicalFeatureIds: summary.canonicalFeatureIds || [],
+      timelineMismatchedFeatureIds: summary.timelineMismatchedFeatureIds || [],
+      timelineRewrittenFromFeatureMap: summary.timelineRewrittenFromFeatureMap,
+      timelineRewriteAppliedLines: summary.timelineRewriteAppliedLines,
+      collapsedFeatureNameIds: summary.collapsedFeatureNameIds || [],
+      placeholderFeatureIds: summary.placeholderFeatureIds || [],
+      acceptanceBoilerplateFeatureIds: summary.acceptanceBoilerplateFeatureIds || [],
+      featureQualityFloorFeatureIds: summary.featureQualityFloorFeatureIds || [],
+      featureQualityFloorFailedFeatureIds: summary.featureQualityFloorFailedFeatureIds || [],
+      featureQualityFloorPassed: summary.featureQualityFloorPassed,
+      primaryFeatureQualityReason: summary.primaryFeatureQualityReason || undefined,
+      emptyMainFlowFeatureIds: summary.emptyMainFlowFeatureIds || [],
+      placeholderPurposeFeatureIds: summary.placeholderPurposeFeatureIds || [],
+      placeholderAlternateFlowFeatureIds: summary.placeholderAlternateFlowFeatureIds || [],
+      thinAcceptanceCriteriaFeatureIds: summary.thinAcceptanceCriteriaFeatureIds || [],
+    },
+    generationDiagnostics: {
+      contentRefined: !!summary.contentRefined,
+      contentReviewIssueCodes: summary.contentReviewIssueCodes,
+    },
+    repairDiagnostics: {
+      repairAttempts: summary.repairAttempts.length,
+      repairModelIds: summary.repairModelIds,
+      reviewerModelIds: summary.reviewerModelIds,
+      verifierModelIds: summary.verifierModelIds,
+      semanticRepairApplied: !!summary.semanticRepairApplied,
+      semanticRepairAttempted: !!summary.semanticRepairAttempted,
+      semanticRepairIssueCodes: summary.semanticRepairIssueCodes,
+      semanticRepairSectionKeys: summary.semanticRepairSectionKeys,
+      semanticRepairTruncated: !!summary.semanticRepairTruncated,
+      repairGapReason: summary.repairGapReason,
+      repairCycleCount: summary.repairCycleCount || 0,
+      compilerRepairTruncationCount: summary.compilerRepairTruncationCount || 0,
+      compilerRepairFinishReasons: summary.compilerRepairFinishReasons || [],
+      repairRejected: !!summary.repairRejected,
+      repairRejectedReason: summary.repairRejectedReason || undefined,
+      repairDegradationSignals: summary.repairDegradationSignals || [],
+      degradedCandidateAvailable: !!summary.degradedCandidateAvailable,
+      degradedCandidateSource: summary.degradedCandidateSource || undefined,
+      displayedCandidateSource: summary.displayedCandidateSource || undefined,
+      diagnosticsAlignedWithDisplayedCandidate: summary.diagnosticsAlignedWithDisplayedCandidate,
+      semanticRepairChangedSections: summary.semanticRepairChangedSections || [],
+      semanticRepairStructuralChange: !!summary.semanticRepairStructuralChange,
+    },
+    semanticDiagnostics: {
+      semanticBlockingCodes: semanticVerification?.blockingIssues?.map(issue => issue.code) || [],
+      semanticBlockingIssues: summary.semanticBlockingIssues,
+      initialSemanticBlockingIssues: summary.initialSemanticBlockingIssues,
+      postRepairSemanticBlockingIssues: summary.postRepairSemanticBlockingIssues,
+      finalSemanticBlockingIssues: summary.finalSemanticBlockingIssues,
+      semanticVerifierVerdict: semanticVerification?.verdict,
+      earlySemanticLintCodes: summary.earlySemanticLintCodes,
+      semanticVerifierSameFamilyFallback: summary.semanticVerifierSameFamilyFallback,
+      semanticVerifierBlockedFamilies: summary.semanticVerifierBlockedFamilies,
+    },
   };
 }

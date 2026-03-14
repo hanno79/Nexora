@@ -214,7 +214,16 @@ class OpenRouterClient {
     if (this.preferredModels[modelType]) {
       modelName = this.preferredModels[modelType]!;
     } else {
-      const models = this.getModels();      if (modelType === 'generator') modelName = models.generator;      else if (modelType === 'reviewer') modelName = models.reviewer;      else if (modelType === 'semantic_repair') modelName = models.semanticRepair;      else modelName = models.verifier;
+      const models = this.getModels();
+      if (modelType === 'generator') {
+        modelName = models.generator;
+      } else if (modelType === 'reviewer') {
+        modelName = models.reviewer;
+      } else if (modelType === 'semantic_repair') {
+        modelName = models.semanticRepair;
+      } else {
+        modelName = models.verifier;
+      }
     }
 
     // ÄNDERUNG 04.03.2026: Versuche direkten Provider-Aufruf fuer bestimmte Modelle
@@ -498,7 +507,8 @@ class OpenRouterClient {
     temperature: number,
     executionContext?: ModelCallExecutionContext,
   ): Promise<{ content: string; usage: TokenUsage; model: string; finishReason?: string }> {
-    const apiKey = process.env[`${provider.toUpperCase()}_API_KEY`] || '';
+    const normalizedProvider = String(provider).replace(/[^A-Za-z0-9]+/g, '_').toUpperCase();
+    const apiKey = process.env[`${normalizedProvider}_API_KEY`] || '';
     if (!apiKey) {
       throw new Error(`${provider} API key not configured`);
     }
