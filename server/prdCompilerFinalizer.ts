@@ -1296,7 +1296,7 @@ function toDeterministicContentIssues(
       pushIssue({
         code: issue.code,
         sectionKey,
-        message: issue.message,
+        message: `${issue.message} IMPORTANT: Do NOT reintroduce previously removed out-of-scope items. Remove the flagged item completely and replace it with a genuinely different, project-specific exclusion if needed.`,
         severity: 'error',
         suggestedAction: sectionKey.startsWith('feature:') ? 'enrich' : 'rewrite',
         ...(sectionKey.startsWith('feature:')
