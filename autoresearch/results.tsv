@@ -1,0 +1,3 @@
+Run#	Timestamp	Hypothese	Geänderte_Datei	Score_vorher	Score_nachher	Delta	Kept	Errors	Warnings	BlockingIssues	Features	Tokens	Duration_ms	Median	Stddev	Runs	Consistency	All_Scores	Failed_Runs
+1	2026-03-15T16:16:45.690Z	Frische Baseline mit 15min Timeout und per-Benchmark-Tracking	—	—	91	—	✓	2	11	0	17	161008	1001106	—	—	1	—	91	1
+2	2026-03-15T16:26:50.633Z	Validierung der Baseline-Streuung	—	91	46.5	-44.5	✓	1	6	0	17	148311	1133471	46.5	6.3	4	100%	46,120,47,60	3
