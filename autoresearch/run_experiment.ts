@@ -5,7 +5,7 @@
  * sammelt Metriken und berechnet den Composite-Score.
  *
  * Usage:
- *   npx tsx autoresearch/run_experiment.ts [--hypothesis "description"] [--validation-runs N] [--dry-run]
+ *   npx tsx autoresearch/run_experiment.ts [--hypothesis "description"] [--validation-runs N] [--sequential] [--dry-run]
  *
  * Gestufter Ansatz:
  *   1. Schnell-Check (1 Run) — bei deutlicher Verschlechterung sofort verwerfen
@@ -224,23 +224,61 @@ async function runSingleBenchmark(input: BenchmarkInput): Promise<ExperimentResu
 
 // ── Core: Run all benchmarks (single pass) ──────────────────────────────────
 
-async function runBenchmarkPass(inputs: BenchmarkInput[], passLabel: string): Promise<{ results: ExperimentResult[]; aggregateScore: number | null; failedCount: number }> {
-  const results: ExperimentResult[] = [];
+async function runBenchmarkPass(inputs: BenchmarkInput[], passLabel: string, parallel: boolean): Promise<{ results: ExperimentResult[]; aggregateScore: number | null; failedCount: number }> {
   let failedCount = 0;
-  for (const input of inputs) {
-    console.log(`  ▸ [${passLabel}] Running "${input.name}"...`);
-    const result = await runSingleBenchmark(input);
-    if (result.score) {
-      console.log(`    ${formatScoreOneLiner(result.score)} [${result.durationMs}ms]`);
-    } else {
-      console.log(`    ✗ FAILED [${result.durationMs}ms]`);
-      failedCount++;
+  let results: ExperimentResult[];
+
+  if (parallel && inputs.length > 1) {
+    console.log(`  ▸ [${passLabel}] Running ${inputs.length} benchmarks parallel...`);
+    const settled = await Promise.allSettled(
+      inputs.map(input => runSingleBenchmark(input)),
+    );
+
+    // Ergebnisse sequentiell ausgeben nachdem alle fertig sind
+    results = settled.map((s, i) => {
+      if (s.status === 'fulfilled') return s.value;
+      return {
+        inputName: inputs[i].name,
+        score: null,
+        qualityStatus: 'failed_runtime',
+        modelsUsed: [],
+        totalTokens: 0,
+        durationMs: 0,
+        error: (s.reason as Error)?.message?.slice(0, 200) ?? 'Unknown error',
+      } satisfies ExperimentResult;
+    });
+  } else {
+    results = [];
+    for (const input of inputs) {
+      console.log(`  ▸ [${passLabel}] Running "${input.name}"...`);
+      const result = await runSingleBenchmark(input);
+      results.push(result);
     }
-    if (result.error) console.log(`    ⚠ Error: ${result.error}`);
-    results.push(result);
   }
+
+  // Ergebnisse ausgeben (bei parallel nach Abschluss, bei sequentiell bereits inline)
+  if (parallel && inputs.length > 1) {
+    for (const result of results) {
+      if (result.score) {
+        console.log(`    ${result.inputName}: ${formatScoreOneLiner(result.score)} [${result.durationMs}ms]`);
+      } else {
+        console.log(`    ${result.inputName}: ✗ FAILED [${result.durationMs}ms]`);
+      }
+      if (result.error) console.log(`      ⚠ ${result.error}`);
+    }
+  } else {
+    for (const result of results) {
+      if (result.score) {
+        console.log(`    ${formatScoreOneLiner(result.score)} [${result.durationMs}ms]`);
+      } else {
+        console.log(`    ✗ FAILED [${result.durationMs}ms]`);
+      }
+      if (result.error) console.log(`    ⚠ ${result.error}`);
+    }
+  }
+
+  failedCount = results.filter(r => r.score === null).length;
   const successfulScores = results.filter(r => r.score !== null);
-  // Wenn alle fehlschlagen, ist der Pass ungültig
   const aggregateScore = successfulScores.length > 0
     ? successfulScores.reduce((sum, r) => sum + r.score!.total, 0)
     : null;
@@ -249,7 +287,7 @@ async function runBenchmarkPass(inputs: BenchmarkInput[], passLabel: string): Pr
 
 // ── Core: Gestufter Multi-Run Experiment-Loop ───────────────────────────────
 
-async function runAllBenchmarks(hypothesis: string, validationRuns: number): Promise<ExperimentSummary> {
+async function runAllBenchmarks(hypothesis: string, validationRuns: number, parallel: boolean): Promise<ExperimentSummary> {
   const inputs = loadBenchmarkInputs();
   if (inputs.length === 0) {
     throw new Error(`No benchmark inputs found in ${TEST_INPUTS_DIR}`);
@@ -263,11 +301,12 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number): Pro
   console.log(`Hypothesis: ${hypothesis}`);
   console.log(`Benchmarks: ${inputs.map(i => i.name).join(', ')}`);
   console.log(`Validation runs: ${validationRuns}`);
+  console.log(`Parallel: ${parallel}`);
   console.log(`Previous best: ${previousBest ?? 'N/A (baseline run)'}\n`);
 
   // ── Stufe 1: Schnell-Check (1 Run) ──
   console.log(`── Stufe 1: Schnell-Check ──`);
-  const firstPass = await runBenchmarkPass(inputs, 'Schnell-Check');
+  const firstPass = await runBenchmarkPass(inputs, 'Schnell-Check', parallel);
   let totalFailedRuns = firstPass.failedCount;
 
   // Schnell-Check komplett fehlgeschlagen: Experiment ungültig
@@ -340,7 +379,7 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number): Pro
   const allResults: ExperimentResult[][] = [firstPass.results];
 
   for (let i = 0; i < validationRuns; i++) {
-    const pass = await runBenchmarkPass(inputs, `Validierung ${i + 1}/${validationRuns}`);
+    const pass = await runBenchmarkPass(inputs, `Validierung ${i + 1}/${validationRuns}`, parallel);
     totalFailedRuns += pass.failedCount;
     if (pass.aggregateScore !== null) {
       allRunScores.push(pass.aggregateScore);
@@ -580,6 +619,8 @@ async function main() {
     process.exit(2);
   }
 
+  const sequential = args.includes('--sequential');
+  const parallel = !sequential;
   const dryRun = args.includes('--dry-run');
 
   if (dryRun) {
@@ -588,10 +629,11 @@ async function main() {
     console.log(`Found ${inputs.length} benchmarks: ${inputs.map(i => i.name).join(', ')}`);
     console.log(`Previous best score: ${getPreviousBestScore() ?? 'N/A'}`);
     console.log(`Validation runs: ${validationRuns}`);
+    console.log(`Parallel: ${parallel}`);
     return;
   }
 
-  const summary = await runAllBenchmarks(hypothesis, validationRuns);
+  const summary = await runAllBenchmarks(hypothesis, validationRuns, parallel);
 
   // Write dashboard
   appendToResultsTsv(summary, changedFile);
