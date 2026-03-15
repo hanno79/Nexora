@@ -20,6 +20,7 @@ import {
 import { createClientWithUserPreferences } from './openrouter';
 import { getLanguageInstruction } from './dualAiPrompts';
 import { CONTENT_REVIEW_REFINE, SEMANTIC_VERIFICATION } from './tokenBudgets';
+import { logger } from './logger';
 import type { TokenUsage } from '@shared/schema';
 import type { SupportedLanguage } from './prdTemplateIntent';
 
@@ -35,6 +36,8 @@ export interface IssueRepairOptions {
   originalRequest?: string;
   userId?: string;
   maxAttempts?: number;
+  /** All currently known blocking issues — used for cross-section awareness and regression detection. */
+  allIssues?: SemanticBlockingIssue[];
 }
 
 export interface IssueRepairResult {
@@ -44,6 +47,8 @@ export interface IssueRepairResult {
   attempts: number;
   model: string;
   tokenUsage: TokenUsage;
+  /** True when a repair was rolled back because it introduced more issues than before. */
+  rolledBack?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,14 +63,33 @@ export async function repairSingleIssue(options: IssueRepairOptions): Promise<Is
     originalRequest,
     userId,
     maxAttempts = 3,
+    allIssues,
   } = options;
 
-  let currentContent = options.prdContent;
+  const originalContent = options.prdContent;
+  let currentContent = originalContent;
   let totalUsage: TokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   let lastModel = '';
 
   const { client, contentLanguage } = await createClientWithUserPreferences(userId);
   const langInstruction = getLanguageInstruction(language || contentLanguage);
+
+  // Baseline issue count for regression detection
+  const baselineIssueCount = allIssues?.length ?? 0;
+
+  // Collect related issues for cross-section awareness (same code or overlapping sections)
+  const CROSS_SECTION_CODES = new Set([
+    'cross_section_inconsistency',
+    'schema_field_mismatch',
+    'business_rule_constraint_conflict',
+  ]);
+  const relatedIssues = (allIssues ?? []).filter(other => {
+    if (other.code === issue.code && other.sectionKey === issue.sectionKey) return false; // skip self
+    return (
+      (CROSS_SECTION_CODES.has(issue.code) && other.code === issue.code) ||
+      (other.sectionKey === issue.sectionKey && other.code !== issue.code)
+    );
+  });
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     // 1. Parse current content to structure
@@ -75,8 +99,9 @@ export async function repairSingleIssue(options: IssueRepairOptions): Promise<Is
       templateCategory,
     });
 
-    // 2. Convert issue to ContentIssue format
-    const contentIssues = toSemanticContentIssues([issue]);
+    // 2. Convert primary issue + related issues to ContentIssue format
+    const issuesToRepair = [issue, ...relatedIssues];
+    const contentIssues = toSemanticContentIssues(issuesToRepair);
 
     // 3. Apply semantic patch refinement (targeted repair)
     const repairReviewer = async (prompt: string): Promise<ReviewerRefineResult> => {
@@ -110,8 +135,7 @@ export async function repairSingleIssue(options: IssueRepairOptions): Promise<Is
 
     if (!patchResult.refined) {
       // Repair did not change anything — no point retrying with the same content
-      const remainingIssues = [issue];
-      return buildResult(currentContent, false, remainingIssues, attempt, lastModel, totalUsage);
+      return buildResult(currentContent, false, allIssues ?? [issue], attempt, lastModel, totalUsage);
     }
 
     currentContent = patchResult.content;
@@ -129,12 +153,25 @@ export async function repairSingleIssue(options: IssueRepairOptions): Promise<Is
 
     addUsage(totalUsage, verifyResult.usage);
     lastModel = verifyResult.model;
+
+    // 5. Regression check: if repair introduced MORE issues than before, rollback
+    if (baselineIssueCount > 0 && verifyResult.blockingIssues.length > baselineIssueCount) {
+      logger.warn(
+        `Repair regression detected: ${baselineIssueCount} issues before → ${verifyResult.blockingIssues.length} after. Rolling back.`,
+        { issueCode: issue.code, sectionKey: issue.sectionKey, attempt },
+      );
+      return {
+        ...buildResult(originalContent, false, allIssues ?? [issue], attempt, lastModel, totalUsage),
+        rolledBack: true,
+      };
+    }
+
     const matchingIssue = verifyResult.blockingIssues.find(
       bi => bi.code === issue.code && bi.sectionKey === issue.sectionKey,
     );
 
     if (!matchingIssue) {
-      // Issue resolved
+      // Issue resolved — return repaired content
       return buildResult(
         currentContent,
         true,
@@ -165,6 +202,14 @@ export async function repairSingleIssue(options: IssueRepairOptions): Promise<Is
   });
 
   addUsage(totalUsage, finalVerify.usage);
+
+  // Final regression check
+  if (baselineIssueCount > 0 && finalVerify.blockingIssues.length > baselineIssueCount) {
+    return {
+      ...buildResult(originalContent, false, allIssues ?? [issue], maxAttempts, lastModel, totalUsage),
+      rolledBack: true,
+    };
+  }
 
   return buildResult(
     currentContent,

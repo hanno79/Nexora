@@ -1059,7 +1059,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(503).json({ message: getOpenRouterConfigError() });
     }
 
-    const { prdContent, issue, language, templateCategory, originalRequest, prdId } = req.body;
+    const { prdContent, issue, language, templateCategory, originalRequest, prdId, allIssues } = req.body;
     const userId = req.user.claims.sub;
     const aiPreferenceUserId = resolveAiPreferenceUserId(req, userId);
 
@@ -1077,6 +1077,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const { logAiUsage } = await import('./aiUsageLogger');
 
+    // Sanitize allIssues from client (optional array of blocking issues for cross-section awareness)
+    const sanitizedAllIssues = Array.isArray(allIssues)
+      ? allIssues
+          .filter((i: any) => typeof i?.code === 'string' && typeof i?.sectionKey === 'string' && typeof i?.message === 'string')
+          .map((i: any) => ({ code: i.code, sectionKey: i.sectionKey, message: i.message, suggestedAction: i.suggestedAction, targetFields: i.targetFields }))
+      : undefined;
+
     const result = await repairSingleIssue({
       prdContent,
       issue: {
@@ -1092,6 +1099,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       originalRequest,
       userId: aiPreferenceUserId,
       maxAttempts: 3,
+      allIssues: sanitizedAllIssues,
     });
 
     // Log usage

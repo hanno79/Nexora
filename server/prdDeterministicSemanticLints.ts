@@ -2382,15 +2382,35 @@ function detectFeatureFieldTruncation(structure: PRDStructure): DeterministicSem
       const value = String((feature as Record<string, unknown>)[key] || '').trim();
       if (!value || value.length < 10) continue;
 
-      // Check: text starts with lowercase without list marker (likely truncated beginning)
       const firstChar = value.charAt(0);
-      const startsLower = /^[a-zäöü]/.test(firstChar);
       const hasListPrefix = /^[-*•\d]/.test(firstChar);
+      if (hasListPrefix) continue;
 
-      if (startsLower && !hasListPrefix) {
+      let truncationReason = '';
+
+      // Heuristic 1: starts with lowercase (original check)
+      if (/^[a-zäöü]/.test(firstChar)) {
+        truncationReason = `starts with lowercase "${value.slice(0, 40)}..."`;
+      }
+
+      // Heuristic 2: starts with closing punctuation (clear truncation signal)
+      if (!truncationReason && /^[),;:]/.test(firstChar)) {
+        truncationReason = `starts with "${firstChar}" — fragment from a prior sentence`;
+      }
+
+      // Heuristic 3: very short text that looks like a sentence fragment (< 60 chars, no verb-like structure)
+      if (!truncationReason && value.length < 60) {
+        const words = value.split(/\s+/);
+        // Short fragments without a subject-verb structure are suspicious
+        if (words.length <= 5 && !/\b(?:wird|werden|ist|sind|zeigt|aktualisiert|ermoeglicht|ermöglicht|bietet|implementiert|verwaltet|speichert|stellt|is|are|shows|updates|displays|saves|creates|provides|implements|manages|enables|allows|display|provide|implement|manage|enable|allow)\b/i.test(value)) {
+          truncationReason = `very short field content "${value.slice(0, 50)}" — possibly truncated`;
+        }
+      }
+
+      if (truncationReason) {
         issues.push({
           code: 'feature_field_truncated',
-          message: `${feature.id} ${label} appears truncated — starts with lowercase "${value.slice(0, 40)}...". Likely missing context from a prior sentence.`,
+          message: `${feature.id} ${label} appears truncated — ${truncationReason}. Likely missing context.`,
           severity: 'warning',
           evidencePath: `feature:${feature.id}`,
           evidenceSnippet: value.slice(0, 120),

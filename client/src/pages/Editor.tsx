@@ -455,19 +455,31 @@ export default function Editor() {
     if (repairingIssueKey !== null || !content) return;
     setRepairingIssueKey(getCompilerIssueIdentity(issue));
     try {
+      // Send ALL current issues for cross-section awareness and regression detection
+      const currentAllIssues = [
+        ...(compilerDiagnostics?.finalSemanticBlockingIssues
+          ?? compilerDiagnostics?.semanticBlockingIssues
+          ?? []),
+      ];
       const response = await apiRequest("POST", "/api/ai/repair-issue", {
         prdContent: content,
         issue,
         language: language === "de" ? "de" : "en",
         templateCategory: prd?.templateId ? getTemplateById(prd.templateId)?.category : undefined,
         prdId,
+        allIssues: currentAllIssues,
       });
       const result = await response.json();
+      if (result.rolledBack) {
+        // Regression detected — repair was rolled back, don't update content
+        toast({ title: language === "de" ? "Fix wuerde neue Fehler erzeugen — uebersprungen" : "Fix would introduce new issues — skipped" });
+        return "skipped" as const;
+      }
       if (result.repairedContent) {
         setContent(result.repairedContent);
       }
       if (result.resolved) {
-        // Update diagnostics: remove the fixed issue
+        // Update diagnostics with remaining issues from verifier
         setCompilerDiagnostics(prev => {
           if (!prev) return prev;
           const remaining = result.remainingIssues as ClientCompilerIssue[] | undefined;
@@ -478,53 +490,78 @@ export default function Editor() {
           };
         });
         toast({ title: t.dualAi.issueFixed });
+        return "resolved" as const;
       } else {
         toast({ title: t.dualAi.issueNotFixable, variant: "destructive" });
+        return "failed" as const;
       }
-      return result.resolved as boolean;
     } catch (err: any) {
       toast({
         title: t.common.error,
         description: err.message || "Repair failed",
         variant: "destructive",
       });
-      return false;
+      return "failed" as const;
     } finally {
       setRepairingIssueKey(null);
     }
   };
 
   const handleFixAllIssues = async () => {
-    const issuesSnapshot = [
+    const initialIssues = [
       ...(compilerDiagnostics?.finalSemanticBlockingIssues
         ?? compilerDiagnostics?.semanticBlockingIssues
         ?? []),
     ];
-    if (!issuesSnapshot.length || repairAllInProgress) return;
+    if (!initialIssues.length || repairAllInProgress) return;
 
     setRepairAllInProgress(true);
     let fixedCount = 0;
+    let skippedCount = 0;
     let failedCount = 0;
+    const skippedKeys = new Set<string>();
+    const MAX_ITERATIONS = Math.min(initialIssues.length * 2, 15);
 
-    for (let i = 0; i < issuesSnapshot.length; i++) {
-      setRepairProgress({ current: i + 1, total: issuesSnapshot.length });
-      const resolved = await handleFixSingleIssue(issuesSnapshot[i]);
-      if (resolved) {
+    for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+      // Re-read current issues fresh after each fix (not stale snapshot)
+      const currentIssues = [
+        ...(compilerDiagnostics?.finalSemanticBlockingIssues
+          ?? compilerDiagnostics?.semanticBlockingIssues
+          ?? []),
+      ];
+      // Filter out already-skipped issues to avoid infinite loops
+      const actionableIssues = currentIssues.filter(
+        i => !skippedKeys.has(getCompilerIssueIdentity(i))
+      );
+      if (actionableIssues.length === 0) break;
+
+      const nextIssue = actionableIssues[0];
+      setRepairProgress({ current: fixedCount + skippedCount + failedCount + 1, total: initialIssues.length });
+
+      const outcome = await handleFixSingleIssue(nextIssue);
+      if (outcome === "resolved") {
         fixedCount++;
+      } else if (outcome === "skipped") {
+        skippedCount++;
+        skippedKeys.add(getCompilerIssueIdentity(nextIssue));
       } else {
         failedCount++;
+        skippedKeys.add(getCompilerIssueIdentity(nextIssue));
       }
     }
 
     setRepairAllInProgress(false);
     setRepairProgress(null);
 
-    if (failedCount === 0) {
+    const parts: string[] = [];
+    if (fixedCount > 0) parts.push(`${fixedCount} ${language === "de" ? "behoben" : "fixed"}`);
+    if (skippedCount > 0) parts.push(`${skippedCount} ${language === "de" ? "uebersprungen" : "skipped"}`);
+    if (failedCount > 0) parts.push(`${failedCount} ${language === "de" ? "fehlgeschlagen" : "failed"}`);
+
+    if (failedCount === 0 && skippedCount === 0) {
       toast({ title: t.dualAi.allIssuesFixed });
     } else {
-      toast({
-        title: t.dualAi.someIssuesRemain.replace("{count}", String(failedCount)),
-      });
+      toast({ title: parts.join(", ") });
     }
   };
 

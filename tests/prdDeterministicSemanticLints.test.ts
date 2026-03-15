@@ -1537,6 +1537,43 @@ describe('feature_field_truncated', () => {
     const truncated = issues.filter(i => i.code === 'feature_field_truncated');
     expect(truncated).toHaveLength(0);
   });
+
+  it('detects text starting with closing punctuation', () => {
+    const structure = makeMinimalStructure({
+      features: [
+        {
+          id: 'F-01', name: 'Shop', rawContent: '',
+          purpose: 'Purchase upgrades',
+          mainFlow: ['User opens shop.'],
+          uiImpact: '), Spieler klickt auf Shop (Shop Anzeige)',
+          acceptanceCriteria: ['Shop opens correctly.'],
+        },
+      ],
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure);
+    const truncated = issues.filter(i => i.code === 'feature_field_truncated');
+    expect(truncated.length).toBeGreaterThanOrEqual(1);
+    expect(truncated[0].message).toContain('F-01');
+  });
+
+  it('detects very short fragment without verb structure', () => {
+    const structure = makeMinimalStructure({
+      features: [
+        {
+          id: 'F-01', name: 'Progress', rawContent: '',
+          purpose: 'Show progress',
+          mainFlow: ['User views progress.'],
+          uiImpact: 'Bereich angezeigt.',
+          acceptanceCriteria: ['Progress is shown.'],
+        },
+      ],
+    });
+
+    const issues = collectDeterministicSemanticIssues(structure);
+    const truncated = issues.filter(i => i.code === 'feature_field_truncated');
+    expect(truncated.length).toBeGreaterThanOrEqual(1);
+  });
 });
 
 describe('acceptance_criteria_non_measurable', () => {
