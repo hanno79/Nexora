@@ -273,6 +273,21 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number): Pro
     };
   }
 
+  // Keine Validierungsruns: Einzelrun-Entscheidung (Backward-kompatibel)
+  if (validationRuns === 0) {
+    const kept = firstPass.aggregateScore < previousBest;
+    console.log(`  → Einzelrun-Modus: ${kept ? '✓ KEPT' : '✗ DISCARDED'}\n`);
+    return {
+      runNumber, timestamp, hypothesis,
+      aggregateScore: firstPass.aggregateScore,
+      results: firstPass.results,
+      kept,
+      previousBest,
+      statistics: null,
+      allRunScores,
+    };
+  }
+
   // Deutlich schlechter (>20% über Baseline): sofort verwerfen
   const rejectThreshold = previousBest * 1.2;
   if (firstPass.aggregateScore > rejectThreshold) {
@@ -318,8 +333,8 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number): Pro
     console.log(`  → ✗ DISCARDED: Konsistenz ${(statistics.consistencyRate * 100).toFixed(0)}% < ${MIN_CONSISTENCY * 100}% Minimum\n`);
   }
 
-  // Verwende die Ergebnisse des Median-Runs für die Detail-Anzeige
-  const medianRunIndex = findMedianRunIndex(allRunScores);
+  // Verwende die Ergebnisse des Median-nächsten Runs für die Detail-Anzeige
+  const medianRunIndex = findMedianRunIndex(allRunScores, statistics.median);
 
   return {
     runNumber, timestamp, hypothesis,
@@ -332,9 +347,17 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number): Pro
   };
 }
 
-function findMedianRunIndex(scores: number[]): number {
-  const sorted = [...scores].map((s, i) => ({ score: s, index: i })).sort((a, b) => a.score - b.score);
-  return sorted[Math.floor(sorted.length / 2)].index;
+function findMedianRunIndex(scores: number[], median: number): number {
+  let bestIndex = 0;
+  let bestDist = Math.abs(scores[0] - median);
+  for (let i = 1; i < scores.length; i++) {
+    const dist = Math.abs(scores[i] - median);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
 }
 
 // ── Dashboard: TSV + Progress ───────────────────────────────────────────────

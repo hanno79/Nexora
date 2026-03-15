@@ -133,7 +133,7 @@ export function computeRunStatistics(
   const variance = scores.reduce((s, v) => s + (v - mean) ** 2, 0) / n;
   const stddev = Math.sqrt(variance);
   const consistencyRate = baseline !== null
-    ? scores.filter(s => s < baseline).length / n
+    ? scores.filter(s => s <= baseline).length / n
     : 1; // Baseline-Run gilt immer als konsistent
 
   return { median, mean, min, max, stddev, runs: n, consistencyRate };
