@@ -1080,8 +1080,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Sanitize allIssues from client (optional array of blocking issues for cross-section awareness)
     const sanitizedAllIssues = Array.isArray(allIssues)
       ? allIssues
+          .slice(0, 50) // cap to prevent token inflation from malicious clients
           .filter((i: any) => typeof i?.code === 'string' && typeof i?.sectionKey === 'string' && typeof i?.message === 'string')
-          .map((i: any) => ({ code: i.code, sectionKey: i.sectionKey, message: i.message, suggestedAction: i.suggestedAction, targetFields: i.targetFields }))
+          .map((i: any) => ({
+            code: i.code,
+            sectionKey: i.sectionKey,
+            message: i.message,
+            suggestedAction: i.suggestedAction,
+            targetFields: Array.isArray(i.targetFields) ? i.targetFields : undefined,
+          }))
       : undefined;
 
     const result = await repairSingleIssue({

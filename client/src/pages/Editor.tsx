@@ -451,12 +451,18 @@ export default function Editor() {
     });
   };
 
-  const handleFixSingleIssue = async (issue: ClientCompilerIssue) => {
-    if (repairingIssueKey !== null || !content) return;
+  type RepairOutcome = "resolved" | "skipped" | "failed";
+  interface RepairResult { outcome: RepairOutcome; remainingIssues?: ClientCompilerIssue[] }
+
+  const handleFixSingleIssue = async (
+    issue: ClientCompilerIssue,
+    allIssuesOverride?: ClientCompilerIssue[],
+  ): Promise<RepairResult> => {
+    if (repairingIssueKey !== null || !content) return { outcome: "skipped" };
     setRepairingIssueKey(getCompilerIssueIdentity(issue));
     try {
-      // Send ALL current issues for cross-section awareness and regression detection
-      const currentAllIssues = [
+      // Use override (from Fix All loop) or read current diagnostics
+      const currentAllIssues = allIssuesOverride ?? [
         ...(compilerDiagnostics?.finalSemanticBlockingIssues
           ?? compilerDiagnostics?.semanticBlockingIssues
           ?? []),
@@ -470,30 +476,28 @@ export default function Editor() {
         allIssues: currentAllIssues,
       });
       const result = await response.json();
+      const remaining = (result.remainingIssues as ClientCompilerIssue[] | undefined) ?? [];
       if (result.rolledBack) {
-        // Regression detected — repair was rolled back, don't update content
         toast({ title: language === "de" ? "Fix wuerde neue Fehler erzeugen — uebersprungen" : "Fix would introduce new issues — skipped" });
-        return "skipped" as const;
+        return { outcome: "skipped", remainingIssues: currentAllIssues };
       }
       if (result.repairedContent) {
         setContent(result.repairedContent);
       }
       if (result.resolved) {
-        // Update diagnostics with remaining issues from verifier
         setCompilerDiagnostics(prev => {
           if (!prev) return prev;
-          const remaining = result.remainingIssues as ClientCompilerIssue[] | undefined;
           return {
             ...prev,
-            finalSemanticBlockingIssues: remaining?.length ? remaining : undefined,
-            semanticBlockingIssues: remaining?.length ? remaining : undefined,
+            finalSemanticBlockingIssues: remaining.length ? remaining : undefined,
+            semanticBlockingIssues: remaining.length ? remaining : undefined,
           };
         });
         toast({ title: t.dualAi.issueFixed });
-        return "resolved" as const;
+        return { outcome: "resolved", remainingIssues: remaining };
       } else {
         toast({ title: t.dualAi.issueNotFixable, variant: "destructive" });
-        return "failed" as const;
+        return { outcome: "failed", remainingIssues: remaining.length ? remaining : currentAllIssues };
       }
     } catch (err: any) {
       toast({
@@ -501,52 +505,51 @@ export default function Editor() {
         description: err.message || "Repair failed",
         variant: "destructive",
       });
-      return "failed" as const;
+      return { outcome: "failed" };
     } finally {
       setRepairingIssueKey(null);
     }
   };
 
   const handleFixAllIssues = async () => {
-    const initialIssues = [
+    // Snapshot initial issues — used as starting point for the loop
+    let liveIssues: ClientCompilerIssue[] = [
       ...(compilerDiagnostics?.finalSemanticBlockingIssues
         ?? compilerDiagnostics?.semanticBlockingIssues
         ?? []),
     ];
-    if (!initialIssues.length || repairAllInProgress) return;
+    if (!liveIssues.length || repairAllInProgress) return;
 
     setRepairAllInProgress(true);
     let fixedCount = 0;
     let skippedCount = 0;
     let failedCount = 0;
     const skippedKeys = new Set<string>();
-    const MAX_ITERATIONS = Math.min(initialIssues.length * 2, 15);
+    const MAX_ITERATIONS = Math.min(liveIssues.length * 2, 15);
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
-      // Re-read current issues fresh after each fix (not stale snapshot)
-      const currentIssues = [
-        ...(compilerDiagnostics?.finalSemanticBlockingIssues
-          ?? compilerDiagnostics?.semanticBlockingIssues
-          ?? []),
-      ];
-      // Filter out already-skipped issues to avoid infinite loops
-      const actionableIssues = currentIssues.filter(
+      // Use server-returned remainingIssues (not stale React state)
+      const actionableIssues = liveIssues.filter(
         i => !skippedKeys.has(getCompilerIssueIdentity(i))
       );
       if (actionableIssues.length === 0) break;
 
       const nextIssue = actionableIssues[0];
-      setRepairProgress({ current: fixedCount + skippedCount + failedCount + 1, total: initialIssues.length });
+      setRepairProgress({ current: fixedCount + skippedCount + failedCount + 1, total: liveIssues.length });
 
-      const outcome = await handleFixSingleIssue(nextIssue);
-      if (outcome === "resolved") {
+      const result = await handleFixSingleIssue(nextIssue, liveIssues);
+      if (result.outcome === "resolved") {
         fixedCount++;
-      } else if (outcome === "skipped") {
+      } else if (result.outcome === "skipped") {
         skippedCount++;
         skippedKeys.add(getCompilerIssueIdentity(nextIssue));
       } else {
         failedCount++;
         skippedKeys.add(getCompilerIssueIdentity(nextIssue));
+      }
+      // Update live issues from server response to avoid stale closure
+      if (result.remainingIssues) {
+        liveIssues = result.remainingIssues;
       }
     }
 
