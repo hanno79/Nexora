@@ -148,6 +148,7 @@ async function runSingleBenchmark(input: BenchmarkInput): Promise<ExperimentResu
       userPrompt: input.prompt,
       mode: 'generate',
       contentLanguage: 'de',
+      temperature: 0,
     });
 
     const quality: PrdQualityReport | undefined = result.compilerArtifact?.quality;

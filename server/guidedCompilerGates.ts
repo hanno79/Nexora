@@ -58,9 +58,10 @@ export async function generateWithCompilerGates(params: {
   contentLanguage?: string | null;
   templateCategory?: string;
   abortSignal?: AbortSignal;
+  temperature?: number;
 }): Promise<GuidedGenerationResult> {
   const startedAt = Date.now();
-  const { client, systemPrompt, userPrompt, mode, existingContent, contentLanguage, templateCategory, abortSignal } = params;
+  const { client, systemPrompt, userPrompt, mode, existingContent, contentLanguage, templateCategory, abortSignal, temperature } = params;
   const language = detectContentLanguage(contentLanguage, `${userPrompt}\n${existingContent || ''}`);
   const langInstruction = getLanguageInstruction(language);
   const modelsUsed = new Set<string>();
@@ -82,7 +83,7 @@ export async function generateWithCompilerGates(params: {
     userPrompt,
     PRD_FINAL_GENERATION,
     undefined,
-    undefined,
+    temperature,
     { abortSignal },
   );
   timings.generationDurationMs = Date.now() - generationStartedAt;
@@ -133,7 +134,7 @@ export async function generateWithCompilerGates(params: {
         repairPrompt,
         REPAIR_PASS,
         undefined,
-        undefined,
+        temperature,
         { abortSignal },
       );
       return {
@@ -150,7 +151,7 @@ export async function generateWithCompilerGates(params: {
         refinePrompt,
         CONTENT_REVIEW_REFINE,
         undefined,
-        undefined,
+        temperature,
         { abortSignal },
       );
       return {
@@ -167,7 +168,7 @@ export async function generateWithCompilerGates(params: {
         refinePrompt,
         CONTENT_REVIEW_REFINE,
         { type: 'json_object' },
-        0.1,
+        temperature ?? 0.1,
         { abortSignal },
       );
       return {
@@ -186,7 +187,7 @@ export async function generateWithCompilerGates(params: {
         verifyPrompt,
         SEMANTIC_VERIFICATION,
         { type: 'json_object' },
-        0.1,
+        temperature ?? 0.1,
         {
           abortSignal,
           avoidModelFamilies: input.avoidModelFamilies,
@@ -244,7 +245,7 @@ export async function generateWithCompilerGates(params: {
         userPrompt,
         PRD_FINAL_GENERATION,
         undefined,
-        undefined,
+        temperature,
         { abortSignal },
       );
       timings.fallbackGenerationDurationMs = (timings.fallbackGenerationDurationMs || 0) + (Date.now() - fallbackGenerationStartedAt);
