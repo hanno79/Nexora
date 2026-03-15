@@ -1,2 +1,4 @@
 Run#	Timestamp	Hypothese	Geänderte_Datei	Score_vorher	Score_nachher	Delta	Kept	Errors	Warnings	BlockingIssues	Features	Tokens	Duration_ms	Median	Stddev	Runs	Consistency	All_Scores
 1	2026-03-15T13:46:05.880Z	Baseline (sauber, alle 3 Benchmarks)	—	—	107	—	✓	3	17	0	26	297096	963855	—	—	1	—	107
+2	2026-03-15T14:10:00.011Z	Repair-Mapping fuer generic_section_boilerplate_outOfScope hinzugefuegt	prdCompilerFinalizer.ts	107	102.5	-4.5	✓	3	13	0	27	274639	959003	102.5	426.4	4	75%	103,102,1084,93
+2	2026-03-15T14:57:48.447Z	Baseline nach Multi-Run-Umbau	—	107	3	-104	✓	0	3	0	7	70290	715684	3	2.4	3	100%	3,0,6	9
