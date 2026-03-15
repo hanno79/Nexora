@@ -35,6 +35,7 @@ const RESULTS_FILE = path.join(AUTORESEARCH_DIR, 'results.tsv');
 const PROGRESS_FILE = path.join(AUTORESEARCH_DIR, 'progress.md');
 const DEFAULT_VALIDATION_RUNS = 3; // Zusätzliche Runs zur Validierung nach positivem Schnell-Check
 const BENCHMARK_TIMEOUT_MS = 5 * 60 * 1000; // 5 Minuten Timeout pro Benchmark-Run
+const INVALID_EXPERIMENT_SCORE = -1; // Marker für ungültige Experimente (alle Runs fehlgeschlagen)
 
 const SYSTEM_PROMPT = `Du bist ein erfahrener Software-Architekt und PRD-Spezialist.
 Erstelle ein vollständiges, professionelles Product Requirements Document (PRD) auf Deutsch.
@@ -274,7 +275,7 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number): Pro
     console.log(`\n  ✗ Schnell-Check komplett fehlgeschlagen — Experiment ungültig.\n`);
     return {
       runNumber, timestamp, hypothesis,
-      aggregateScore: -1,
+      aggregateScore: INVALID_EXPERIMENT_SCORE,
       results: firstPass.results,
       kept: false,
       previousBest,
@@ -355,7 +356,7 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number): Pro
     console.log(`\n── Stufe 3: Alle Runs fehlgeschlagen — Experiment ungültig ──\n`);
     return {
       runNumber, timestamp, hypothesis,
-      aggregateScore: -1,
+      aggregateScore: INVALID_EXPERIMENT_SCORE,
       results: allResults[0],
       kept: false,
       previousBest,
@@ -599,7 +600,10 @@ async function main() {
   console.log(`Results written to: ${RESULTS_FILE}`);
   console.log(`Progress dashboard: ${PROGRESS_FILE}`);
 
-  // Exit with code indicating keep/discard for scripting
+  // Exit codes: 0 = kept (improved), 1 = discarded (no improvement), 2 = invalid (all runs failed)
+  if (summary.aggregateScore === INVALID_EXPERIMENT_SCORE) {
+    process.exit(2);
+  }
   process.exit(summary.kept ? 0 : 1);
 }
 
