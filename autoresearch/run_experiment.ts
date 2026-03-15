@@ -162,7 +162,7 @@ function getPreviousBestAggregate(bests: BenchmarkBests): number | null {
 // Günstige Paid-Modelle ohne Rate-Limits für den Experiment-Loop
 const EXPERIMENT_MODELS = {
   generator: 'google/gemini-2.5-flash',
-  reviewer: 'google/gemini-2.5-flash',
+  reviewer: 'deepseek/deepseek-chat-v3-0324', // Anderes Modell für Repairs: frische Perspektive
   verifier: 'google/gemini-2.5-flash',
   semantic_repair: 'google/gemini-2.5-flash',
   fallback: 'deepseek/deepseek-chat-v3-0324',

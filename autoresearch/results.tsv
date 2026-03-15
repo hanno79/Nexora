@@ -4,3 +4,7 @@ Run#	Timestamp	Hypothese	Geänderte_Datei	Score_vorher	Score_nachher	Delta	Kept	
 3	2026-03-15T18:14:48.027Z	Reintroduced/Future-Leakage Repair-Prompt mit expliziter Nicht-Reintroduce Anweisung	server/prdCompilerFinalizer.ts	94	92	-2	✓	2	12	0	21	332177	926212	92	20.4	4	75%	92,52,107,92	0
 4	2026-03-15T18:48:49.883Z	OutOfScope Repair: Aktuelle Section als BAD EXAMPLE markiert, konkretes GOOD Example, komplett neu schreiben	server/prdCompilerFinalizer.ts	86	137	51	✗	3	17	0	27	322485	1095781	—	—	1	—	137	0
 5	2026-03-15T18:58:46.260Z	maxRepairPasses 3->5: Mehr Repair-Zyklen fuer hartnaeckige OutOfScope-Boilerplate	server/guidedCompilerGates.ts	86	102	16	✗	2	21	0	27	274919	852080	102	15.9	4	25%	101,103,118,74	0
+5	2026-03-15T18:58:02.403Z	maxRepairPasses 3→5: Mehr Repair-Zyklen für hartnäckige OutOfScope-Boilerplate	server/guidedCompilerGates.ts	86	26	-60	✗	1	7	0	15	155032	1146951	26	21.5	4	50%	47,48,4,5	4
+6	2026-03-15T19:39:41.899Z	System-Prompt mit expliziten Qualitaetsregeln fuer OutOfScope, AcceptanceCriteria und Feature-Completeness	autoresearch/run_experiment.ts	86	224	138	✗	2	44	5	37	565226	1463990	—	—	1	—	224	0
+7	2026-03-15T19:52:16.715Z	Generator-Modell: gpt-4.1-mini statt gemini-2.5-flash fuer bessere Out-of-Scope Qualitaet	autoresearch/run_experiment.ts	86	93	7	✗	2	13	0	20	177113	1508039	—	—	1	—	93	1
+8	2026-03-15T20:03:48.509Z	Reviewer/Repair-Modell: deepseek-v3 statt gemini fuer frische Perspektive bei OutOfScope Repairs	autoresearch/run_experiment.ts	86	48.5	-37.5	✓	1	11	0	26	319522	1473421	48.5	33.6	4	75%	51,96,46,1	4
