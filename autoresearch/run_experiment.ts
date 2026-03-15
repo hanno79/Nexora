@@ -393,10 +393,20 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number, para
     };
   }
 
+  // Berechne comparable-only Score (nur Benchmarks die in Bests existieren)
+  function computeComparableScore(results: ExperimentResult[]): number {
+    return results
+      .filter(r => r.score !== null && r.inputName in bests)
+      .reduce((sum, r) => sum + r.score!.total, 0);
+  }
+
   // Keine Validierungsruns: Einzelrun-Entscheidung per Benchmark-Vergleich
   if (validationRuns === 0) {
-    const kept = comparison.comparableBest !== null && firstPass.aggregateScore <= comparison.comparableBest;
-    console.log(`  → Einzelrun-Modus: ${kept ? '✓ KEPT' : '✗ DISCARDED'}\n`);
+    const comparableScore = computeComparableScore(firstPass.results);
+    const kept = comparison.comparableBest !== null
+      ? comparableScore <= comparison.comparableBest
+      : true;
+    console.log(`  → Einzelrun-Modus (comparable: ${comparableScore} vs ${comparison.comparableBest ?? 'N/A'}): ${kept ? '✓ KEPT' : '✗ DISCARDED'}\n`);
     if (kept) {
       saveBenchmarkBests(updateBenchmarkBests(firstPass.results, bests));
     }
@@ -415,10 +425,7 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number, para
   // Deutlich schlechter (>20% über vergleichbare Baseline): sofort verwerfen
   if (comparison.comparableBest !== null) {
     const rejectThreshold = comparison.comparableBest * 1.2;
-    // Nur die vergleichbaren Benchmarks für den Reject-Check nutzen
-    const comparableScore = firstPass.results
-      .filter(r => r.score !== null && r.inputName in bests)
-      .reduce((sum, r) => sum + r.score!.total, 0);
+    const comparableScore = computeComparableScore(firstPass.results);
     if (comparableScore > rejectThreshold) {
       console.log(`  → Vergleichbare Benchmarks deutlich schlechter (${comparableScore} > ${rejectThreshold.toFixed(0)}), sofort verworfen.\n`);
       return {
@@ -437,12 +444,15 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number, para
   // ── Stufe 2: Validierung (N zusätzliche Runs) ──
   console.log(`\n── Stufe 2: Validierung (${validationRuns} zusätzliche Runs) ──`);
   const allResults: ExperimentResult[][] = [firstPass.results];
+  // Comparable-only Scores für Statistik (Äpfel-mit-Äpfel-Vergleich)
+  const allComparableScores: number[] = [computeComparableScore(firstPass.results)];
 
   for (let i = 0; i < validationRuns; i++) {
     const pass = await runBenchmarkPass(inputs, `Validierung ${i + 1}/${validationRuns}`, parallel);
     totalFailedRuns += pass.failedCount;
     if (pass.aggregateScore !== null) {
       allRunScores.push(pass.aggregateScore);
+      allComparableScores.push(computeComparableScore(pass.results));
       console.log(`  Validierung ${i + 1} Score: ${pass.aggregateScore}${pass.failedCount > 0 ? ` [${pass.failedCount} failed]` : ''}`);
     } else {
       console.log(`  Validierung ${i + 1}: komplett fehlgeschlagen, übersprungen`);
@@ -451,7 +461,7 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number, para
   }
 
   // ── Stufe 3: Entscheidung per Median + Konsistenz ──
-  if (allRunScores.length === 0) {
+  if (allComparableScores.length === 0) {
     console.log(`\n── Stufe 3: Alle Runs fehlgeschlagen — Experiment ungültig ──\n`);
     return {
       runNumber, timestamp, hypothesis,
@@ -465,35 +475,33 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number, para
     };
   }
 
-  // Per-Benchmark vergleichbare Best-Scores für Konsistenz-Berechnung
-  const comparableBestForStats = comparison.comparableBest ?? previousBest;
-  const statistics = computeRunStatistics(allRunScores, comparableBestForStats);
+  // Statistik über comparable-only Scores (gleiche Benchmark-Menge wie Baseline)
+  const statistics = computeRunStatistics(allComparableScores, comparison.comparableBest);
 
   console.log(`\n── Stufe 3: Entscheidung ──`);
-  console.log(`  ${formatStatisticsOneLiner(statistics)}`);
-  console.log(`  Vergleichbare Baseline: ${comparison.comparableBest ?? 'N/A'} (aggregate: ${previousBest ?? 'N/A'})`);
+  console.log(`  Comparable: ${formatStatisticsOneLiner(statistics)}`);
+  console.log(`  Full aggregate scores: ${allRunScores.join(', ')}`);
+  console.log(`  Vergleichbare Baseline: ${comparison.comparableBest ?? 'N/A'}`);
   if (totalFailedRuns > 0) {
     console.log(`  ⚠ ${totalFailedRuns} fehlgeschlagene Benchmark-Runs aus Aggregation ausgeschlossen`);
   }
 
-  // Kept wenn: Median besser/gleich vergleichbare Baseline UND mindestens 75% konsistent
+  // Kept wenn: Comparable Median besser/gleich Baseline UND mindestens 75% konsistent
   const MIN_CONSISTENCY = 0.75;
   const kept = comparison.comparableBest !== null
     ? statistics.median <= comparison.comparableBest && statistics.consistencyRate >= MIN_CONSISTENCY
     : true; // Keine vergleichbare Baseline → neue Benchmarks, immer behalten
 
+  const medianRunIndex = findMedianRunIndex(allComparableScores, statistics.median);
+
   if (kept) {
-    console.log(`  → ✓ KEPT: Median ${statistics.median} <= ${comparison.comparableBest ?? 'N/A'} und ${(statistics.consistencyRate * 100).toFixed(0)}% konsistent\n`);
-    // Bests aktualisieren mit dem Median-Run
-    const medianRunIndex = findMedianRunIndex(allRunScores, statistics.median);
+    console.log(`  → ✓ KEPT: Comparable Median ${statistics.median} <= ${comparison.comparableBest ?? 'N/A'} und ${(statistics.consistencyRate * 100).toFixed(0)}% konsistent\n`);
     saveBenchmarkBests(updateBenchmarkBests(allResults[medianRunIndex], bests));
   } else if (comparison.comparableBest !== null && statistics.median > comparison.comparableBest) {
-    console.log(`  → ✗ DISCARDED: Median ${statistics.median} > ${comparison.comparableBest}\n`);
+    console.log(`  → ✗ DISCARDED: Comparable Median ${statistics.median} > ${comparison.comparableBest}\n`);
   } else {
     console.log(`  → ✗ DISCARDED: Konsistenz ${(statistics.consistencyRate * 100).toFixed(0)}% < ${MIN_CONSISTENCY * 100}% Minimum\n`);
   }
-
-  const medianRunIndex = findMedianRunIndex(allRunScores, statistics.median);
 
   return {
     runNumber, timestamp, hypothesis,
