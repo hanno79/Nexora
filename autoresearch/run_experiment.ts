@@ -34,7 +34,7 @@ const TEST_INPUTS_DIR = path.join(AUTORESEARCH_DIR, 'test_inputs');
 const RESULTS_FILE = path.join(AUTORESEARCH_DIR, 'results.tsv');
 const PROGRESS_FILE = path.join(AUTORESEARCH_DIR, 'progress.md');
 const DEFAULT_VALIDATION_RUNS = 3; // Zusätzliche Runs zur Validierung nach positivem Schnell-Check
-const BENCHMARK_TIMEOUT_MS = 5 * 60 * 1000; // 5 Minuten Timeout pro Benchmark-Run
+const BENCHMARK_TIMEOUT_MS = 15 * 60 * 1000; // 15 Minuten Timeout pro Benchmark-Run
 const INVALID_EXPERIMENT_SCORE = -1; // Marker für ungültige Experimente (alle Runs fehlgeschlagen)
 
 const SYSTEM_PROMPT = `Du bist ein erfahrener Software-Architekt und PRD-Spezialist.
