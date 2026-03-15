@@ -260,6 +260,18 @@ describe('deterministic semantic compiler lints', () => {
     expect(compiled.quality.valid).toBe(false);
   });
 
+  it('does not split decimal numeric constraints across sentence boundaries', () => {
+    const compiled = compilePrdDocument(buildPrd({
+      globalBusinessRules: '- Login success rate must stay above 99.9% for every release.',
+      nonFunctional: '- Login success rate must stay above 99.9% at p95 traffic volume.',
+    }), {
+      mode: 'generate',
+      language: 'en',
+    });
+
+    expect(compiled.quality.issues.some(issue => issue.code === 'business_rule_constraint_conflict')).toBe(false);
+  });
+
   it('flags out-of-scope items that are reintroduced as deliverables', () => {
     const compiled = compilePrdDocument(buildPrd({
       featureName: 'Native Mobile Application Shell',
@@ -1000,6 +1012,23 @@ describe('deterministic semantic compiler lints', () => {
 
     expect(compiled.quality.issues.some(issue => issue.code === 'timeline_feature_reference_mismatch')).toBe(false);
     expect(diagnostics.timelineMismatchedFeatureIds).toEqual([]);
+  });
+
+  it('rewrites timeline references with exact feature-id matching instead of prefix matching', () => {
+    const rewritten = rewriteTimelineMilestonesFromFeatureMap({
+      timelineMilestones: [
+        '| Phase | Deliverables |',
+        '| --- | --- |',
+        '| 1 | F-1 Admin Audit Ledger, F-10 Secure Password Recovery |',
+      ].join('\n'),
+      features: [
+        { id: 'F-1', name: 'Secure Password Recovery' },
+        { id: 'F-10', name: 'Admin Audit Ledger' },
+      ],
+    } as any);
+
+    expect(rewritten.content).toContain('| 1 | F-1 Secure Password Recovery, F-10 Admin Audit Ledger |');
+    expect(rewritten.content).not.toContain('F-1 Admin Audit Ledger');
   });
 
   it('rewrites mismatched timeline references from the canonical feature map without renumbering features', () => {

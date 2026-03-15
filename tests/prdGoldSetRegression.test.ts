@@ -34,6 +34,25 @@ describe('prd gold-set baseline corpus', () => {
     expect(compiled.quality.issues.some(issue => issue.code.startsWith('language_mismatch_'))).toBe(false);
     expect(compiled.quality.featureCount).toBeGreaterThanOrEqual(6);
   });
+
+  it('renders German gold-set features with localized headings and content', () => {
+    const germanPrd = buildGoldSetPrd({
+      language: 'de',
+      featureCount: 1,
+    });
+
+    expect(germanPrd).toContain('### F-01: Provider-Listenverwaltung');
+    expect(germanPrd).toContain('1. Zweck');
+    expect(germanPrd).toContain('2. Akteure');
+    expect(germanPrd).toContain('Lädt die geordnete Provider-Liste für das ausgewählte Tier');
+    expect(germanPrd).not.toContain('1. Purpose');
+  });
+
+  it('honors an explicit featureCount of zero', () => {
+    const emptyFeaturePrd = buildGoldSetPrd({ featureCount: 0 });
+
+    expect(emptyFeaturePrd).not.toContain('### F-01:');
+  });
 });
 
 describe('prd gold-set mutation regressions', () => {

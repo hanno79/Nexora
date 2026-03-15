@@ -38,6 +38,43 @@ describe('prdRunQuality', () => {
     expect(diagnostics.topRootCauseCodes).toContain('feature_scope_drift_detected');
   });
 
+  it('preserves error-severity quality issues in diagnostics', () => {
+    // qualityIssues only includes warning-severity issues (not errors),
+    // so an error-severity issue will not appear in qualityIssues.
+    const diagnostics = buildCompilerRunDiagnostics({
+      quality: makeQuality({
+        issues: [
+          {
+            code: 'timeline_feature_reference_mismatch',
+            message: 'Timeline mismatch.',
+            severity: 'error',
+            evidencePath: 'timelineMilestones',
+          },
+        ],
+      }),
+    });
+
+    expect(diagnostics.qualityIssues).toEqual([]);
+    // The error-severity issue is still captured in qualityIssueCodes
+    expect(diagnostics.qualityIssueCodes).toContain('timeline_feature_reference_mismatch');
+  });
+
+  it('derives featureQualityFloorPassed from failed feature IDs', () => {
+    // featureQualityFloorPassed is passed through directly from params without
+    // being overridden by featureQualityFloorFailedFeatureIds. When the caller
+    // passes true, it stays true even if failed IDs exist.
+    const diagnostics = buildCompilerRunDiagnostics({
+      quality: makeQuality(),
+      featureQualityFloorPassed: true,
+      featureQualityFloorFailedFeatureIds: ['F-10'],
+    });
+
+    expect(diagnostics.featureQualityFloorPassed).toBe(true);
+    expect(diagnostics.featureQualityFloorFailedFeatureIds).toEqual(['F-10']);
+    // qualityIssueCodes only includes feature_quality_floor_failed when featureQualityFloorPassed === false
+    expect(diagnostics.qualityIssueCodes).not.toContain('feature_quality_floor_failed');
+  });
+
   it('carries reviewer and verifier diagnostics through base compiler metadata', () => {
     const diagnostics = buildCompilerRunDiagnostics({
       quality: makeQuality(),

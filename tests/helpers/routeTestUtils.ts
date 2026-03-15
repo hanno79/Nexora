@@ -40,9 +40,34 @@ export async function invokeRoute(
   route: RegisteredRoute,
   body: Record<string, unknown> = {},
   params: Record<string, string> = {},
+  options?: { timeoutMs?: number },
 ) {
   let resolveDone!: () => void;
-  const done = new Promise<void>((resolve) => { resolveDone = resolve; });
+  let rejectDone!: (error: unknown) => void;
+  let settled = false;
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const done = new Promise<void>((resolve, reject) => {
+    resolveDone = resolve;
+    rejectDone = reject;
+  });
+  const clearDoneTimer = () => {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+      timeoutHandle = null;
+    }
+  };
+  const resolveOnce = () => {
+    if (settled) return;
+    settled = true;
+    clearDoneTimer();
+    resolveDone();
+  };
+  const rejectOnce = (error: unknown) => {
+    if (settled) return;
+    settled = true;
+    clearDoneTimer();
+    rejectDone(error);
+  };
   const response = {
     statusCode: 200,
     payload: undefined as unknown,
@@ -53,12 +78,12 @@ export async function invokeRoute(
     },
     json(payload: unknown) {
       this.payload = payload;
-      resolveDone();
+      resolveOnce();
       return this;
     },
     send(payload: unknown) {
       this.payload = payload;
-      resolveDone();
+      resolveOnce();
       return this;
     },
     setHeader(name: string, value: string) {
@@ -67,18 +92,36 @@ export async function invokeRoute(
   };
   const request = { body, params, query: {}, user: { claims: { sub: 'user-1' } } } as any;
   let handlerIndex = 0;
+  timeoutHandle = setTimeout(() => {
+    response.statusCode = 500;
+    response.payload = {
+      message: `Route ${route.method.toUpperCase()} ${route.path} did not send a response within ${options?.timeoutMs ?? 5000}ms.`,
+    };
+    resolveOnce();
+  }, options?.timeoutMs ?? 5000);
   const next = (error?: unknown) => {
     if (error) {
-      throw error;
+      rejectOnce(error);
+      return;
     }
     const handler = route.handlers[handlerIndex++];
     if (handler) {
-      handler(request, response as any, next as any);
+      try {
+        Promise.resolve(handler(request, response as any, next as any)).catch(rejectOnce);
+      } catch (handlerError) {
+        rejectOnce(handlerError);
+      }
+      return;
     }
+    resolveOnce();
   };
 
-  next();
-  await done;
+  try {
+    next();
+    await done;
+  } finally {
+    clearDoneTimer();
+  }
   return response;
 }
 

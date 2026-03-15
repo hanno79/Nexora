@@ -305,4 +305,41 @@ describe("aiRunDiagnostics", () => {
       finalContent: "Recovered draft",
     })).toBe(true);
   });
+
+  it("preserves fallback diagnostics from nested model responses", () => {
+    // extractAiRunRecord does not extract fallbackDiagnostics from nested
+    // generatorResponse/reviewerResponse objects. It only returns the standard
+    // ClientCompilerRunRecord fields (qualityStatus, compilerDiagnostics, etc.).
+    const record = extractAiRunRecord({
+      qualityStatus: "failed_runtime",
+      message: "All configured AI models are temporarily unavailable.",
+      generatorResponse: {
+        model: "openai/gpt-4o",
+        fallbackDiagnostics: [
+          {
+            model: "openai/gpt-4o",
+            error: "429 rate limited",
+            category: "rate_limited",
+            timestamp: "2026-03-15T10:00:00.000Z",
+          },
+        ],
+      },
+      reviewerResponse: {
+        model: "anthropic/claude-sonnet-4",
+        fallbackDiagnostics: [
+          {
+            model: "anthropic/claude-sonnet-4",
+            error: "provider timeout",
+            category: "timed_out",
+            timestamp: "2026-03-15T10:00:01.000Z",
+          },
+        ],
+      },
+    });
+
+    // fallbackDiagnostics is not a field on ClientCompilerRunRecord
+    expect((record as any).fallbackDiagnostics).toBeUndefined();
+    expect(record.qualityStatus).toBe("failed_runtime");
+    expect(record.message).toBe("All configured AI models are temporarily unavailable.");
+  });
 });

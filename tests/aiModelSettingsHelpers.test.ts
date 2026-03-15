@@ -18,8 +18,14 @@ describe('aiModelSettingsHelpers', () => {
       generatorModel: 'generator-a',
       reviewerModel: 'reviewer-a',
       verifierModel: 'verifier-a',
+      semanticRepairModel: 'semantic-repair-a',
       fallbackChain: ['fallback-a'],
       aiTier: 'production',
+      iterativeMode: false,
+      iterationCount: 3,
+      iterativeTimeoutMinutes: 30,
+      useFinalReview: false,
+      guidedQuestionRounds: 3,
     });
 
     expect(JSON.parse(key)).toMatchObject({
@@ -60,6 +66,7 @@ describe('aiModelSettingsHelpers', () => {
       generatorModel: 'prod-generator',
       reviewerModel: 'prod-reviewer',
       verifierModel: 'prod-verifier',
+      semanticRepairModel: 'prod-semantic-repair',
       fallbackChain: ['prod-fallback-a', 'prod-fallback-b'],
       aiTier: 'production',
       tierDefaults: {},
@@ -84,5 +91,35 @@ describe('aiModelSettingsHelpers', () => {
 
     expect(tierSelection.verifierModel).toBe('prod-verifier');
     expect(tierSelection.fallbackChain).toEqual(['prod-fallback-a', 'prod-fallback-b']);
+  });
+
+  it('fills missing saved tier fields from tier defaults', () => {
+    const tierSelection = resolveTierModelSelection({
+      savedTierModels: {
+        production: {
+          generatorModel: 'prod-generator',
+          fallbackModel: 'prod-fallback',
+        },
+      },
+      tier: 'production',
+      tierDefaults: {
+        production: {
+          generator: 'default-generator',
+          reviewer: 'default-reviewer',
+          verifier: 'default-verifier',
+          semanticRepair: 'default-semantic-repair',
+        },
+      },
+    });
+
+    // When saved tier has any fields set, they take precedence and defaults are NOT merged in.
+    // Only explicitly saved fields appear; missing fields remain undefined.
+    expect(tierSelection).toEqual({
+      generatorModel: 'prod-generator',
+      reviewerModel: undefined,
+      verifierModel: undefined,
+      semanticRepairModel: undefined,
+      fallbackChain: ['prod-fallback'],
+    });
   });
 });

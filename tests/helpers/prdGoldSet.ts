@@ -280,55 +280,226 @@ function sectionsForLanguage(language: SupportedLanguage) {
   return language === 'de' ? DE_SECTIONS : EN_SECTIONS;
 }
 
+const DE_FEATURE_TRANSLATIONS: Record<string, Partial<GoldSetFeature>> = {
+  'F-01': {
+    name: 'Provider-Listenverwaltung',
+    purpose: 'Lädt die geordnete Provider-Liste für das ausgewählte Tier, damit eingebettete Widgets verfügbare Routing-Optionen ohne manuelle Konfiguration anzeigen können.',
+    actors: 'Authentifizierter Entwickler, Backend-Konfigurations-API.',
+    trigger: 'Das Widget initialisiert sich oder der Benutzer wechselt den aktiven Tier-Tab.',
+    preconditions: 'Eine gültige Benutzersitzung existiert und mindestens ein Provider ist für das ausgewählte Tier konfiguriert.',
+    mainFlow: [
+      'Das Widget fordert die Provider für das ausgewählte Tier von der Konfigurations-API an.',
+      'Das Backend lädt Provider-Metadaten, Free-Modell-Flags und Reihenfolgeregeln aus dem persistenten Speicher.',
+      'Die UI rendert die Provider-Liste in der konfigurierten Reihenfolge und markiert den aktuellen Standard-Provider.',
+    ],
+    alternateFlows: [
+      'Wenn für das Tier keine Provider konfiguriert sind, zeigt das Widget einen deaktivierten Leerzustand mit einer Korrekturmeldung an.',
+      'Wenn die Autorisierung fehlschlägt, behält das Widget bestehende Auswahlen schreibgeschützt bei und zeigt eine Zugriffswarnung an.',
+    ],
+    postconditions: 'Der Benutzer sieht die aktuelle Provider-Reihenfolge für das ausgewählte Tier und kann mit der Modellauswahl auf Basis der geladenen Daten fortfahren.',
+    dataImpact: 'Liest Provider- und TierConfiguration-Datensätze, ohne persistierten Zustand zu verändern.',
+    uiImpact: 'Provider-Dropdowns, Tier-Badges und Leerzustandsmeldungen werden für das ausgewählte Tier aktualisiert.',
+    acceptanceCriteria: [
+      'Die Provider-Liste respektiert den gespeicherten orderIndex für das ausgewählte Tier.',
+      'Das Widget zeigt einen klaren Leerzustand, wenn keine Provider konfiguriert sind.',
+      'Nicht autorisierte Benutzer können die Provider-Reihenfolge im Widget nicht bearbeiten.',
+    ],
+  },
+  'F-02': {
+    name: 'Modellkatalog-Abruf',
+    purpose: 'Lädt provider-spezifische Modelle mit Tier- und Kosten-Metadaten, damit Benutzer für jede Umgebung ein geeignetes Laufzeitziel auswählen können.',
+    actors: 'Authentifizierter Entwickler, Modellkatalog-API.',
+    trigger: 'Der Benutzer wählt einen Provider aus oder öffnet den Bereich zur Modellauswahl.',
+    preconditions: 'Eine gültige providerId existiert und der anfragende Benutzer darf Modell-Metadaten für diesen Tenant einsehen.',
+    mainFlow: [
+      'Das Widget fordert den Modellkatalog für den ausgewählten Provider an.',
+      'Das Backend liefert Modellnamen, Preis-Metadaten, Free-Tier-Flags und Fähigkeitszusammenfassungen zurück.',
+      'Die UI rendert eine Modellliste, die Free-Modelle vor der Auswahl klar von kostenpflichtigen Modellen unterscheidet.',
+    ],
+    alternateFlows: [
+      'Wenn der Provider unbekannt ist, liefert die API Not Found und das Widget leert die aktuelle Modellauswahl.',
+      'Wenn der Modellservice vorübergehend nicht verfügbar ist, zeigt das Widget eine Wiederholen-Aktion an, ohne gespeicherte Einstellungen zu verändern.',
+    ],
+    postconditions: 'Der Benutzer kann aus dem zuletzt bekannten Modellsatz für den aktiven Provider auswählen.',
+    dataImpact: 'Liest Model-Datensätze und verknüpfte Provider-Metadaten, ohne die Konfiguration zu ändern.',
+    uiImpact: 'Modell-Dropdown-Optionen, Preis-Badges und Warnhinweise werden für den ausgewählten Provider aktualisiert.',
+    acceptanceCriteria: [
+      'Das Widget zeigt nur Modelle an, die zum ausgewählten Provider gehören.',
+      'Free- und kostenpflichtige Modelle sind in der UI klar gekennzeichnet.',
+      'Ein vorübergehender Katalogfehler löscht nicht die zuletzt gespeicherte Konfiguration.',
+    ],
+  },
+  'F-03': {
+    name: 'Tier-Konfigurationsspeicherung',
+    purpose: 'Persistiert Tier-spezifische Provider-Reihenfolgen, damit das Laufzeit-Fallback über Widget-Sitzungen und Deployments hinweg deterministisch bleibt.',
+    actors: 'Administrator, Backend-Konfigurationsservice, Audit-Logger.',
+    trigger: 'Ein Administrator speichert die Provider-Reihenfolge für ein Tier.',
+    preconditions: 'Die Nutzlast enthält eine nicht-leere Provider-Reihenfolge und der Benutzer besitzt Administratorrechte.',
+    mainFlow: [
+      'Das Backend validiert die übermittelte Provider-Reihenfolge und Free-Tier-Einschränkungen.',
+      'Der Konfigurationsservice schreibt die aktualisierten TierConfiguration-Datensätze innerhalb einer Transaktion.',
+      'Das Audit-Log zeichnet die Änderung auf und die API liefert die persistierte Reihenfolge an das Widget zurück.',
+    ],
+    alternateFlows: [
+      'Wenn doppelte orderIndex-Werte übermittelt werden, schlägt die Validierung fehl und die vorherige Reihenfolge bleibt unverändert.',
+      'Wenn der Speicherzugriff ein Timeout erreicht, rollt die Transaktion zurück und das Widget zeigt eine Wiederholen-Meldung an.',
+    ],
+    postconditions: 'Die gespeicherte Provider-Reihenfolge ist dauerhaft verfügbar und steht nachfolgenden Laufzeit-Fallback-Anfragen zur Verfügung.',
+    dataImpact: 'Erstellt oder aktualisiert TierConfiguration-Zeilen und Audit-Log-Einträge nach erfolgreicher Validierung.',
+    uiImpact: 'Die Admin-Ansicht bestätigt die gespeicherte Reihenfolge und entfernt Warnungen zu ungespeicherten Änderungen.',
+    acceptanceCriteria: [
+      'Das Speichern einer gültigen Provider-Reihenfolge persistiert exakt die übermittelte Reihenfolge.',
+      'Ungültige Ordnungsversuche erzeugen keine Teil-Schreibvorgänge.',
+      'Für jede erfolgreiche Tier-Konfigurationsänderung wird ein Audit-Eintrag aufgezeichnet.',
+    ],
+  },
+  'F-04': {
+    name: 'Fallback-Reihenfolge-Engine',
+    purpose: 'Wechselt zum nächsten konfigurierten Provider, wenn eine Rate-Limit-Antwort den aktuellen Laufzeitpfad blockiert, und bewahrt dabei deterministische Grenzen für das Wiederholungsverhalten.',
+    actors: 'Laufzeit-Request-Router, Provider-Gateway, Entwickler mit Blick auf den Laufzeitstatus.',
+    trigger: 'Der aktive Provider liefert während einer Inferenzanfrage HTTP 429 zurück.',
+    preconditions: 'Eine Tier-spezifische Provider-Reihenfolge existiert und die aktuelle Anfrage hat die maximale Wechselanzahl noch nicht ausgeschöpft.',
+    mainFlow: [
+      'Der Router klassifiziert den Provider-Fehler als Rate-Limit-berechtigt für ein Fallback.',
+      'Der nächste Provider in der konfigurierten Reihenfolge wird für denselben Anfragekontext ausgewählt.',
+      'Das System wiederholt die Anfrage höchstens einmal pro Provider, bis das Wechsel-Limit erreicht ist oder ein Provider erfolgreich antwortet.',
+    ],
+    alternateFlows: [
+      'Wenn kein weiterer Provider existiert, liefert die Laufzeit einen Degraded-Mode-Fehler an den Aufrufer zurück.',
+      'Wenn das Wechsel-Limit erreicht ist, beendet der Router weitere Wiederholungen und protokolliert die ausgeschöpfte Fallback-Kette.',
+    ],
+    postconditions: 'Die Anfrage wird entweder über einen alternativen Provider erfolgreich abgeschlossen oder mit einem expliziten Fallback-exhausted-Status beendet.',
+    dataImpact: 'Schreibt Laufzeit-Diagnostik und Fallback-Telemetrie pro Anfrage, ohne die Tier-Konfiguration zu verändern.',
+    uiImpact: 'Betriebsstatus-Ansichten zeigen an, welcher Provider die Anfrage verarbeitet hat und ob ein Fallback stattgefunden hat.',
+    acceptanceCriteria: [
+      'Eine 429-Antwort löst die Auswahl des nächsten konfigurierten Providers in der richtigen Reihenfolge aus.',
+      'Der Router stoppt nach der konfigurierten maximalen Anzahl von Provider-Wechseln.',
+      'Die Fallback-Telemetrie zeichnet jeden versuchten Provider für die Anfrage auf.',
+    ],
+  },
+  'F-05': {
+    name: 'Theme-Anpassungsoberfläche',
+    purpose: 'Ermöglicht Administratoren, Widget-Farben und Typografie anzupassen, ohne Tier-Auswahl- oder Provider-Konfigurations-Workflows zu beschädigen.',
+    actors: 'Administrator, eingebettete Widget-UI, Theme-Settings-API.',
+    trigger: 'Der Administrator bearbeitet Theme-Werte und bestätigt die Änderungen.',
+    preconditions: 'Der Benutzer darf Theme-Einstellungen bearbeiten und die übermittelten Werte bestehen die Validierung.',
+    mainFlow: [
+      'Das Widget validiert die vorgeschlagenen Theme-Werte, bevor es sie an das Backend sendet.',
+      'Das Backend persistiert die freigegebene Theme-Konfiguration für das aktuelle Konto.',
+      'Das Widget rendert sich mit den gespeicherten Theme-Variablen neu und bestätigt die Änderung.',
+    ],
+    alternateFlows: [
+      'Wenn ein übermitteltes Farbtokenelement ungültig ist, blockiert die Validierung die Persistenz und markiert das fehlerhafte Feld.',
+      'Wenn die Persistenz fehlschlägt, stellt das Widget die vorherige Theme-Vorschau wieder her und zeigt eine Fehlerbenachrichtigung an.',
+    ],
+    postconditions: 'Das gespeicherte Theme steht beim nächsten Widget-Ladevorgang für dasselbe Konto wieder zur Verfügung.',
+    dataImpact: 'Aktualisiert WidgetSettings.themeName und ThemeSettings-Tokens für das authentifizierte Konto.',
+    uiImpact: 'Buttons, Badges und Container-Styling werden unmittelbar nach einem erfolgreichen Speichern aktualisiert.',
+    acceptanceCriteria: [
+      'Gültige Theme-Änderungen bleiben nach einem Browser-Refresh erhalten.',
+      'Ungültige Theme-Werte überschreiben das zuvor gespeicherte Theme nicht.',
+      'Die Widget-Vorschau aktualisiert sich erst, nachdem das Backend ein erfolgreiches Speichern bestätigt hat.',
+    ],
+  },
+  'F-06': {
+    name: 'Modellauswahl-Persistenz',
+    purpose: 'Persistiert das ausgewählte Standardmodell pro Tier, damit jede Umgebung nach einem Reload mit dem erwarteten Routing-Ziel fortsetzt.',
+    actors: 'Authentifizierter Entwickler, Backend-Settings-API.',
+    trigger: 'Der Benutzer speichert das gewählte Standardmodell für ein Tier.',
+    preconditions: 'Das ausgewählte Modell gehört zum gewählten Provider und der Benutzer darf Widget-Einstellungen bearbeiten.',
+    mainFlow: [
+      'Das Widget übermittelt das gewählte Standardmodell und den Provider-Kontext für das aktive Tier.',
+      'Das Backend validiert, dass das Modell zum ausgewählten Provider und zur Tier-Policy gehört.',
+      'Die persistierten Widget-Einstellungen werden an die UI zurückgegeben und werden zur neuen Standardauswahl.',
+    ],
+    alternateFlows: [
+      'Wenn das Modell für den ausgewählten Provider ungültig ist, schlägt das Speichern fehl und der vorherige Standard bleibt aktiv.',
+      'Wenn die Anfrage ein Timeout erreicht, zeigt das Widget eine Wiederholen-Aktion an, ohne die aktuelle lokale Auswahl zu verwerfen.',
+    ],
+    postconditions: 'Das gespeicherte Standardmodell wird beim nächsten Widget-Ladevorgang für denselben Benutzerkontext automatisch wiederhergestellt.',
+    dataImpact: 'Aktualisiert WidgetSettings.selectedModelId, WidgetSettings.defaultTier und die Referenz auf die aktive Provider-Reihenfolge nach erfolgreicher Validierung.',
+    uiImpact: 'Der Modellselektor zeigt das gespeicherte Standardmodell an und entfernt Hinweise auf ungespeicherte Änderungen.',
+    acceptanceCriteria: [
+      'Ein Seiten-Refresh stellt das gespeicherte Standardmodell für das aktive Tier wieder her.',
+      'Das Speichern eines ungültigen Modells lässt die zuvor persistierte Auswahl unverändert.',
+      'Die UI zeigt eine Erfolgsmeldung erst an, nachdem die Persistenz erfolgreich war.',
+    ],
+  },
+};
+
+const DE_FEATURE_SECTION_HEADINGS = {
+  purpose: '1. Zweck',
+  actors: '2. Akteure',
+  trigger: '3. Auslöser',
+  preconditions: '4. Vorbedingungen',
+  mainFlow: '5. Hauptablauf',
+  alternateFlows: '6. Alternativabläufe',
+  postconditions: '7. Nachbedingungen',
+  dataImpact: '8. Datenauswirkungen',
+  uiImpact: '9. UI-Auswirkungen',
+  acceptanceCriteria: '10. Akzeptanzkriterien',
+} as const;
+
 function featureForLanguage(feature: GoldSetFeature, language: SupportedLanguage): GoldSetFeature {
   if (language !== 'de') return feature;
-  const replacements: Record<string, string> = {
-    'Provider List Management': 'Provider-Listenverwaltung',
-    'Model Catalog Retrieval': 'Modellkatalog-Abruf',
-    'Tier Configuration Storage': 'Tier-Konfigurationsspeicherung',
-    'Fallback Order Engine': 'Fallback-Reihenfolge-Engine',
-    'Theme Customization Interface': 'Theme-Anpassungsoberflaeche',
-    'Model Selection Persistence': 'Modellauswahl-Persistenz',
-  };
+  const translated = DE_FEATURE_TRANSLATIONS[feature.id];
+  if (!translated) return feature;
 
   return {
     ...feature,
-    name: replacements[feature.name] || feature.name,
+    ...translated,
+    mainFlow: translated.mainFlow ? [...translated.mainFlow] : [...feature.mainFlow],
+    alternateFlows: translated.alternateFlows ? [...translated.alternateFlows] : [...feature.alternateFlows],
+    acceptanceCriteria: translated.acceptanceCriteria ? [...translated.acceptanceCriteria] : [...feature.acceptanceCriteria],
   };
 }
 
-function renderFeature(feature: GoldSetFeature): string {
+function renderFeature(feature: GoldSetFeature, language: SupportedLanguage): string {
+  const headings = language === 'de'
+    ? DE_FEATURE_SECTION_HEADINGS
+    : {
+      purpose: '1. Purpose',
+      actors: '2. Actors',
+      trigger: '3. Trigger',
+      preconditions: '4. Preconditions',
+      mainFlow: '5. Main Flow',
+      alternateFlows: '6. Alternate Flows',
+      postconditions: '7. Postconditions',
+      dataImpact: '8. Data Impact',
+      uiImpact: '9. UI Impact',
+      acceptanceCriteria: '10. Acceptance Criteria',
+    };
   return [
     `### ${feature.id}: ${feature.name}`,
     '',
-    '1. Purpose',
+    headings.purpose,
     feature.purpose,
     '',
-    '2. Actors',
+    headings.actors,
     feature.actors,
     '',
-    '3. Trigger',
+    headings.trigger,
     feature.trigger,
     '',
-    '4. Preconditions',
+    headings.preconditions,
     feature.preconditions,
     '',
-    '5. Main Flow',
+    headings.mainFlow,
     ...feature.mainFlow.map(step => `- ${step}`),
     '',
-    '6. Alternate Flows',
+    headings.alternateFlows,
     ...feature.alternateFlows.map(step => `- ${step}`),
     '',
-    '7. Postconditions',
+    headings.postconditions,
     feature.postconditions,
     '',
-    '8. Data Impact',
+    headings.dataImpact,
     feature.dataImpact,
     '',
-    '9. UI Impact',
+    headings.uiImpact,
     feature.uiImpact,
     '',
-    '10. Acceptance Criteria',
+    headings.acceptanceCriteria,
     ...feature.acceptanceCriteria.map(step => `- ${step}`),
     '',
   ].join('\n');
@@ -340,8 +511,9 @@ export function buildGoldSetPrd(params?: {
 }): string {
   const language = params?.language || 'en';
   const sections = sectionsForLanguage(language);
+  const requestedFeatureCount = params?.featureCount !== undefined ? params.featureCount : BASE_FEATURES.length;
   const features = BASE_FEATURES
-    .slice(0, Math.max(1, params?.featureCount || BASE_FEATURES.length))
+    .slice(0, Math.max(0, requestedFeatureCount))
     .map(feature => featureForLanguage(feature, language));
 
   return [
@@ -361,7 +533,7 @@ export function buildGoldSetPrd(params?: {
     '',
     '## Functional Feature Catalogue',
     '',
-    ...features.map(renderFeature),
+    ...features.map(feature => renderFeature(feature, language)),
     '## Non-Functional Requirements',
     sections.nonFunctional,
     '',
