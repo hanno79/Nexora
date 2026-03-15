@@ -1194,10 +1194,17 @@ function toDeterministicContentIssues(
     }
 
     if (issue.code === 'generic_section_boilerplate_outOfScope') {
+      // Projektkontext für den Repair-Prompt: Feature-Namen und System-Vision
+      const featureNames = structure.features.slice(0, 10).map(f => f.name || f.id).join(', ');
+      const visionSnippet = (structure.systemVision || '').slice(0, 200);
       pushIssue({
         code: issue.code,
         sectionKey: 'outOfScope',
-        message: `${issue.message} Rewrite the Out-of-Scope section so it lists concrete exclusions specific to this project — not generic boilerplate. Reference actual features or capabilities that were considered but deliberately excluded, and explain why.`,
+        message: `${issue.message} Rewrite the Out-of-Scope section so it lists concrete exclusions specific to THIS project. `
+          + `Project context: ${visionSnippet ? `"${visionSnippet}". ` : ''}`
+          + `Included features: ${featureNames || 'unknown'}. `
+          + `List 5-8 specific capabilities/integrations that are deliberately EXCLUDED from this project and explain why each is out of scope. `
+          + `Do NOT use generic placeholders like "future enhancements" or "additional integrations".`,
         severity: 'error',
         suggestedAction: 'rewrite',
       });
