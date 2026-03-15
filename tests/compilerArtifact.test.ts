@@ -100,9 +100,9 @@ describe('compilerArtifact', () => {
       earlySemanticLintCodes: [],
     } as any);
 
-    // normalizeDiagnosticIssues does Array.from(new Set(issue.targetFields)) which spreads
-    // a string into individual characters. A string targetFields value is not converted to
-    // an array, so it becomes character-split. Only array targetFields are deduplicated.
+    // BUG: normalizeDiagnosticIssues does Array.from(new Set(issue.targetFields)) which spreads
+    // a string into individual characters instead of treating it as a single-element array.
+    // This is a latent bug — string targetFields should be wrapped in an array first.
     expect(summary.semanticBlockingIssues[0]?.targetFields).toEqual(
       Array.from(new Set(' mainFlow '))
     );
