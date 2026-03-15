@@ -33,6 +33,7 @@ const AUTORESEARCH_DIR = path.resolve(__dirname_esm);
 const TEST_INPUTS_DIR = path.join(AUTORESEARCH_DIR, 'test_inputs');
 const RESULTS_FILE = path.join(AUTORESEARCH_DIR, 'results.tsv');
 const PROGRESS_FILE = path.join(AUTORESEARCH_DIR, 'progress.md');
+const BENCHMARK_BESTS_FILE = path.join(AUTORESEARCH_DIR, 'benchmark_bests.json');
 const DEFAULT_VALIDATION_RUNS = 3; // Zusätzliche Runs zur Validierung nach positivem Schnell-Check
 const BENCHMARK_TIMEOUT_MS = 15 * 60 * 1000; // 15 Minuten Timeout pro Benchmark-Run
 const INVALID_EXPERIMENT_SCORE = -1; // Marker für ungültige Experimente (alle Runs fehlgeschlagen)
@@ -96,22 +97,64 @@ function getNextRunNumber(): number {
   return isNaN(runNum) ? 1 : runNum + 1;
 }
 
-function getPreviousBestScore(): number | null {
-  if (!fs.existsSync(RESULTS_FILE)) return null;
-  const lines = fs.readFileSync(RESULTS_FILE, 'utf-8').trim().split('\n');
-  if (lines.length <= 1) return null;
+// ── Per-Benchmark Best-Score Tracking ───────────────────────────────────────
 
-  let best: number | null = null;
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split('\t');
-    const kept = cols[7]; // "Kept" column
-    if (kept !== '✓') continue;
-    const score = parseFloat(cols[5]); // "Score_nachher" column
-    if (!isNaN(score) && (best === null || score < best)) {
-      best = score;
+interface BenchmarkBests {
+  [benchmarkName: string]: number; // Bester Score pro Benchmark
+}
+
+function loadBenchmarkBests(): BenchmarkBests {
+  if (!fs.existsSync(BENCHMARK_BESTS_FILE)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(BENCHMARK_BESTS_FILE, 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+function saveBenchmarkBests(bests: BenchmarkBests): void {
+  fs.writeFileSync(BENCHMARK_BESTS_FILE, JSON.stringify(bests, null, 2), 'utf-8');
+}
+
+function getComparableAggregateScore(
+  results: ExperimentResult[],
+  bests: BenchmarkBests,
+): { aggregateScore: number; comparableBest: number | null; newBenchmarks: string[] } {
+  // Nur Benchmarks mit Score (nicht fehlgeschlagen) berücksichtigen
+  const successful = results.filter(r => r.score !== null);
+  if (successful.length === 0) return { aggregateScore: 0, comparableBest: null, newBenchmarks: [] };
+
+  const aggregateScore = successful.reduce((sum, r) => sum + r.score!.total, 0);
+
+  // Vergleichbaren Best-Score berechnen: nur Benchmarks die auch in Bests existieren
+  const comparable = successful.filter(r => r.inputName in bests);
+  const newBenchmarks = successful.filter(r => !(r.inputName in bests)).map(r => r.inputName);
+
+  if (comparable.length === 0) {
+    // Keine vergleichbaren Benchmarks → Baseline-Run
+    return { aggregateScore, comparableBest: null, newBenchmarks };
+  }
+
+  const comparableBest = comparable.reduce((sum, r) => sum + bests[r.inputName], 0);
+  return { aggregateScore, comparableBest, newBenchmarks };
+}
+
+function updateBenchmarkBests(results: ExperimentResult[], bests: BenchmarkBests): BenchmarkBests {
+  const updated = { ...bests };
+  for (const r of results) {
+    if (r.score === null) continue;
+    if (!(r.inputName in updated) || r.score.total < updated[r.inputName]) {
+      updated[r.inputName] = r.score.total;
     }
   }
-  return best;
+  return updated;
+}
+
+// Legacy-Funktion für TSV-Kompatibilität
+function getPreviousBestAggregate(bests: BenchmarkBests): number | null {
+  const values = Object.values(bests);
+  if (values.length === 0) return null;
+  return values.reduce((sum, v) => sum + v, 0);
 }
 
 // ── Core: Run single benchmark ──────────────────────────────────────────────
@@ -287,7 +330,8 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number, para
   }
 
   const runNumber = getNextRunNumber();
-  const previousBest = getPreviousBestScore();
+  const bests = loadBenchmarkBests();
+  const previousBest = getPreviousBestAggregate(bests);
   const timestamp = new Date().toISOString();
 
   console.log(`\n═══ AutoPRD Experiment #${runNumber} ═══`);
@@ -295,7 +339,10 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number, para
   console.log(`Benchmarks: ${inputs.map(i => i.name).join(', ')}`);
   console.log(`Validation runs: ${validationRuns}`);
   console.log(`Parallel: ${parallel}`);
-  console.log(`Previous best: ${previousBest ?? 'N/A (baseline run)'}\n`);
+  console.log(`Per-Benchmark Bests: ${Object.keys(bests).length > 0 ? Object.entries(bests).map(([k, v]) => `${k}=${v}`).join(', ') : 'N/A (baseline run)'}`);
+  console.log(`Previous aggregate best: ${previousBest ?? 'N/A'}\n`);
+
+  const isBaseline = Object.keys(bests).length === 0;
 
   // ── Stufe 1: Schnell-Check (1 Run) ──
   console.log(`── Stufe 1: Schnell-Check ──`);
@@ -317,12 +364,23 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number, para
     };
   }
 
+  // Per-Benchmark-Vergleich: nur Benchmarks vergleichen die in beiden Runs existieren
+  const comparison = getComparableAggregateScore(firstPass.results, bests);
   const allRunScores: number[] = [firstPass.aggregateScore];
-  console.log(`\n  Schnell-Check Score: ${firstPass.aggregateScore} (previous best: ${previousBest ?? 'N/A'})${firstPass.failedCount > 0 ? ` [${firstPass.failedCount} failed benchmarks excluded]` : ''}`);
 
-  // Baseline-Run (kein previousBest): immer nur 1 Run, direkt behalten
-  if (previousBest === null) {
+  console.log(`\n  Schnell-Check Score: ${firstPass.aggregateScore}${firstPass.failedCount > 0 ? ` [${firstPass.failedCount} failed excluded]` : ''}`);
+  if (comparison.comparableBest !== null) {
+    console.log(`  Vergleichbar mit Baseline: ${comparison.comparableBest} (nur gemeinsame Benchmarks)`);
+  }
+  if (comparison.newBenchmarks.length > 0) {
+    console.log(`  Neue Benchmarks (kein Vergleich): ${comparison.newBenchmarks.join(', ')}`);
+  }
+
+  // Baseline-Run: immer behalten und Bests speichern
+  if (isBaseline) {
     console.log(`  → Baseline-Run, wird direkt übernommen.\n`);
+    const newBests = updateBenchmarkBests(firstPass.results, bests);
+    saveBenchmarkBests(newBests);
     return {
       runNumber, timestamp, hypothesis,
       aggregateScore: firstPass.aggregateScore,
@@ -335,10 +393,13 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number, para
     };
   }
 
-  // Keine Validierungsruns: Einzelrun-Entscheidung (Backward-kompatibel)
+  // Keine Validierungsruns: Einzelrun-Entscheidung per Benchmark-Vergleich
   if (validationRuns === 0) {
-    const kept = firstPass.aggregateScore < previousBest;
+    const kept = comparison.comparableBest !== null && firstPass.aggregateScore <= comparison.comparableBest;
     console.log(`  → Einzelrun-Modus: ${kept ? '✓ KEPT' : '✗ DISCARDED'}\n`);
+    if (kept) {
+      saveBenchmarkBests(updateBenchmarkBests(firstPass.results, bests));
+    }
     return {
       runNumber, timestamp, hypothesis,
       aggregateScore: firstPass.aggregateScore,
@@ -351,20 +412,26 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number, para
     };
   }
 
-  // Deutlich schlechter (>20% über Baseline): sofort verwerfen
-  const rejectThreshold = previousBest * 1.2;
-  if (firstPass.aggregateScore > rejectThreshold) {
-    console.log(`  → Deutlich schlechter als Baseline (>${rejectThreshold.toFixed(0)}), sofort verworfen.\n`);
-    return {
-      runNumber, timestamp, hypothesis,
-      aggregateScore: firstPass.aggregateScore,
-      results: firstPass.results,
-      kept: false,
-      previousBest,
-      statistics: null,
-      allRunScores,
-      failedRuns: totalFailedRuns,
-    };
+  // Deutlich schlechter (>20% über vergleichbare Baseline): sofort verwerfen
+  if (comparison.comparableBest !== null) {
+    const rejectThreshold = comparison.comparableBest * 1.2;
+    // Nur die vergleichbaren Benchmarks für den Reject-Check nutzen
+    const comparableScore = firstPass.results
+      .filter(r => r.score !== null && r.inputName in bests)
+      .reduce((sum, r) => sum + r.score!.total, 0);
+    if (comparableScore > rejectThreshold) {
+      console.log(`  → Vergleichbare Benchmarks deutlich schlechter (${comparableScore} > ${rejectThreshold.toFixed(0)}), sofort verworfen.\n`);
+      return {
+        runNumber, timestamp, hypothesis,
+        aggregateScore: firstPass.aggregateScore,
+        results: firstPass.results,
+        kept: false,
+        previousBest,
+        statistics: null,
+        allRunScores,
+        failedRuns: totalFailedRuns,
+      };
+    }
   }
 
   // ── Stufe 2: Validierung (N zusätzliche Runs) ──
@@ -398,33 +465,39 @@ async function runAllBenchmarks(hypothesis: string, validationRuns: number, para
     };
   }
 
-  const statistics = computeRunStatistics(allRunScores, previousBest);
+  // Per-Benchmark vergleichbare Best-Scores für Konsistenz-Berechnung
+  const comparableBestForStats = comparison.comparableBest ?? previousBest;
+  const statistics = computeRunStatistics(allRunScores, comparableBestForStats);
 
   console.log(`\n── Stufe 3: Entscheidung ──`);
   console.log(`  ${formatStatisticsOneLiner(statistics)}`);
-  console.log(`  Previous best: ${previousBest}`);
+  console.log(`  Vergleichbare Baseline: ${comparison.comparableBest ?? 'N/A'} (aggregate: ${previousBest ?? 'N/A'})`);
   if (totalFailedRuns > 0) {
     console.log(`  ⚠ ${totalFailedRuns} fehlgeschlagene Benchmark-Runs aus Aggregation ausgeschlossen`);
   }
 
-  // Kept wenn: Median besser als Baseline UND mindestens 75% der Runs besser
+  // Kept wenn: Median besser/gleich vergleichbare Baseline UND mindestens 75% konsistent
   const MIN_CONSISTENCY = 0.75;
-  const kept = statistics.median < previousBest && statistics.consistencyRate >= MIN_CONSISTENCY;
+  const kept = comparison.comparableBest !== null
+    ? statistics.median <= comparison.comparableBest && statistics.consistencyRate >= MIN_CONSISTENCY
+    : true; // Keine vergleichbare Baseline → neue Benchmarks, immer behalten
 
   if (kept) {
-    console.log(`  → ✓ KEPT: Median ${statistics.median} < ${previousBest} und ${(statistics.consistencyRate * 100).toFixed(0)}% konsistent\n`);
-  } else if (statistics.median >= previousBest) {
-    console.log(`  → ✗ DISCARDED: Median ${statistics.median} >= ${previousBest}\n`);
+    console.log(`  → ✓ KEPT: Median ${statistics.median} <= ${comparison.comparableBest ?? 'N/A'} und ${(statistics.consistencyRate * 100).toFixed(0)}% konsistent\n`);
+    // Bests aktualisieren mit dem Median-Run
+    const medianRunIndex = findMedianRunIndex(allRunScores, statistics.median);
+    saveBenchmarkBests(updateBenchmarkBests(allResults[medianRunIndex], bests));
+  } else if (comparison.comparableBest !== null && statistics.median > comparison.comparableBest) {
+    console.log(`  → ✗ DISCARDED: Median ${statistics.median} > ${comparison.comparableBest}\n`);
   } else {
     console.log(`  → ✗ DISCARDED: Konsistenz ${(statistics.consistencyRate * 100).toFixed(0)}% < ${MIN_CONSISTENCY * 100}% Minimum\n`);
   }
 
-  // Verwende die Ergebnisse des Median-nächsten Runs für die Detail-Anzeige
   const medianRunIndex = findMedianRunIndex(allRunScores, statistics.median);
 
   return {
     runNumber, timestamp, hypothesis,
-    aggregateScore: statistics.median, // Median statt einzelner Score
+    aggregateScore: statistics.median,
     results: allResults[medianRunIndex],
     kept,
     previousBest,
@@ -620,7 +693,9 @@ async function main() {
     console.log('DRY RUN — loading benchmark inputs only');
     const inputs = loadBenchmarkInputs();
     console.log(`Found ${inputs.length} benchmarks: ${inputs.map(i => i.name).join(', ')}`);
-    console.log(`Previous best score: ${getPreviousBestScore() ?? 'N/A'}`);
+    const bests = loadBenchmarkBests();
+    console.log(`Per-Benchmark Bests: ${Object.keys(bests).length > 0 ? Object.entries(bests).map(([k, v]) => `${k}=${v}`).join(', ') : 'N/A (baseline)'}`);
+    console.log(`Aggregate best: ${getPreviousBestAggregate(bests) ?? 'N/A'}`);
     console.log(`Validation runs: ${validationRuns}`);
     console.log(`Parallel: ${parallel}`);
     return;
