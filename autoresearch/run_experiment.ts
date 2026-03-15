@@ -224,8 +224,18 @@ async function runSingleBenchmark(input: BenchmarkInput): Promise<ExperimentResu
 
 // ── Core: Run all benchmarks (single pass) ──────────────────────────────────
 
+function printResult(result: ExperimentResult, includeInputName: boolean): void {
+  const prefix = includeInputName ? `${result.inputName}: ` : '';
+  if (result.score) {
+    console.log(`    ${prefix}${formatScoreOneLiner(result.score)} [${result.durationMs}ms]`);
+  } else {
+    const duration = result.durationMs >= 0 ? `${result.durationMs}ms` : 'unknown';
+    console.log(`    ${prefix}✗ FAILED [${duration}]`);
+  }
+  if (result.error) console.log(`      ⚠ ${result.error}`);
+}
+
 async function runBenchmarkPass(inputs: BenchmarkInput[], passLabel: string, parallel: boolean): Promise<{ results: ExperimentResult[]; aggregateScore: number | null; failedCount: number }> {
-  let failedCount = 0;
   let results: ExperimentResult[];
 
   if (parallel && inputs.length > 1) {
@@ -234,7 +244,6 @@ async function runBenchmarkPass(inputs: BenchmarkInput[], passLabel: string, par
       inputs.map(input => runSingleBenchmark(input)),
     );
 
-    // Ergebnisse sequentiell ausgeben nachdem alle fertig sind
     results = settled.map((s, i) => {
       if (s.status === 'fulfilled') return s.value;
       return {
@@ -243,41 +252,25 @@ async function runBenchmarkPass(inputs: BenchmarkInput[], passLabel: string, par
         qualityStatus: 'failed_runtime',
         modelsUsed: [],
         totalTokens: 0,
-        durationMs: 0,
+        durationMs: -1, // Dauer unbekannt bei Promise-Rejection
         error: (s.reason as Error)?.message?.slice(0, 200) ?? 'Unknown error',
       } satisfies ExperimentResult;
     });
+
+    // Ergebnisse nach Abschluss sequentiell ausgeben
+    for (const result of results) printResult(result, true);
   } else {
+    // Sequentiell: Inline-Output pro Benchmark (Name → Run → Ergebnis)
     results = [];
     for (const input of inputs) {
       console.log(`  ▸ [${passLabel}] Running "${input.name}"...`);
       const result = await runSingleBenchmark(input);
+      printResult(result, false);
       results.push(result);
     }
   }
 
-  // Ergebnisse ausgeben (bei parallel nach Abschluss, bei sequentiell bereits inline)
-  if (parallel && inputs.length > 1) {
-    for (const result of results) {
-      if (result.score) {
-        console.log(`    ${result.inputName}: ${formatScoreOneLiner(result.score)} [${result.durationMs}ms]`);
-      } else {
-        console.log(`    ${result.inputName}: ✗ FAILED [${result.durationMs}ms]`);
-      }
-      if (result.error) console.log(`      ⚠ ${result.error}`);
-    }
-  } else {
-    for (const result of results) {
-      if (result.score) {
-        console.log(`    ${formatScoreOneLiner(result.score)} [${result.durationMs}ms]`);
-      } else {
-        console.log(`    ✗ FAILED [${result.durationMs}ms]`);
-      }
-      if (result.error) console.log(`    ⚠ ${result.error}`);
-    }
-  }
-
-  failedCount = results.filter(r => r.score === null).length;
+  const failedCount = results.filter(r => r.score === null).length;
   const successfulScores = results.filter(r => r.score !== null);
   const aggregateScore = successfulScores.length > 0
     ? successfulScores.reduce((sum, r) => sum + r.score!.total, 0)
