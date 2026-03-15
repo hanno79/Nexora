@@ -49,6 +49,21 @@ keine Blocking Issues, keine Fallback Sections).
 7. Repeat
 ```
 
+### Multi-Run Validierung (Determinismus-Schutz)
+
+Der Runner verwendet einen gestuften Ansatz um LLM-Nondeterminismus auszugleichen:
+
+1. **Stufe 1 — Schnell-Check** (1 Run): Sofortige Ablehnung bei deutlicher
+   Verschlechterung (>20% über Baseline), spart Kosten
+2. **Stufe 2 — Validierung** (N zusätzliche Runs, default 3): Nur bei
+   Verbesserung im Schnell-Check
+3. **Stufe 3 — Entscheidung**: Kept nur wenn **Median < Baseline** UND
+   **≥75% der Runs** besser als Baseline (Konsistenz-Check)
+
+Konfiguration: `--validation-runs N` (default 3, `--validation-runs 0` für
+Einzelrun wie bisher). Baseline-Runs (erster Run ohne vorherige Ergebnisse)
+laufen immer nur 1x.
+
 ## Strategie-Hinweise
 
 ### Typische Schwachstellen im Repair-Loop

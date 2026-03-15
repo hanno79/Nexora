@@ -95,3 +95,50 @@ export function computeScore(
 export function formatScoreOneLiner(b: ScoreBreakdown): string {
   return `Score: ${b.total} (E:${b.errorCount}×10=${b.errors} W:${b.warningCount}×1=${b.warnings} B:${b.blockingIssueCount}×20=${b.blockingIssues} FB:${b.fallbackSectionCount}×5=${b.fallbackSections} MS:${b.missingSectionCount}×8=${b.missingSections} T:${b.truncationPenalty} I:${b.invalidPenalty}) Features:${b.featureCount}`;
 }
+
+// ── Multi-Run Statistik ─────────────────────────────────────────────────────
+
+export interface RunStatistics {
+  median: number;
+  mean: number;
+  min: number;
+  max: number;
+  stddev: number;
+  runs: number;
+  consistencyRate: number; // Anteil der Runs die besser als Baseline sind (0-1)
+}
+
+export function computeMedian(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+}
+
+export function computeRunStatistics(
+  scores: number[],
+  baseline: number | null,
+): RunStatistics {
+  const n = scores.length;
+  if (n === 0) {
+    return { median: 0, mean: 0, min: 0, max: 0, stddev: 0, runs: 0, consistencyRate: 0 };
+  }
+
+  const median = computeMedian(scores);
+  const mean = scores.reduce((s, v) => s + v, 0) / n;
+  const min = Math.min(...scores);
+  const max = Math.max(...scores);
+  const variance = scores.reduce((s, v) => s + (v - mean) ** 2, 0) / n;
+  const stddev = Math.sqrt(variance);
+  const consistencyRate = baseline !== null
+    ? scores.filter(s => s < baseline).length / n
+    : 1; // Baseline-Run gilt immer als konsistent
+
+  return { median, mean, min, max, stddev, runs: n, consistencyRate };
+}
+
+export function formatStatisticsOneLiner(stats: RunStatistics): string {
+  return `Median: ${stats.median} Mean: ${stats.mean.toFixed(1)} ±${stats.stddev.toFixed(1)} [${stats.min}..${stats.max}] (${stats.runs} runs, ${(stats.consistencyRate * 100).toFixed(0)}% consistent)`;
+}

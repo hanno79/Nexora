@@ -5,15 +5,24 @@
  * sammelt Metriken und berechnet den Composite-Score.
  *
  * Usage:
- *   npx tsx autoresearch/run_experiment.ts [--hypothesis "description"] [--dry-run]
+ *   npx tsx autoresearch/run_experiment.ts [--hypothesis "description"] [--validation-runs N] [--dry-run]
+ *
+ * Gestufter Ansatz:
+ *   1. Schnell-Check (1 Run) — bei deutlicher Verschlechterung sofort verwerfen
+ *   2. Validierung (N zusätzliche Runs, default 3) — nur bei Verbesserung
+ *   3. Entscheidung per Median + Konsistenz (>=75% besser als Baseline)
  */
 
+import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getOpenRouterClient } from '../server/openrouter';
 import { generateWithCompilerGates } from '../server/guidedCompilerGates';
-import { computeScore, formatScoreOneLiner, type ScoreBreakdown, type SemanticVerdict } from './score';
+import {
+  computeScore, formatScoreOneLiner, type ScoreBreakdown, type SemanticVerdict,
+  computeRunStatistics, formatStatisticsOneLiner, type RunStatistics,
+} from './score';
 import type { PrdQualityReport } from '../server/prdCompilerValidation';
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -24,6 +33,7 @@ const AUTORESEARCH_DIR = path.resolve(__dirname_esm);
 const TEST_INPUTS_DIR = path.join(AUTORESEARCH_DIR, 'test_inputs');
 const RESULTS_FILE = path.join(AUTORESEARCH_DIR, 'results.tsv');
 const PROGRESS_FILE = path.join(AUTORESEARCH_DIR, 'progress.md');
+const DEFAULT_VALIDATION_RUNS = 3; // Zusätzliche Runs zur Validierung nach positivem Schnell-Check
 
 const SYSTEM_PROMPT = `Du bist ein erfahrener Software-Architekt und PRD-Spezialist.
 Erstelle ein vollständiges, professionelles Product Requirements Document (PRD) auf Deutsch.
@@ -56,6 +66,8 @@ interface ExperimentSummary {
   results: ExperimentResult[];
   kept: boolean;
   previousBest: number | null;
+  statistics: RunStatistics | null; // null wenn nur 1 Run (Schnell-Check gescheitert)
+  allRunScores: number[]; // Alle Aggregate-Scores aus allen Runs
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -101,8 +113,32 @@ function getPreviousBestScore(): number | null {
 
 // ── Core: Run single benchmark ──────────────────────────────────────────────
 
-async function runSingleBenchmark(input: BenchmarkInput): Promise<ExperimentResult> {
+// Günstige Paid-Modelle ohne Rate-Limits für den Experiment-Loop
+const EXPERIMENT_MODELS = {
+  generator: 'google/gemini-2.5-flash',
+  reviewer: 'google/gemini-2.5-flash',
+  verifier: 'google/gemini-2.5-flash',
+  semantic_repair: 'google/gemini-2.5-flash',
+  fallback: 'deepseek/deepseek-chat-v3-0324',
+};
+
+function createExperimentClient() {
   const client = getOpenRouterClient();
+  client.setPreferredModel('generator', EXPERIMENT_MODELS.generator);
+  client.setPreferredModel('reviewer', EXPERIMENT_MODELS.reviewer);
+  client.setPreferredModel('verifier', EXPERIMENT_MODELS.verifier);
+  client.setPreferredModel('semantic_repair', EXPERIMENT_MODELS.semantic_repair);
+  client.setPreferredModel('fallback', EXPERIMENT_MODELS.fallback);
+  client.setFallbackChain([
+    'google/gemini-2.5-flash',
+    'deepseek/deepseek-chat-v3-0324',
+    'openai/gpt-4.1-nano',
+  ]);
+  return client;
+}
+
+async function runSingleBenchmark(input: BenchmarkInput): Promise<ExperimentResult> {
+  const client = createExperimentClient();
   const startedAt = Date.now();
 
   try {
@@ -115,6 +151,19 @@ async function runSingleBenchmark(input: BenchmarkInput): Promise<ExperimentResu
     });
 
     const quality: PrdQualityReport | undefined = result.compilerArtifact?.quality;
+
+    // Log error issue codes for diagnosis
+    if (quality) {
+      const errorIssues = quality.issues.filter(i => i.severity === 'error');
+      const warningIssues = quality.issues.filter(i => i.severity === 'warning');
+      if (errorIssues.length > 0) {
+        console.log(`    ⛔ Error codes: ${errorIssues.map(i => `${i.code} (${i.message.slice(0, 80)})`).join(' | ')}`);
+      }
+      if (warningIssues.length > 0) {
+        console.log(`    ⚠ Warning codes: ${warningIssues.map(i => i.code).join(', ')}`);
+      }
+    }
+
     if (!quality) {
       return {
         inputName: input.name,
@@ -170,9 +219,24 @@ async function runSingleBenchmark(input: BenchmarkInput): Promise<ExperimentResu
   }
 }
 
-// ── Core: Run all benchmarks ────────────────────────────────────────────────
+// ── Core: Run all benchmarks (single pass) ──────────────────────────────────
 
-async function runAllBenchmarks(hypothesis: string): Promise<ExperimentSummary> {
+async function runBenchmarkPass(inputs: BenchmarkInput[], passLabel: string): Promise<{ results: ExperimentResult[]; aggregateScore: number }> {
+  const results: ExperimentResult[] = [];
+  for (const input of inputs) {
+    console.log(`  ▸ [${passLabel}] Running "${input.name}"...`);
+    const result = await runSingleBenchmark(input);
+    console.log(`    ${formatScoreOneLiner(result.score)} [${result.durationMs}ms]`);
+    if (result.error) console.log(`    ⚠ Error: ${result.error}`);
+    results.push(result);
+  }
+  const aggregateScore = results.reduce((sum, r) => sum + r.score.total, 0);
+  return { results, aggregateScore };
+}
+
+// ── Core: Gestufter Multi-Run Experiment-Loop ───────────────────────────────
+
+async function runAllBenchmarks(hypothesis: string, validationRuns: number): Promise<ExperimentSummary> {
   const inputs = loadBenchmarkInputs();
   if (inputs.length === 0) {
     throw new Error(`No benchmark inputs found in ${TEST_INPUTS_DIR}`);
@@ -185,40 +249,98 @@ async function runAllBenchmarks(hypothesis: string): Promise<ExperimentSummary> 
   console.log(`\n═══ AutoPRD Experiment #${runNumber} ═══`);
   console.log(`Hypothesis: ${hypothesis}`);
   console.log(`Benchmarks: ${inputs.map(i => i.name).join(', ')}`);
+  console.log(`Validation runs: ${validationRuns}`);
   console.log(`Previous best: ${previousBest ?? 'N/A (baseline run)'}\n`);
 
-  const results: ExperimentResult[] = [];
-  for (const input of inputs) {
-    console.log(`  ▸ Running "${input.name}"...`);
-    const result = await runSingleBenchmark(input);
-    console.log(`    ${formatScoreOneLiner(result.score)} [${result.durationMs}ms]`);
-    if (result.error) console.log(`    ⚠ Error: ${result.error}`);
-    results.push(result);
+  // ── Stufe 1: Schnell-Check (1 Run) ──
+  console.log(`── Stufe 1: Schnell-Check ──`);
+  const firstPass = await runBenchmarkPass(inputs, 'Schnell-Check');
+  const allRunScores: number[] = [firstPass.aggregateScore];
+
+  console.log(`\n  Schnell-Check Score: ${firstPass.aggregateScore} (previous best: ${previousBest ?? 'N/A'})`);
+
+  // Baseline-Run (kein previousBest): immer nur 1 Run, direkt behalten
+  if (previousBest === null) {
+    console.log(`  → Baseline-Run, wird direkt übernommen.\n`);
+    return {
+      runNumber, timestamp, hypothesis,
+      aggregateScore: firstPass.aggregateScore,
+      results: firstPass.results,
+      kept: true,
+      previousBest,
+      statistics: null,
+      allRunScores,
+    };
   }
 
-  const aggregateScore = results.reduce((sum, r) => sum + r.score.total, 0);
-  const kept = previousBest === null || aggregateScore < previousBest;
+  // Deutlich schlechter (>20% über Baseline): sofort verwerfen
+  const rejectThreshold = previousBest * 1.2;
+  if (firstPass.aggregateScore > rejectThreshold) {
+    console.log(`  → Deutlich schlechter als Baseline (>${rejectThreshold.toFixed(0)}), sofort verworfen.\n`);
+    return {
+      runNumber, timestamp, hypothesis,
+      aggregateScore: firstPass.aggregateScore,
+      results: firstPass.results,
+      kept: false,
+      previousBest,
+      statistics: null,
+      allRunScores,
+    };
+  }
 
-  const summary: ExperimentSummary = {
-    runNumber,
-    timestamp,
-    hypothesis,
-    aggregateScore,
-    results,
+  // ── Stufe 2: Validierung (N zusätzliche Runs) ──
+  console.log(`\n── Stufe 2: Validierung (${validationRuns} zusätzliche Runs) ──`);
+  const allResults: ExperimentResult[][] = [firstPass.results];
+
+  for (let i = 0; i < validationRuns; i++) {
+    const pass = await runBenchmarkPass(inputs, `Validierung ${i + 1}/${validationRuns}`);
+    allRunScores.push(pass.aggregateScore);
+    allResults.push(pass.results);
+    console.log(`  Validierung ${i + 1} Score: ${pass.aggregateScore}`);
+  }
+
+  // ── Stufe 3: Entscheidung per Median + Konsistenz ──
+  const statistics = computeRunStatistics(allRunScores, previousBest);
+
+  console.log(`\n── Stufe 3: Entscheidung ──`);
+  console.log(`  ${formatStatisticsOneLiner(statistics)}`);
+  console.log(`  Previous best: ${previousBest}`);
+
+  // Kept wenn: Median besser als Baseline UND mindestens 75% der Runs besser
+  const MIN_CONSISTENCY = 0.75;
+  const kept = statistics.median < previousBest && statistics.consistencyRate >= MIN_CONSISTENCY;
+
+  if (kept) {
+    console.log(`  → ✓ KEPT: Median ${statistics.median} < ${previousBest} und ${(statistics.consistencyRate * 100).toFixed(0)}% konsistent\n`);
+  } else if (statistics.median >= previousBest) {
+    console.log(`  → ✗ DISCARDED: Median ${statistics.median} >= ${previousBest}\n`);
+  } else {
+    console.log(`  → ✗ DISCARDED: Konsistenz ${(statistics.consistencyRate * 100).toFixed(0)}% < ${MIN_CONSISTENCY * 100}% Minimum\n`);
+  }
+
+  // Verwende die Ergebnisse des Median-Runs für die Detail-Anzeige
+  const medianRunIndex = findMedianRunIndex(allRunScores);
+
+  return {
+    runNumber, timestamp, hypothesis,
+    aggregateScore: statistics.median, // Median statt einzelner Score
+    results: allResults[medianRunIndex],
     kept,
     previousBest,
+    statistics,
+    allRunScores,
   };
+}
 
-  console.log(`\n  ═══ Aggregate Score: ${aggregateScore} (previous best: ${previousBest ?? 'N/A'}) ═══`);
-  console.log(`  Decision: ${kept ? '✓ KEPT (improved)' : '✗ DISCARDED (no improvement)'}\n`);
-
-  return summary;
+function findMedianRunIndex(scores: number[]): number {
+  const sorted = [...scores].map((s, i) => ({ score: s, index: i })).sort((a, b) => a.score - b.score);
+  return sorted[Math.floor(sorted.length / 2)].index;
 }
 
 // ── Dashboard: TSV + Progress ───────────────────────────────────────────────
 
 function appendToResultsTsv(summary: ExperimentSummary, changedFile: string): void {
-  const header = 'Run#\tTimestamp\tHypothese\tGeänderte_Datei\tScore_vorher\tScore_nachher\tDelta\tKept\tErrors\tWarnings\tBlockingIssues\tFeatures\tTokens\tDuration_ms';
+  const header = 'Run#\tTimestamp\tHypothese\tGeänderte_Datei\tScore_vorher\tScore_nachher\tDelta\tKept\tErrors\tWarnings\tBlockingIssues\tFeatures\tTokens\tDuration_ms\tMedian\tStddev\tRuns\tConsistency\tAll_Scores';
 
   if (!fs.existsSync(RESULTS_FILE)) {
     fs.writeFileSync(RESULTS_FILE, header + '\n', 'utf-8');
@@ -234,6 +356,7 @@ function appendToResultsTsv(summary: ExperimentSummary, changedFile: string): vo
     ? (summary.aggregateScore - summary.previousBest).toString()
     : '—';
 
+  const stats = summary.statistics;
   const row = [
     summary.runNumber,
     summary.timestamp,
@@ -249,6 +372,11 @@ function appendToResultsTsv(summary: ExperimentSummary, changedFile: string): vo
     totalFeatures,
     totalTokens,
     totalDuration,
+    stats?.median ?? '—',
+    stats ? stats.stddev.toFixed(1) : '—',
+    summary.allRunScores.length,
+    stats ? `${(stats.consistencyRate * 100).toFixed(0)}%` : '—',
+    summary.allRunScores.join(','),
   ].join('\t');
 
   fs.appendFileSync(RESULTS_FILE, row + '\n', 'utf-8');
@@ -321,7 +449,21 @@ ${recentRuns.length > 0
     }).join('\n')
   : '| — | — | — | — | — | — |'}
 
-## Per-Benchmark Breakdown (letzter Run)
+## Statistik (letzter Run)
+
+${summary.statistics
+  ? `| Metrik | Wert |
+|---|---|
+| **Median** | ${summary.statistics.median} |
+| **Mean** | ${summary.statistics.mean.toFixed(1)} |
+| **Stddev** | ±${summary.statistics.stddev.toFixed(1)} |
+| **Min/Max** | ${summary.statistics.min}..${summary.statistics.max} |
+| **Runs** | ${summary.statistics.runs} |
+| **Konsistenz** | ${(summary.statistics.consistencyRate * 100).toFixed(0)}% |
+| **Alle Scores** | ${summary.allRunScores.join(', ')} |`
+  : '> Baseline-Run (nur 1 Durchlauf, keine Statistik)'}
+
+## Per-Benchmark Breakdown (Median-Run)
 
 ${summary.results.map(r =>
   `### ${r.inputName}\n${formatScoreOneLiner(r.score)}\nStatus: ${r.qualityStatus} | Tokens: ${r.totalTokens} | Dauer: ${r.durationMs}ms${r.error ? `\n⚠ ${r.error}` : ''}`
@@ -345,6 +487,16 @@ async function main() {
     ? args[changedFileIdx + 1]
     : '';
 
+  const validationRunsIdx = args.indexOf('--validation-runs');
+  const validationRuns = validationRunsIdx >= 0 && args[validationRunsIdx + 1]
+    ? parseInt(args[validationRunsIdx + 1], 10)
+    : DEFAULT_VALIDATION_RUNS;
+
+  if (isNaN(validationRuns) || validationRuns < 0) {
+    console.error('--validation-runs must be a non-negative integer');
+    process.exit(2);
+  }
+
   const dryRun = args.includes('--dry-run');
 
   if (dryRun) {
@@ -352,10 +504,11 @@ async function main() {
     const inputs = loadBenchmarkInputs();
     console.log(`Found ${inputs.length} benchmarks: ${inputs.map(i => i.name).join(', ')}`);
     console.log(`Previous best score: ${getPreviousBestScore() ?? 'N/A'}`);
+    console.log(`Validation runs: ${validationRuns}`);
     return;
   }
 
-  const summary = await runAllBenchmarks(hypothesis);
+  const summary = await runAllBenchmarks(hypothesis, validationRuns);
 
   // Write dashboard
   appendToResultsTsv(summary, changedFile);
