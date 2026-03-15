@@ -421,6 +421,7 @@ const TARGETED_DETERMINISTIC_REPAIR_CODES = new Set([
   'feature_content_shallow',
   'feature_core_semantic_gap',
   'generic_section_boilerplate_timelineMilestones',
+  'generic_section_boilerplate_outOfScope',
   'template_semantic_boilerplate_successCriteria',
   'schema_field_reference_missing',
   'timeline_feature_reference_mismatch',
@@ -1186,6 +1187,17 @@ function toDeterministicContentIssues(
         code: issue.code,
         sectionKey: 'timelineMilestones',
         message: issue.message,
+        severity: 'error',
+        suggestedAction: 'rewrite',
+      });
+      continue;
+    }
+
+    if (issue.code === 'generic_section_boilerplate_outOfScope') {
+      pushIssue({
+        code: issue.code,
+        sectionKey: 'outOfScope',
+        message: `${issue.message} Rewrite the Out-of-Scope section so it lists concrete exclusions specific to this project — not generic boilerplate. Reference actual features or capabilities that were considered but deliberately excluded, and explain why.`,
         severity: 'error',
         suggestedAction: 'rewrite',
       });
