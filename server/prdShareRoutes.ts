@@ -9,6 +9,7 @@ Beschreibung: Registriert PRD-Share-Routen als kleines Modul.
 // um die Hauptdatei konservativ weiter zu verkleinern.
 
 import type { Request, RequestHandler } from 'express';
+import { ZodError } from 'zod';
 import { asyncHandler } from './asyncHandler';
 import { requirePrdAccess } from './prdAccess';
 import { canShareWithUser, planShareAction } from './sharePolicy';
@@ -42,16 +43,21 @@ export function registerPrdShareRoutes(
 ): void {
   app.post('/api/prds/:id/share', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
     const { id } = req.params;
-    const { email, permission } = sharePrdSchema.parse(req.body);
     const userId = req.user.claims.sub;
-    const prd = await deps.storage.getPrd(id);
-
+    const prd = await deps.requirePrdAccess(deps.storage, req, res, id, 'edit');
     if (!prd) {
-      return res.status(404).json({ message: 'PRD not found' });
+      return;
     }
 
-    if (prd.userId !== userId) {
-      return res.status(403).json({ message: 'Only the owner can share this PRD' });
+    let email: string;
+    let permission: 'view' | 'edit' | undefined;
+    try {
+      ({ email, permission } = sharePrdSchema.parse(req.body));
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({ message: error.issues[0]?.message || 'Validation error' });
+      }
+      throw error;
     }
 
     const sharedUser = await deps.storage.getUserByEmail(email);

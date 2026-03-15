@@ -149,6 +149,11 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
         semanticRepairModel: resolvedState.semanticRepairModel,
         fallbackChain: resolvedState.fallbackChain,
         aiTier: resolvedState.aiTier,
+        iterativeMode: resolvedState.iterativeMode,
+        iterationCount: resolvedState.iterationCount,
+        iterativeTimeoutMinutes: resolvedState.iterativeTimeoutMinutes,
+        useFinalReview: resolvedState.useFinalReview,
+        guidedQuestionRounds: resolvedState.guidedQuestionRounds,
       });
       aiPrefsLoadedRef.current = true;
     }
@@ -183,6 +188,11 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
     semanticRepairModel,
     fallbackChain,
     aiTier,
+    iterativeMode,
+    iterationCount,
+    iterativeTimeoutMinutes,
+    useFinalReview,
+    guidedQuestionRounds,
   });
   const debouncedModelSettings = useDebounce(aiModelSettingsKey, 1500);
 
@@ -197,6 +207,11 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
             semanticRepairModel?: string;
             fallbackChain?: string[];
             aiTier?: AiTier;
+            iterativeMode?: boolean;
+            iterationCount?: number;
+            iterativeTimeoutMinutes?: number;
+            useFinalReview?: boolean;
+            guidedQuestionRounds?: number;
           }
         : {};
       const generatorModelToSave = modelSettings.generatorModel || generatorModel;
@@ -205,6 +220,11 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
       const semanticRepairModelToSave = modelSettings.semanticRepairModel || semanticRepairModel;
       const fallbackChainToSave = modelSettings.fallbackChain || fallbackChain;
       const tierToSave = modelSettings.aiTier || aiTier;
+      const iterativeModeToSave = modelSettings.iterativeMode ?? iterativeMode;
+      const iterationCountToSave = modelSettings.iterationCount ?? iterationCount;
+      const iterativeTimeoutMinutesToSave = modelSettings.iterativeTimeoutMinutes ?? iterativeTimeoutMinutes;
+      const useFinalReviewToSave = modelSettings.useFinalReview ?? useFinalReview;
+      const guidedQuestionRoundsToSave = modelSettings.guidedQuestionRounds ?? guidedQuestionRounds;
 
       return await apiRequest("PATCH", "/api/settings/ai", buildAiSettingsPayload({
         savedTierModels,
@@ -215,11 +235,11 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
         fallbackChain: fallbackChainToSave,
         aiTier: tierToSave,
         tierDefaults,
-        iterativeMode,
-        iterationCount,
-        iterativeTimeoutMinutes,
-        useFinalReview,
-        guidedQuestionRounds,
+        iterativeMode: iterativeModeToSave,
+        iterationCount: iterationCountToSave,
+        iterativeTimeoutMinutes: iterativeTimeoutMinutesToSave,
+        useFinalReview: useFinalReviewToSave,
+        guidedQuestionRounds: guidedQuestionRoundsToSave,
       }));
     },
     onSuccess: () => {
@@ -262,6 +282,11 @@ export function AiModelSettingsSection({ providers, selectedProviders }: AiModel
       semanticRepairModel,
       fallbackChain,
       aiTier,
+      iterativeMode,
+      iterationCount,
+      iterativeTimeoutMinutes,
+      useFinalReview,
+      guidedQuestionRounds,
     });
     if (currentKey === lastSavedModelKeyRef.current) return;
     if (!aiPrefsLoadedRef.current) return;

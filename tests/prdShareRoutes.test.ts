@@ -54,7 +54,10 @@ describe('registerPrdShareRoutes', () => {
   it('liefert 404, wenn die PRD beim Teilen nicht existiert', async () => {
     const { app, routes } = createFakeApp();
     const dependencies = buildDependencies({
-      storage: { ...buildDependencies().storage, getPrd: vi.fn().mockResolvedValue(undefined) } as any,
+      requirePrdAccess: vi.fn().mockImplementation(async (_storage: any, _req: any, res: any) => {
+        res.status(404).json({ message: 'PRD not found' });
+        return undefined;
+      }),
     });
     registerPrdShareRoutes(app as any, PASS_THROUGH_AUTH, dependencies);
 
@@ -66,7 +69,10 @@ describe('registerPrdShareRoutes', () => {
   it('liefert 403, wenn ein Nicht-Owner teilen will', async () => {
     const { app, routes } = createFakeApp();
     const dependencies = buildDependencies({
-      storage: { ...buildDependencies().storage, getPrd: vi.fn().mockResolvedValue({ id: 'prd-1', userId: 'other-user' }) } as any,
+      requirePrdAccess: vi.fn().mockImplementation(async (_storage: any, _req: any, res: any) => {
+        res.status(403).json({ message: 'Only the owner can share this PRD' });
+        return undefined;
+      }),
     });
     registerPrdShareRoutes(app as any, PASS_THROUGH_AUTH, dependencies);
 

@@ -23,6 +23,7 @@ export interface OpenRouterModel {
 let modelsCache: OpenRouterModel[] | null = null;
 let modelsCacheTimestamp = 0;
 const MODELS_CACHE_TTL = 30 * 60 * 1000;
+const OPENROUTER_MODELS_TIMEOUT_MS = 5000;
 
 export async function fetchOpenRouterModels(): Promise<OpenRouterModel[]> {
   const now = Date.now();
@@ -35,11 +36,24 @@ export async function fetchOpenRouterModels(): Promise<OpenRouterModel[]> {
     throw new Error('OpenRouter API key not configured');
   }
 
-  const response = await fetch('https://openrouter.ai/api/v1/models', {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-    },
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), OPENROUTER_MODELS_TIMEOUT_MS);
+  let response: globalThis.Response;
+  try {
+    response = await fetch('https://openrouter.ai/api/v1/models', {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: controller.signal,
+    });
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`OpenRouter models request timed out after ${OPENROUTER_MODELS_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     throw new Error(`Failed to fetch models from OpenRouter: ${response.status}`);

@@ -137,10 +137,28 @@ export interface CompilerRunMetricsSummary {
   }>;
 }
 
-interface UsageSample {
+export interface UsageSample {
   model: string;
   usage: TokenUsage;
 }
+
+interface UsageSampleCandidate {
+  origin: string;
+  value: unknown;
+}
+
+const VALID_QUALITY_STATUSES: readonly PrdQualityStatus[] = [
+  "passed",
+  "degraded",
+  "failed_quality",
+  "failed_runtime",
+  "cancelled",
+];
+
+const VALID_FINALIZATION_STAGES: readonly PrdFinalizationStage[] = [
+  "intermediate",
+  "final",
+];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -185,7 +203,7 @@ function formatUsd(value: number): string {
   return `$${value.toFixed(4)}`;
 }
 
-function hasReviewerRepair(artifact: CompilerRunArtifact): boolean {
+export function hasReviewerRepair(artifact: CompilerRunArtifact): boolean {
   const diagnostics = artifact.compilerDiagnostics;
   if (!diagnostics) return false;
   return (
@@ -200,7 +218,7 @@ function isFirstPassAccepted(artifact: CompilerRunArtifact): boolean {
   return artifact.qualityStatus === "passed" && !hasReviewerRepair(artifact) && !diagnostics?.failureStage;
 }
 
-function isAcceptedRun(artifact: CompilerRunArtifact): boolean {
+export function isAcceptedRun(artifact: CompilerRunArtifact): boolean {
   return artifact.qualityStatus === "passed" || artifact.qualityStatus === "degraded";
 }
 
@@ -238,35 +256,59 @@ function toUsageSample(value: unknown): UsageSample | null {
   };
 }
 
-function collectUsageSamples(artifact: CompilerRunArtifact): UsageSample[] {
+function isPrdQualityStatus(value: string): value is PrdQualityStatus {
+  return (VALID_QUALITY_STATUSES as readonly string[]).includes(value);
+}
+
+function isPrdFinalizationStage(value: string): value is PrdFinalizationStage {
+  return (VALID_FINALIZATION_STAGES as readonly string[]).includes(value);
+}
+
+export function collectUsageSamples(artifact: CompilerRunArtifact): UsageSample[] {
   const stageData = artifact.stageData || {};
-  const candidates: unknown[] = [
-    stageData.generatorResponse,
-    stageData.reviewerResponse,
-    stageData.improvedVersion,
-    stageData.analysisStage,
-    stageData.generationStage,
-    stageData.finalReview,
+  const candidates: UsageSampleCandidate[] = [
+    { origin: "stageData.generatorResponse", value: stageData.generatorResponse },
+    { origin: "stageData.reviewerResponse", value: stageData.reviewerResponse },
+    { origin: "stageData.improvedVersion", value: stageData.improvedVersion },
+    { origin: "stageData.analysisStage", value: stageData.analysisStage },
+    { origin: "stageData.generationStage", value: stageData.generationStage },
+    { origin: "stageData.finalReview", value: stageData.finalReview },
   ];
 
   const compilerArtifact = isRecord(stageData.compilerArtifact) ? stageData.compilerArtifact : null;
   if (compilerArtifact) {
     if (Array.isArray(compilerArtifact.repairAttempts)) {
-      candidates.push(...compilerArtifact.repairAttempts);
+      candidates.push(
+        ...compilerArtifact.repairAttempts.map((entry, index) => ({
+          origin: `compilerArtifact.repairAttempts[${index}]`,
+          value: entry,
+        }))
+      );
     }
     if (Array.isArray(compilerArtifact.reviewerAttempts)) {
-      candidates.push(...compilerArtifact.reviewerAttempts);
+      candidates.push(
+        ...compilerArtifact.reviewerAttempts.map((entry, index) => ({
+          origin: `compilerArtifact.reviewerAttempts[${index}]`,
+          value: entry,
+        }))
+      );
     }
     if (Array.isArray(compilerArtifact.semanticVerificationHistory)) {
-      candidates.push(...compilerArtifact.semanticVerificationHistory);
+      candidates.push(
+        ...compilerArtifact.semanticVerificationHistory.map((entry, index) => ({
+          origin: `compilerArtifact.semanticVerificationHistory[${index}]`,
+          value: entry,
+        }))
+      );
     }
   }
 
   const deduped = new Map<string, UsageSample>();
   for (const candidate of candidates) {
-    const sample = toUsageSample(candidate);
+    const sample = toUsageSample(candidate.value);
     if (!sample) continue;
     const key = [
+      candidate.origin,
       sample.model,
       sample.usage.prompt_tokens ?? 0,
       sample.usage.completion_tokens ?? 0,
@@ -280,7 +322,7 @@ function collectUsageSamples(artifact: CompilerRunArtifact): UsageSample[] {
   return Array.from(deduped.values());
 }
 
-function deriveTotalTokens(artifact: CompilerRunArtifact, usageSamples: UsageSample[]): number | undefined {
+export function deriveTotalTokens(artifact: CompilerRunArtifact, usageSamples: UsageSample[]): number | undefined {
   const explicitTotal = toFiniteNumber(artifact.stageData?.totalTokens);
   if (explicitTotal !== undefined) {
     return explicitTotal;
@@ -301,6 +343,8 @@ function normalizeArtifact(raw: unknown, artifactPath: string): CompilerRunArtif
   if (typeof raw.routeKey !== "string") return null;
   if (typeof raw.qualityStatus !== "string") return null;
   if (typeof raw.finalizationStage !== "string") return null;
+  if (!isPrdQualityStatus(raw.qualityStatus)) return null;
+  if (!isPrdFinalizationStage(raw.finalizationStage)) return null;
 
   const compiled = isRecord(raw.compiled) ? raw.compiled : {};
   const stageData = isRecord(raw.stageData) ? raw.stageData : {};
@@ -309,8 +353,8 @@ function normalizeArtifact(raw: unknown, artifactPath: string): CompilerRunArtif
     timestamp: raw.timestamp,
     workflow: raw.workflow,
     routeKey: raw.routeKey,
-    qualityStatus: raw.qualityStatus as PrdQualityStatus,
-    finalizationStage: raw.finalizationStage as PrdFinalizationStage,
+    qualityStatus: raw.qualityStatus,
+    finalizationStage: raw.finalizationStage,
     finalContent: typeof raw.finalContent === "string" ? raw.finalContent : "",
     compiled: {
       content: typeof compiled.content === "string" ? compiled.content : "",

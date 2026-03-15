@@ -707,7 +707,7 @@ export class AbacusProvider extends BaseAIProvider {
   }
 
   async callModel(options: CallOptions): Promise<AIResponse> {
-    const { model, messages, temperature = 0.7, maxTokens, stream, response: expressResponse, abortSignal } = options;
+    const { model, messages, temperature = 0.7, maxTokens, responseFormat, stream, response: expressResponse, abortSignal } = options;
 
     this.logMessage(`Calling Abacus AI model: ${model}`, { temperature, maxTokens, stream });
 
@@ -720,6 +720,9 @@ export class AbacusProvider extends BaseAIProvider {
 
     if (maxTokens) {
       requestBody.max_tokens = maxTokens;
+    }
+    if (responseFormat) {
+      requestBody.response_format = responseFormat;
     }
 
     try {
@@ -744,8 +747,21 @@ export class AbacusProvider extends BaseAIProvider {
           return await this.processAbacusResponse(fetchResponse, model, stream, expressResponse);
         } catch (retryErr) {
           lastError = retryErr as Error;
-          const isTimeout = lastError.message?.toLowerCase().includes('timed out') ||
-                            lastError.message?.toLowerCase().includes('abort');
+          const retryError = retryErr as Error & { code?: string };
+          const message = lastError.message?.toLowerCase() || '';
+          const isAbort =
+            retryError.name === 'AbortError'
+            || retryError.code === 'ERR_CANCELED'
+            || retryError.code === 'ERR_CLIENT_DISCONNECT'
+            || message.includes('canceled')
+            || message.includes('cancelled');
+          const isTimeout = !isAbort && (
+            message.includes('timed out')
+            || message.includes('timeout')
+          );
+          if (isAbort) {
+            throw lastError;
+          }
           if (attempt < maxRetries && isTimeout) {
             this.logMessage(`Abacus route-llm timeout — retry ${attempt + 1}/${maxRetries}`, { model });
             continue;

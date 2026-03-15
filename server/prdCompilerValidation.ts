@@ -159,7 +159,7 @@ export function validatePrdStructureInternal(
       structure,
       language: options?.targetLanguage || 'en',
       templateCategory: options?.templateCategory,
-      contextHint: options?.sourceContent || rawContent,
+      contextHint: options?.contextHint || options?.sourceContent || rawContent,
     });
 
     if (!wasCompilerFilled && !matchesCurrentFallback && isGenericFallback(String(value || ''))) {

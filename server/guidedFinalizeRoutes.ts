@@ -27,6 +27,7 @@ import {
 import {
   logGuidedGenerationUsage,
   persistGuidedPrdFinalizationBestEffort,
+  sumGuidedStageUsage,
 } from './guidedRoutePersistence';
 import {
   AuthenticatedRequest,
@@ -72,7 +73,14 @@ export function registerGuidedFinalizeRoutes(
       });
       const saveRequested = !!(prdContext.editablePrdId && assessed.qualityStatus === 'passed');
 
-      await logGuidedGenerationUsage(userId, result.modelsUsed, result.tokensUsed, prdId);
+      const finalizeUsage = sumGuidedStageUsage(result.analysisStage, result.generationStage);
+      await logGuidedGenerationUsage(
+        userId,
+        result.modelsUsed,
+        finalizeUsage.promptTokens,
+        finalizeUsage.completionTokens,
+        prdId,
+      );
 
       const payload = buildGuidedResponsePayload({
         result,
@@ -207,7 +215,14 @@ export function registerGuidedFinalizeRoutes(
       });
       const saveRequested = !!(prdContext.editablePrdId && assessed.qualityStatus === 'passed');
 
-      await logGuidedGenerationUsage(userId, result.modelsUsed, result.tokensUsed, prdId);
+      const skipUsage = sumGuidedStageUsage(result.analysisStage, result.generationStage);
+      await logGuidedGenerationUsage(
+        userId,
+        result.modelsUsed,
+        skipUsage.promptTokens,
+        skipUsage.completionTokens,
+        prdId,
+      );
 
       const payload = buildGuidedResponsePayload({
         result,

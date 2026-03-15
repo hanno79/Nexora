@@ -234,7 +234,7 @@ class OpenRouterClient {
     let status: ModelCallAttemptUpdate['status'] = 'failed';
     let finishReason: string | undefined;
     let errorMessage: string | undefined;
-    const providerName = provider && provider !== 'openrouter' ? provider : 'openrouter';
+    let providerName = provider && provider !== 'openrouter' ? provider : 'openrouter';
     const publishAttemptUpdate = (update: Partial<ModelCallAttemptUpdate>) => {
       mergedExecutionContext.onAttemptUpdate?.({
         role: modelType,
@@ -261,18 +261,21 @@ class OpenRouterClient {
             userPrompt,
             maxTokens,
             temperature,
+            responseFormat,
             mergedExecutionContext,
           );
           finishReason = result.finishReason;
           status = 'succeeded';
+          errorMessage = undefined;
           console.log(`[OpenRouterClient] Direct ${provider} call successful for ${modelName}`);
           return result;
         } catch (error: any) {
           if (error?.name === 'AbortError' || error?.code === 'ERR_CLIENT_DISCONNECT') {
             throw error;
           }
-          console.warn(`[OpenRouterClient] Direct provider call failed for ${modelName}:`, error.message);
-          throw new Error(`Direct ${provider} call failed for ${modelName}: ${error.message}`);
+          errorMessage = error?.message || `Direct ${provider} call failed`;
+          providerName = 'openrouter';
+          console.warn(`[OpenRouterClient] Direct provider call failed for ${modelName}; falling back to OpenRouter:`, errorMessage);
         }
       }
 
@@ -409,6 +412,7 @@ class OpenRouterClient {
 
         finishReason = data.choices[0]?.finish_reason;
         status = 'succeeded';
+        errorMessage = undefined;
         return {
           content: stripThinkTags(data.choices[0].message.content),
           usage: data.usage,
@@ -505,6 +509,7 @@ class OpenRouterClient {
     userPrompt: string,
     maxTokens: number,
     temperature: number,
+    responseFormat?: { type: 'json_object' },
     executionContext?: ModelCallExecutionContext,
   ): Promise<{ content: string; usage: TokenUsage; model: string; finishReason?: string }> {
     const normalizedProvider = String(provider).replace(/[^A-Za-z0-9]+/g, '_').toUpperCase();
@@ -523,6 +528,7 @@ class OpenRouterClient {
       ],
       temperature,
       maxTokens,
+      responseFormat,
       abortSignal: executionContext?.abortSignal,
     });
 
@@ -546,7 +552,7 @@ class OpenRouterClient {
     responseFormat?: { type: 'json_object' },
     temperature?: number,
     constraints?: CallWithFallbackConstraints,
-  ): Promise<{ content: string; usage: TokenUsage; model: string; tier: string; usedFallback: boolean; finishReason?: string }> {
+  ): Promise<{ content: string; usage: TokenUsage; model: string; tier: string; usedFallback: boolean; finishReason?: string; fallbackDiagnostics: import('./openrouterFallback').FallbackAttemptDiagnostic[] }> {
     const mergedConstraints: CallWithFallbackConstraints | undefined = constraints
       ? {
           ...this.defaultExecutionContext,

@@ -45,6 +45,7 @@ export interface CallOptions {
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
   temperature?: number;
   maxTokens?: number;
+  responseFormat?: { type: 'json_object' };
   stream?: boolean;
   response?: Response;
   abortSignal?: AbortSignal;

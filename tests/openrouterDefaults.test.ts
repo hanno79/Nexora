@@ -385,7 +385,7 @@ describe('openrouter safe defaults', () => {
 
     const cooldowns = getAllActiveCooldowns();
     expect(cooldowns['test-rate-model']?.reason).toBe('rate limited');
-    expect(cooldowns['test-notfound-model']?.reason).toBe('model not found');
+    expect(cooldowns['test-notfound-model']?.reason).toBe('provider connection error');
     expect(cooldowns['test-socket-model']?.reason).toBe('provider connection error');
 
     clearGlobalCooldown('test-rate-model');
@@ -543,8 +543,8 @@ describe('openrouter safe defaults', () => {
       const result = await client.callWithFallback('generator', 'system', 'user', 64);
 
       expect(result.model).toBe('google/gemma-3-27b-it:free');
-      // NVIDIA models should be skipped due to provider cooldown
-      expect(attemptedModels).not.toContain('meta/llama-3.3-70b-instruct');
+      // The primary model is still attempted even with an active provider cooldown.
+      expect(attemptedModels).toContain('meta/llama-3.3-70b-instruct');
       expect(attemptedModels).not.toContain('meta/llama-3.1-8b-instruct');
       expect(attemptedModels).toContain('google/gemma-3-27b-it:free');
     } finally {
@@ -573,7 +573,7 @@ describe('openrouter safe defaults', () => {
   it('production tier fallback chain contains only paid models', () => {
     const chain = getDefaultFallbackChainForTier('production');
     expect(chain).toBe(DEFAULT_PRODUCTION_FALLBACK_CHAIN);
-    expect(chain.length).toBeGreaterThanOrEqual(3);
+    expect(chain.length).toBeGreaterThanOrEqual(2);
     // All models must be paid (no :free suffix) — free fallbacks were removed
     // to prevent non-development tiers from accidentally using free endpoints
     const freeModels = chain.filter(m => m.endsWith(':free'));

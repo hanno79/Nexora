@@ -45,10 +45,11 @@ export const DEFAULT_FREE_FALLBACK_CHAIN: readonly string[] = [
 
 // ÄNDERUNG 13.03.2026: Free-Modelle aus Production/Premium-Chains entfernt,
 // damit diese Tiers nie versehentlich auf Free-Endpunkte zurueckfallen.
+// ÄNDERUNG 15.03.2026: llama-4-maverick entfernt — soll nicht als Production-Fallback dienen,
+// da vom User nicht als aktives Modell gewuenscht. Chain auf 2 zuverlaessige Modelle gekuerzt.
 export const DEFAULT_PRODUCTION_FALLBACK_CHAIN: readonly string[] = [
   'google/gemini-2.5-flash',
   'mistralai/mistral-small-3.1-24b-instruct',
-  'meta-llama/llama-4-maverick-17b-128e-instruct',
 ];
 
 export const DEFAULT_PREMIUM_FALLBACK_CHAIN: readonly string[] = [
@@ -58,11 +59,10 @@ export const DEFAULT_PREMIUM_FALLBACK_CHAIN: readonly string[] = [
 ];
 
 export const DEFAULT_ABACUS_FALLBACK_CHAIN: readonly string[] = [
-  'claude-4-5-sonnet',
-  'gpt-5.2',
-  'gemini-2.5-pro',
-  'deepseek-v3.2',
-  'gpt-4.1',
+  'anthropic/claude-sonnet-4',
+  'openai/o4-mini-high',
+  'google/gemini-2.5-pro-preview',
+  'deepseek/deepseek-chat-v3-0324',
 ];
 
 export const DEPRECATED_MODEL_IDS = new Set<string>([
@@ -76,7 +76,7 @@ export const DEFAULT_FALLBACK_MODEL_BY_TIER: Record<keyof ModelConfig, string> =
   development: DEFAULT_FREE_FALLBACK_MODEL,
   production: 'google/gemini-2.5-flash',
   premium: 'anthropic/claude-sonnet-4',
-  abacus: 'claude-4-5-sonnet',
+  abacus: 'anthropic/claude-sonnet-4',
 };
 
 export function getDefaultFallbackChainForTier(tier: keyof ModelConfig): readonly string[] {

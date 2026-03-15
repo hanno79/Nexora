@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation, useRoute } from "wouter";
 import ReactMarkdown from "react-markdown";
@@ -87,7 +87,7 @@ import { formatDistance } from "date-fns";
 type PatchPrdPayload = Pick<Prd, 'title' | 'status'> & {
   description?: string;
   content?: string;
-  iterationLog?: string;
+  iterationLog?: string | null;
 };
 
 function shortModelName(model?: string | null): string {
@@ -137,6 +137,28 @@ function getCompilerIssueIdentity(issue: ClientCompilerIssue): string {
   ].join("::");
 }
 
+function collectDiagnosticIssues(
+  diagnostics?: ClientCompilerDiagnostics | null,
+): ClientCompilerIssue[] {
+  if (!diagnostics) return [];
+
+  return [
+    ...(diagnostics.finalSemanticBlockingIssues
+      ?? diagnostics.semanticBlockingIssues
+      ?? []),
+    ...(diagnostics.qualityIssues ?? []),
+  ];
+}
+
+function areIssueCollectionsEqual(
+  left: ClientCompilerIssue[],
+  right: ClientCompilerIssue[],
+): boolean {
+  if (left.length !== right.length) return false;
+  const rightKeys = new Set(right.map(getCompilerIssueIdentity));
+  return left.every(issue => rightKeys.has(getCompilerIssueIdentity(issue)));
+}
+
 function humanizeRepairGapReason(value?: string | null): string {
   return value ? humanizeDiagnosticCode(value) : "—";
 }
@@ -150,6 +172,9 @@ function renderDiagnosticIssueGroup(params: {
   onFixIssue?: (issue: ClientCompilerIssue) => void;
   repairingIssueKey?: string | null;
   isAnyRepairActive?: boolean;
+  actionPrefix: string;
+  fixLabel: string;
+  repairingLabel: string;
 }) {
   if (!params.issues || params.issues.length === 0) return null;
 
@@ -172,7 +197,7 @@ function renderDiagnosticIssueGroup(params: {
               <Badge variant="outline">{issue.code}</Badge>
               <span className="text-xs text-muted-foreground">{formatSectionLabel(issue.sectionKey)}</span>
               {issue.suggestedAction && (
-                <span className="text-xs text-muted-foreground">action: {issue.suggestedAction}</span>
+                <span className="text-xs text-muted-foreground">{params.actionPrefix} {issue.suggestedAction}</span>
               )}
               {params.showFixButtons && params.onFixIssue && (
                 <Button
@@ -187,7 +212,7 @@ function renderDiagnosticIssueGroup(params: {
                   ) : (
                     <Wrench className="h-3 w-3 mr-1" />
                   )}
-                  {params.repairingIssueKey === issueKey ? "..." : "Fix"}
+                  {params.repairingIssueKey === issueKey ? params.repairingLabel : params.fixLabel}
                 </Button>
               )}
             </div>
@@ -299,7 +324,7 @@ export default function Editor() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
-  const [iterationLog, setIterationLog] = useState("");
+  const [iterationLog, setIterationLog] = useState<string | null>(null);
   const [compilerDiagnostics, setCompilerDiagnostics] = useState<ClientCompilerDiagnostics | null>(null);
   const [lastAiRunRecord, setLastAiRunRecord] = useState<ClientCompilerRunRecord | null>(null);
   const [activeTab, setActiveTab] = useState<"prd" | "log" | "diagnostics" | "structure">("prd");
@@ -329,6 +354,16 @@ export default function Editor() {
   const [repairingIssueKey, setRepairingIssueKey] = useState<string | null>(null);
   const [repairAllInProgress, setRepairAllInProgress] = useState(false);
   const [repairProgress, setRepairProgress] = useState<{ current: number; total: number } | null>(null);
+  const contentRef = useRef(content);
+  const compilerDiagnosticsRef = useRef<ClientCompilerDiagnostics | null>(null);
+
+  useEffect(() => {
+    contentRef.current = content;
+  }, [content]);
+
+  useEffect(() => {
+    compilerDiagnosticsRef.current = compilerDiagnostics;
+  }, [compilerDiagnostics]);
 
   const { data: prd, isLoading } = useQuery<Prd>({
     queryKey: prdDetailQueryKey,
@@ -356,9 +391,9 @@ export default function Editor() {
       
       setContent(contentToSet);
       setStatus(prd.status);
-      const nextIterationLog = prd.iterationLog || "";
+      const nextIterationLog = prd.iterationLog ?? null;
       setIterationLog(nextIterationLog);
-      const persistedRun = extractLatestCompilerRunRecord(nextIterationLog);
+      const persistedRun = extractLatestCompilerRunRecord(nextIterationLog || "");
       setCompilerDiagnostics(persistedRun?.compilerDiagnostics || null);
       setLastAiRunRecord(persistedRun);
     }
@@ -415,9 +450,7 @@ export default function Editor() {
 
   const applyAiRunRecord = (response: any) => {
     const runRecord = extractAiRunRecord(response);
-    if (runRecord.iterationLog) {
-      setIterationLog(runRecord.iterationLog);
-    }
+    setIterationLog(runRecord.iterationLog ?? null);
     setCompilerDiagnostics(runRecord.compilerDiagnostics || null);
     setLastAiRunRecord(runRecord);
     return runRecord;
@@ -458,17 +491,23 @@ export default function Editor() {
     issue: ClientCompilerIssue,
     allIssuesOverride?: ClientCompilerIssue[],
   ): Promise<RepairResult> => {
-    if (repairingIssueKey !== null || !content) return { outcome: "skipped" };
+    const latestContent = contentRef.current;
+    if (repairingIssueKey !== null || !latestContent) return { outcome: "skipped" };
     setRepairingIssueKey(getCompilerIssueIdentity(issue));
     try {
-      // Use override (from Fix All loop) or read current diagnostics
-      const currentAllIssues = allIssuesOverride ?? [
-        ...(compilerDiagnostics?.finalSemanticBlockingIssues
-          ?? compilerDiagnostics?.semanticBlockingIssues
-          ?? []),
-      ];
+      const diagnostics = compilerDiagnosticsRef.current;
+      const semanticIssues = diagnostics?.finalSemanticBlockingIssues
+        ?? diagnostics?.semanticBlockingIssues
+        ?? [];
+      const semanticIssueKeys = new Set(semanticIssues.map(getCompilerIssueIdentity));
+      const issueKey = getCompilerIssueIdentity(issue);
+      const isQualityIssue = (diagnostics?.qualityIssues ?? []).some(
+        existingIssue => getCompilerIssueIdentity(existingIssue) === issueKey
+      );
+      const isSemanticIssue = semanticIssueKeys.has(issueKey);
+      const currentAllIssues = allIssuesOverride ?? collectDiagnosticIssues(diagnostics);
       const response = await apiRequest("POST", "/api/ai/repair-issue", {
-        prdContent: content,
+        prdContent: latestContent,
         issue,
         language: language === "de" ? "de" : "en",
         templateCategory: prd?.templateId ? getTemplateById(prd.templateId)?.category : undefined,
@@ -477,6 +516,12 @@ export default function Editor() {
       });
       const result = await response.json();
       const remaining = (result.remainingIssues as ClientCompilerIssue[] | undefined) ?? [];
+      const mergedRemainingIssues = isSemanticIssue
+        ? [
+            ...remaining,
+            ...currentAllIssues.filter(existingIssue => !semanticIssueKeys.has(getCompilerIssueIdentity(existingIssue))),
+          ]
+        : currentAllIssues.filter(existingIssue => getCompilerIssueIdentity(existingIssue) !== issueKey);
       if (result.rolledBack) {
         toast({ title: language === "de" ? "Fix wuerde neue Fehler erzeugen — uebersprungen" : "Fix would introduce new issues — skipped" });
         return { outcome: "skipped", remainingIssues: currentAllIssues };
@@ -487,17 +532,24 @@ export default function Editor() {
       if (result.resolved) {
         setCompilerDiagnostics(prev => {
           if (!prev) return prev;
+          const nextSemanticIssues = isSemanticIssue
+            ? (remaining.length ? remaining : undefined)
+            : (prev.finalSemanticBlockingIssues ?? prev.semanticBlockingIssues);
+          const nextQualityIssues = isQualityIssue
+            ? (prev.qualityIssues ?? []).filter(existingIssue => getCompilerIssueIdentity(existingIssue) !== issueKey)
+            : (prev.qualityIssues ?? []);
           return {
             ...prev,
-            finalSemanticBlockingIssues: remaining.length ? remaining : undefined,
-            semanticBlockingIssues: remaining.length ? remaining : undefined,
+            finalSemanticBlockingIssues: nextSemanticIssues,
+            semanticBlockingIssues: nextSemanticIssues,
+            qualityIssues: nextQualityIssues.length ? nextQualityIssues : undefined,
           };
         });
         toast({ title: t.dualAi.issueFixed });
-        return { outcome: "resolved", remainingIssues: remaining };
+        return { outcome: "resolved", remainingIssues: mergedRemainingIssues };
       } else {
         toast({ title: t.dualAi.issueNotFixable, variant: "destructive" });
-        return { outcome: "failed", remainingIssues: remaining.length ? remaining : currentAllIssues };
+        return { outcome: "failed", remainingIssues: currentAllIssues };
       }
     } catch (err: any) {
       toast({
@@ -512,12 +564,7 @@ export default function Editor() {
   };
 
   const handleFixAllIssues = async () => {
-    // Snapshot initial issues — used as starting point for the loop
-    let liveIssues: ClientCompilerIssue[] = [
-      ...(compilerDiagnostics?.finalSemanticBlockingIssues
-        ?? compilerDiagnostics?.semanticBlockingIssues
-        ?? []),
-    ];
+    let liveIssues: ClientCompilerIssue[] = collectDiagnosticIssues(compilerDiagnosticsRef.current);
     if (!liveIssues.length || repairAllInProgress) return;
 
     setRepairAllInProgress(true);
@@ -528,16 +575,19 @@ export default function Editor() {
     const MAX_ITERATIONS = Math.min(liveIssues.length * 2, 15);
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
-      // Use server-returned remainingIssues (not stale React state)
-      const actionableIssues = liveIssues.filter(
+      const diagnosticsIssues = collectDiagnosticIssues(compilerDiagnosticsRef.current);
+      const currentIssues = areIssueCollectionsEqual(diagnosticsIssues, liveIssues)
+        ? diagnosticsIssues
+        : liveIssues;
+      const actionableIssues = currentIssues.filter(
         i => !skippedKeys.has(getCompilerIssueIdentity(i))
       );
       if (actionableIssues.length === 0) break;
 
       const nextIssue = actionableIssues[0];
-      setRepairProgress({ current: fixedCount + skippedCount + failedCount + 1, total: liveIssues.length });
+      setRepairProgress({ current: fixedCount + skippedCount + failedCount + 1, total: currentIssues.length });
 
-      const result = await handleFixSingleIssue(nextIssue, liveIssues);
+      const result = await handleFixSingleIssue(nextIssue, currentIssues);
       if (result.outcome === "resolved") {
         fixedCount++;
       } else if (result.outcome === "skipped") {
@@ -547,9 +597,10 @@ export default function Editor() {
         failedCount++;
         skippedKeys.add(getCompilerIssueIdentity(nextIssue));
       }
-      // Update live issues from server response to avoid stale closure
       if (result.remainingIssues) {
         liveIssues = result.remainingIssues;
+      } else {
+        liveIssues = collectDiagnosticIssues(compilerDiagnosticsRef.current);
       }
     }
 
@@ -595,7 +646,7 @@ export default function Editor() {
         description,
         status,
         content: newContent,
-        ...(runRecord.iterationLog && { iterationLog: runRecord.iterationLog }),
+        iterationLog: runRecord.iterationLog ?? null,
       };
       apiRequest("PATCH", `/api/prds/${prdId}`, patchData).then(() => {
         queryClient.invalidateQueries({ queryKey: prdDetailQueryKey });
@@ -627,7 +678,7 @@ export default function Editor() {
       // content in PATCH to avoid wiping the persisted structure via invalidation.
       ...(!response.autoSaveRequested && {
         content: newContent,
-        ...(runRecord.iterationLog && { iterationLog: runRecord.iterationLog }),
+        iterationLog: runRecord.iterationLog ?? null,
       }),
     };
     
@@ -1351,26 +1402,32 @@ export default function Editor() {
                           >
                             <div className="flex items-center justify-between gap-3">
                               <span className="text-xs font-semibold uppercase tracking-wide text-orange-700 dark:text-orange-300">
-                                Primary Repair Failure Reason
+                                {t.editor.diagnostics.primaryRepairFailureReason}
                               </span>
                               <Badge variant="outline">repair_rejected</Badge>
                             </div>
                             <p className="text-sm text-foreground">
-                              {compilerDiagnostics.repairRejectedReason || "The last compiler repair was rejected because it degraded the best available PRD candidate."}
+                              {compilerDiagnostics.repairRejectedReason || t.editor.diagnostics.repairRejectedFallbackReason}
                             </p>
                           </div>
                         )}
                         {renderDiagnosticIssueGroup({
-                          title: "Initial Verifier Issues",
-                          passLabel: "initial",
+                          title: t.editor.diagnostics.initialVerifierIssues,
+                          passLabel: t.editor.diagnostics.passLabels.initial,
                           issues: compilerDiagnostics.initialSemanticBlockingIssues,
                           testId: "diag-initial-blocking-issues",
+                          actionPrefix: t.editor.diagnostics.actionPrefix,
+                          fixLabel: t.dualAi.fixIssue,
+                          repairingLabel: t.dualAi.fixingIssue,
                         })}
                         {renderDiagnosticIssueGroup({
-                          title: "Post-Repair Verifier Issues",
-                          passLabel: "post_repair",
+                          title: t.editor.diagnostics.postRepairVerifierIssues,
+                          passLabel: t.editor.diagnostics.passLabels.postRepair,
                           issues: compilerDiagnostics.postRepairSemanticBlockingIssues,
                           testId: "diag-post-repair-blocking-issues",
+                          actionPrefix: t.editor.diagnostics.actionPrefix,
+                          fixLabel: t.dualAi.fixIssue,
+                          repairingLabel: t.dualAi.fixingIssue,
                         })}
                         {(() => {
                           const finalIssues =
@@ -1407,14 +1464,17 @@ export default function Editor() {
                                 </Button>
                               </div>
                               {renderDiagnosticIssueGroup({
-                                title: "Unresolved Final Issues",
-                                passLabel: "final",
+                                title: t.editor.diagnostics.unresolvedFinalIssues,
+                                passLabel: t.editor.diagnostics.passLabels.final,
                                 issues: finalIssues,
                                 testId: "diag-final-blocking-issues",
                                 showFixButtons: true,
                                 onFixIssue: handleFixSingleIssue,
                                 repairingIssueKey,
                                 isAnyRepairActive,
+                                actionPrefix: t.editor.diagnostics.actionPrefix,
+                                fixLabel: t.dualAi.fixIssue,
+                                repairingLabel: t.dualAi.fixingIssue,
                               })}
                             </>
                           );
@@ -1427,23 +1487,49 @@ export default function Editor() {
                             <>
                               <div className="flex items-center justify-between gap-2 mt-3">
                                 <span className="text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-                                  Quality Warnings
+                                  {t.editor.diagnostics.qualityWarnings}
                                 </span>
                                 <Badge variant="outline" className="text-amber-600 border-amber-300">{qualityIssues.length}</Badge>
                               </div>
                               {renderDiagnosticIssueGroup({
-                                title: "Quality Improvement Suggestions",
-                                passLabel: "quality",
+                                title: t.editor.diagnostics.qualityImprovementSuggestions,
+                                passLabel: t.editor.diagnostics.passLabels.quality,
                                 issues: qualityIssues,
                                 testId: "diag-quality-issues",
                                 showFixButtons: true,
                                 onFixIssue: handleFixSingleIssue,
                                 repairingIssueKey,
                                 isAnyRepairActive,
+                                actionPrefix: t.editor.diagnostics.actionPrefix,
+                                fixLabel: t.dualAi.fixIssue,
+                                repairingLabel: t.dualAi.fixingIssue,
                               })}
                             </>
                           );
                         })()}
+                        {/* Fallback Model Switches */}
+                        {(compilerDiagnostics as any).fallbackEvents?.length > 0 && (
+                          <div className="rounded-md border border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/20 p-3 space-y-2" data-testid="diag-fallback-events">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-semibold uppercase tracking-wide text-orange-600 dark:text-orange-400">
+                                Modell-Wechsel
+                              </span>
+                              <Badge variant="outline" className="text-orange-600 border-orange-300">
+                                {(compilerDiagnostics as any).fallbackEvents.length}
+                              </Badge>
+                            </div>
+                            <div className="space-y-1">
+                              {((compilerDiagnostics as any).fallbackEvents as Array<{model: string; error: string; category: string; timestamp: string}>).map((evt, i) => (
+                                <div key={i} className="flex items-start gap-2 text-xs">
+                                  <Badge variant="secondary" className="text-[10px] shrink-0">{evt.category}</Badge>
+                                  <span className="font-mono truncate" title={evt.model}>{evt.model.split('/').pop()}</span>
+                                  <span className="text-muted-foreground truncate" title={evt.error}>{evt.error.slice(0, 80)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         {((compilerDiagnostics.primaryCapabilityAnchors?.length ?? 0) > 0
                           || (compilerDiagnostics.featurePriorityWindow?.length ?? 0) > 0
                           || (compilerDiagnostics.coreFeatureIds?.length ?? 0) > 0

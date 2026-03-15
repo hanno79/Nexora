@@ -80,6 +80,7 @@ import {
   type PrdQualityStatus,
 } from "./prdRunQuality";
 import { getCompilerRunMetrics } from "./compilerRunMetrics";
+import { getModelAnalytics } from "./modelAnalytics";
 import type { ModelCallAttemptUpdate } from "./openrouterFallback";
 import {
   updateUserSchema,
@@ -792,6 +793,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }));
 
   app.get('/api/ai/compiler-run-metrics', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const userId = req.user.claims.sub;
+    const currentUser = await storage.getUser(userId);
+    if (currentUser?.role !== 'admin') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+
     const workflow = typeof req.query.workflow === 'string' ? req.query.workflow.trim() : undefined;
     const routeKey = typeof req.query.routeKey === 'string' ? req.query.routeKey.trim() : undefined;
     const days = typeof req.query.days === 'string' ? Number(req.query.days) : undefined;
@@ -816,6 +823,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     res.json(metrics);
+  }));
+
+  app.get('/api/ai/model-analytics', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const userId = req.user.claims.sub;
+    const currentUser = await storage.getUser(userId);
+    if (currentUser?.role !== 'admin') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+
+    const days = typeof req.query.days === 'string' ? Number(req.query.days) : undefined;
+    const qualityStatus = typeof req.query.qualityStatus === 'string'
+      ? req.query.qualityStatus.split(',').filter((s): s is import('./prdRunQuality').PrdQualityStatus =>
+          ['passed', 'degraded', 'failed_quality', 'failed_runtime', 'cancelled'].includes(s))
+      : undefined;
+
+    if (days !== undefined && (!Number.isInteger(days) || days < 1 || days > 365)) {
+      return res.status(400).json({ message: 'days must be an integer between 1 and 365' });
+    }
+
+    const analytics = await getModelAnalytics({
+      baseDir: process.cwd(),
+      days,
+      qualityStatusFilter: qualityStatus?.length ? qualityStatus : undefined,
+    });
+
+    res.json(analytics);
   }));
 
   app.post('/api/ai/generate-dual', isAuthenticated, aiRateLimiter, asyncHandler(async (req: AuthenticatedRequest, res) => {
@@ -1129,6 +1162,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     let lastProgressEvent: string | undefined;
     let lastModelAttempt: ModelCallAttemptUpdate | undefined;
     const isRequestClosed = () =>
+      requestAbortController.signal.aborted ||
       isIterativeClientDisconnected({
         sseClosed,
         reqAborted: req.aborted,
@@ -1191,6 +1225,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const safeEndSse = () => {
       if (useSSE && !res.writableEnded && !res.destroyed) {
         try { res.end(); } catch {}
+      }
+    };
+    const abortIterativeRequest = (message: string) => {
+      if (!requestAbortController.signal.aborted) {
+        requestAbortController.abort(new Error(message));
       }
     };
 
@@ -1278,9 +1317,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const handleSseDisconnect = () => {
         if (sseClosed) return;
         sseClosed = true;
-        if (!requestAbortController.signal.aborted) {
-          requestAbortController.abort(new Error('Iterative SSE client disconnected'));
-        }
+        abortIterativeRequest('Iterative generation aborted because SSE client disconnected');
         if (!sseCompleted) {
           logger.warn("Iterative SSE client disconnected", {
             hasPrdId: !!editablePrdId,
@@ -1291,6 +1328,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         cleanupSseListeners();
         safeEndSse();
+      };
+      const handleClientDisconnect = () => {
+        if (useSSE) {
+          handleSseDisconnect();
+          return;
+        }
+        if (requestAbortController.signal.aborted || res.writableEnded) {
+          return;
+        }
+        abortIterativeRequest('Iterative generation aborted because client disconnected');
+        logger.warn("Iterative client disconnected", {
+          hasPrdId: !!editablePrdId,
+          activePhase,
+          lastProgressEvent: lastProgressEvent || null,
+          lastModelAttempt: lastModelAttempt || null,
+        });
+        cleanupSseListeners();
       };
 
       // SSE progress callback — sends events to the client during long-running iterative runs
@@ -1307,16 +1361,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         : undefined;
 
-      if (useSSE) {
-        // Important: req 'close' can fire once request body is fully read.
-        // Use response close + request aborted as real client-disconnect signals.
-        res.on('close', handleSseDisconnect);
-        req.on('aborted', handleSseDisconnect);
-        cleanupSseListeners = () => {
-          res.off('close', handleSseDisconnect);
-          req.off('aborted', handleSseDisconnect);
-        };
+      // Important: req 'close' can fire once request body is fully read.
+      // Use response close + request aborted as real client-disconnect signals.
+      res.on('close', handleClientDisconnect);
+      req.on('aborted', handleClientDisconnect);
+      cleanupSseListeners = () => {
+        res.off('close', handleClientDisconnect);
+        req.off('aborted', handleClientDisconnect);
+      };
 
+      if (useSSE) {
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
@@ -1350,8 +1404,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           lastProgressEvent: lastProgressEvent || null,
           lastModelAttempt: lastModelAttempt || null,
         });
+        const disconnectError = requestAbortController.signal.reason instanceof Error
+          ? requestAbortController.signal.reason
+          : new Error(`Iterative generation aborted because client disconnected during ${activePhase || 'unknown phase'}`);
         const disconnectFailure = classifyRunFailure(
-          new Error(`Iterative generation cancelled during ${activePhase || 'unknown phase'}`),
+          disconnectError,
           buildIterativeDiagnosticBase(result.diagnostics || {}),
         );
         void persistCompilerRunArtifactBestEffort({
@@ -1621,7 +1678,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return;
     } catch (error: any) {
       const cancelledOrClosed = error?.name === 'AbortError' || error?.code === 'ERR_CLIENT_DISCONNECT' || isRequestClosed();
-      const failure = classifyRunFailure(error, buildIterativeDiagnosticBase());
+      const failure = classifyRunFailure(
+        cancelledOrClosed && requestAbortController.signal.reason instanceof Error
+          ? requestAbortController.signal.reason
+          : error,
+        buildIterativeDiagnosticBase(),
+      );
       if (cancelledOrClosed) {
         logger.warn("Iterative request aborted by client", {
           activePhase,

@@ -178,8 +178,23 @@ function toLastModelAttempt(value: unknown): ClientLastModelAttempt | null {
   };
 }
 
-function mapCompilerCoreFields(value: Record<string, any>): Partial<ClientCompilerDiagnostics> {
-  return {
+function hasMeaningfulDiagnosticValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value === 'boolean') return true;
+  if (Array.isArray(value)) return value.length > 0;
+  if (isObject(value)) return Object.values(value).some(hasMeaningfulDiagnosticValue);
+  return false;
+}
+
+function sanitizeMappedDiagnosticFields<T extends Record<string, any>>(value: T): Partial<T> | null {
+  const entries = Object.entries(value).filter(([, fieldValue]) => hasMeaningfulDiagnosticValue(fieldValue));
+  return entries.length > 0 ? Object.fromEntries(entries) as Partial<T> : null;
+}
+
+function mapCompilerCoreFields(value: Record<string, any>): Partial<ClientCompilerDiagnostics> | null {
+  return sanitizeMappedDiagnosticFields({
     structuredFeatureCount: typeof value.structuredFeatureCount === 'number' ? value.structuredFeatureCount : undefined,
     totalFeatureCount: typeof value.totalFeatureCount === 'number' ? value.totalFeatureCount : undefined,
     jsonSectionUpdates: typeof value.jsonSectionUpdates === 'number' ? value.jsonSectionUpdates : undefined,
@@ -212,11 +227,11 @@ function mapCompilerCoreFields(value: Record<string, any>): Partial<ClientCompil
       typeof value.normalizedFeatureCountRecovered === 'number'
         ? value.normalizedFeatureCountRecovered
         : undefined,
-  };
+  });
 }
 
-function mapFeatureClassificationFields(value: Record<string, any>): Partial<ClientCompilerDiagnostics> {
-  return {
+function mapFeatureClassificationFields(value: Record<string, any>): Partial<ClientCompilerDiagnostics> | null {
+  return sanitizeMappedDiagnosticFields({
     primaryCapabilityAnchors: toStringArray(value.primaryCapabilityAnchors),
     featurePriorityWindow: toStringArray(value.featurePriorityWindow),
     coreFeatureIds: toStringArray(value.coreFeatureIds),
@@ -231,11 +246,11 @@ function mapFeatureClassificationFields(value: Record<string, any>): Partial<Cli
       typeof value.timelineRewriteAppliedLines === 'number'
         ? value.timelineRewriteAppliedLines
         : undefined,
-  };
+  });
 }
 
-function mapSemanticRepairFields(value: Record<string, any>): Partial<ClientCompilerDiagnostics> {
-  return {
+function mapSemanticRepairFields(value: Record<string, any>): Partial<ClientCompilerDiagnostics> | null {
+  return sanitizeMappedDiagnosticFields({
     semanticBlockingCodes: toStringArray(value.semanticBlockingCodes),
     semanticBlockingIssues: toCompilerIssueArray(value.semanticBlockingIssues),
     initialSemanticBlockingIssues: toCompilerIssueArray(value.initialSemanticBlockingIssues),
@@ -294,11 +309,11 @@ function mapSemanticRepairFields(value: Record<string, any>): Partial<ClientComp
       typeof value.semanticRepairStructuralChange === 'boolean'
         ? value.semanticRepairStructuralChange
         : undefined,
-  };
+  });
 }
 
-function mapDriftAndFailureFields(value: Record<string, any>): Partial<ClientCompilerDiagnostics> {
-  return {
+function mapDriftAndFailureFields(value: Record<string, any>): Partial<ClientCompilerDiagnostics> | null {
+  return sanitizeMappedDiagnosticFields({
     earlyDriftDetected: typeof value.earlyDriftDetected === 'boolean' ? value.earlyDriftDetected : undefined,
     earlyDriftCodes: toStringArray(value.earlyDriftCodes),
     earlyDriftSections: toStringArray(value.earlyDriftSections),
@@ -332,11 +347,11 @@ function mapDriftAndFailureFields(value: Record<string, any>): Partial<ClientCom
         : undefined,
     providerFailedModels: toStringArray(value.providerFailedModels),
     providerFailureStage: typeof value.providerFailureStage === 'string' ? value.providerFailureStage : undefined,
-  };
+  });
 }
 
-function mapModelTrackingFields(value: Record<string, any>): Partial<ClientCompilerDiagnostics> {
-  return {
+function mapModelTrackingFields(value: Record<string, any>): Partial<ClientCompilerDiagnostics> | null {
+  return sanitizeMappedDiagnosticFields({
     repairModelIds: toStringArray(value.repairModelIds),
     reviewerModelIds: toStringArray(value.reviewerModelIds),
     verifierModelIds: toStringArray(value.verifierModelIds),
@@ -354,19 +369,20 @@ function mapModelTrackingFields(value: Record<string, any>): Partial<ClientCompi
     metaLeakHits: typeof value.metaLeakHits === 'number' ? value.metaLeakHits : undefined,
     languageFixRequired: typeof value.languageFixRequired === 'boolean' ? value.languageFixRequired : undefined,
     aggregatedFeatureCount: typeof value.aggregatedFeatureCount === 'number' ? value.aggregatedFeatureCount : undefined,
-  };
+  });
 }
 
 function sanitizeCompilerDiagnostics(value: unknown): ClientCompilerDiagnostics | null {
   if (!isObject(value)) return null;
 
-  return {
-    ...mapCompilerCoreFields(value),
-    ...mapFeatureClassificationFields(value),
-    ...mapSemanticRepairFields(value),
-    ...mapDriftAndFailureFields(value),
-    ...mapModelTrackingFields(value),
+  const merged = {
+    ...(mapCompilerCoreFields(value) ?? {}),
+    ...(mapFeatureClassificationFields(value) ?? {}),
+    ...(mapSemanticRepairFields(value) ?? {}),
+    ...(mapDriftAndFailureFields(value) ?? {}),
+    ...(mapModelTrackingFields(value) ?? {}),
   };
+  return sanitizeMappedDiagnosticFields(merged) as ClientCompilerDiagnostics | null;
 }
 
 export function extractAiRunFinalContent(response: unknown): string {
@@ -469,5 +485,6 @@ export function isFailedAiRun(response: unknown): boolean {
 }
 
 export function hasUsableAiRunContent(response: unknown): boolean {
-  return extractAiRunFinalContent(response).trim().length > 0;
+  const runRecord = extractAiRunRecord(response);
+  return typeof runRecord.finalContent === 'string' && runRecord.finalContent.trim().length > 0;
 }

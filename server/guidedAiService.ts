@@ -310,6 +310,7 @@ export class GuidedAiService {
     options?: {
       aiPreferenceUserId?: string;
       templateCategory?: string;
+      signal?: AbortSignal;
     }
   ): Promise<GuidedFinalizeResponse> {
     const finalizeStartedAt = Date.now();
@@ -354,6 +355,7 @@ export class GuidedAiService {
         existingContent: isImproveWorkflow ? context.existingContent : undefined,
         contentLanguage: resolvedLanguage,
         templateCategory: effectiveTemplateCategory,
+        abortSignal: options?.signal,
       });
 
       logger.debug('Guided workflow final PRD compiled', {
@@ -392,7 +394,10 @@ export class GuidedAiService {
     }
   ): Promise<GuidedFinalizeResponse> {
     const startedAt = Date.now();
-    const { client, contentLanguage } = await createClientWithUserPreferences(options?.aiPreferenceUserId ?? userId);
+    const authenticatedUserId = requireAuthenticatedUserId(userId);
+    const { client, contentLanguage } = await createClientWithUserPreferences(
+      options?.aiPreferenceUserId ?? authenticatedUserId
+    );
     const normalizedExistingContent = typeof options?.existingContent === 'string'
       ? options.existingContent.trim()
       : '';

@@ -57,17 +57,34 @@ export async function generateWithCompilerGates(params: {
   existingContent?: string;
   contentLanguage?: string | null;
   templateCategory?: string;
+  abortSignal?: AbortSignal;
 }): Promise<GuidedGenerationResult> {
   const startedAt = Date.now();
-  const { client, systemPrompt, userPrompt, mode, existingContent, contentLanguage, templateCategory } = params;
+  const { client, systemPrompt, userPrompt, mode, existingContent, contentLanguage, templateCategory, abortSignal } = params;
   const language = detectContentLanguage(contentLanguage, `${userPrompt}\n${existingContent || ''}`);
   const langInstruction = getLanguageInstruction(language);
   const modelsUsed = new Set<string>();
   let totalTokens = 0;
   const timings: RunStageTimings = {};
 
+  const throwIfAborted = (stage: string) => {
+    if (!abortSignal?.aborted) return;
+    const abortError: any = new Error(`Guided generation aborted during ${stage}`);
+    abortError.name = 'AbortError';
+    abortError.code = 'ERR_CLIENT_DISCONNECT';
+    throw abortError;
+  };
+
   const generationStartedAt = Date.now();
-  const generationResult = await client.callWithFallback('generator', systemPrompt, userPrompt, PRD_FINAL_GENERATION);
+  const generationResult = await client.callWithFallback(
+    'generator',
+    systemPrompt,
+    userPrompt,
+    PRD_FINAL_GENERATION,
+    undefined,
+    undefined,
+    { abortSignal },
+  );
   timings.generationDurationMs = Date.now() - generationStartedAt;
   modelsUsed.add(generationResult.model);
   totalTokens += generationResult.usage.total_tokens;
@@ -75,11 +92,13 @@ export async function generateWithCompilerGates(params: {
   let enrichedStructure: PRDStructure | undefined;
   if (mode === 'generate') {
     const expansionStartedAt = Date.now();
+    throwIfAborted('feature_expansion');
     const expansion = await runFeatureExpansionPipeline({
       inputText: userPrompt,
       draftContent: generationResult.content,
       client,
       language,
+      abortSignal,
       log: (message) => logger.debug(message),
       warn: (message) => logger.warn(message),
     });
@@ -105,9 +124,18 @@ export async function generateWithCompilerGates(params: {
     originalRequest: userPrompt,
     maxRepairPasses: 3,
     enableQualityAutoRepair: true,
+    cancelCheck: throwIfAborted,
     repairReviewer: async (repairPrompt: string, _pass: number) => {
       logger.warn('Guided compiler quality gate failed; starting repair pass');
-      const repairResult = await client.callWithFallback('reviewer', systemPrompt, repairPrompt, REPAIR_PASS);
+      const repairResult = await client.callWithFallback(
+        'reviewer',
+        systemPrompt,
+        repairPrompt,
+        REPAIR_PASS,
+        undefined,
+        undefined,
+        { abortSignal },
+      );
       return {
         content: repairResult.content,
         model: repairResult.model,
@@ -121,6 +149,9 @@ export async function generateWithCompilerGates(params: {
         'You are a PRD content refinement specialist. Follow the instructions precisely.' + langInstruction,
         refinePrompt,
         CONTENT_REVIEW_REFINE,
+        undefined,
+        undefined,
+        { abortSignal },
       );
       return {
         content: refineResult.content,
@@ -137,6 +168,7 @@ export async function generateWithCompilerGates(params: {
         CONTENT_REVIEW_REFINE,
         { type: 'json_object' },
         0.1,
+        { abortSignal },
       );
       return {
         content: refineResult.content,
@@ -156,6 +188,7 @@ export async function generateWithCompilerGates(params: {
         { type: 'json_object' },
         0.1,
         {
+          abortSignal,
           avoidModelFamilies: input.avoidModelFamilies,
           allowSameFamilyFallback: true,
           onSameFamilyFallback: ({ model, family, blockedFamilies }) => {
@@ -205,7 +238,15 @@ export async function generateWithCompilerGates(params: {
 
     try {
       const fallbackGenerationStartedAt = Date.now();
-      const fallbackDraft = await client.callWithFallback('generator', systemPrompt, userPrompt, PRD_FINAL_GENERATION);
+      const fallbackDraft = await client.callWithFallback(
+        'generator',
+        systemPrompt,
+        userPrompt,
+        PRD_FINAL_GENERATION,
+        undefined,
+        undefined,
+        { abortSignal },
+      );
       timings.fallbackGenerationDurationMs = (timings.fallbackGenerationDurationMs || 0) + (Date.now() - fallbackGenerationStartedAt);
       modelsUsed.add(fallbackDraft.model);
       totalTokens += fallbackDraft.usage.total_tokens;

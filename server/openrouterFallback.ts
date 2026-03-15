@@ -58,9 +58,26 @@ type CallResult = {
   finishReason?: string;
 };
 
+type FallbackFailureCategory =
+  | 'rate_limited'
+  | 'timed_out'
+  | 'provider_error'
+  | 'auth'
+  | 'model_unavailable'
+  | 'other';
+
+export interface FallbackAttemptDiagnostic {
+  model: string;
+  error: string;
+  category: FallbackFailureCategory;
+  timestamp: string;
+}
+
 type FallbackResult = CallResult & {
   tier: string;
   usedFallback: boolean;
+  /** Records each failed model attempt so callers can surface why fallback was triggered. */
+  fallbackDiagnostics: FallbackAttemptDiagnostic[];
 };
 
 export interface ModelCallAttemptUpdate {
@@ -139,14 +156,6 @@ interface ExecuteOpenRouterFallbackParams {
   isModelQuarantined?: (model: string) => boolean;
   recordFailureForRun?: (model: string, errorMessage: string) => void;
 }
-
-type FallbackFailureCategory =
-  | 'rate_limited'
-  | 'timed_out'
-  | 'provider_error'
-  | 'auth'
-  | 'model_unavailable'
-  | 'other';
 
 function categorizeFallbackError(errorMessage: string): FallbackFailureCategory {
   const normalized = (errorMessage || '').toLowerCase();
@@ -262,6 +271,7 @@ export async function executeOpenRouterFallback(
   const tierProviderHint = TIER_PROVIDER_HINT[tier];
 
   const errors: string[] = [];
+  const fallbackDiagnostics: FallbackAttemptDiagnostic[] = [];
   const seen = new Set<string>();
   const modelsToTry: FallbackCandidate[] = [];
   const cooldownSkippedModels: CooldownCandidate[] = [];
@@ -451,7 +461,7 @@ export async function executeOpenRouterFallback(
             blockedFamilies: Array.from(blockedFamilies),
           });
         }
-        return { ...result, tier, usedFallback };
+        return { ...result, tier, usedFallback, fallbackDiagnostics };
       });
     } catch (error: any) {
       if (error?.name === 'AbortError' || error?.code === 'ERR_CLIENT_DISCONNECT') {
@@ -465,6 +475,12 @@ export async function executeOpenRouterFallback(
         rememberCooldownSkippedModel(attemptModel, isPrimary, appliedCooldown.reason);
       }
       errors.push(`${attemptModel}: ${errorMessage}`);
+      fallbackDiagnostics.push({
+        model: attemptModel,
+        error: errorMessage,
+        category: categorizeFallbackError(errorMessage),
+        timestamp: new Date().toISOString(),
+      });
       console.warn(`${attemptModel} failed, trying next model...`, errorMessage);
 
       const errMsg = errorMessage.toLowerCase();
@@ -554,9 +570,12 @@ export async function executeOpenRouterFallback(
     const modelProvider = getBestDirectProvider(attemptModel, tierProviderHint);
     if (modelProvider && modelProvider !== 'openrouter') {
       const providerCd = getProviderCooldownStatus(modelProvider);
-      if (providerCd) {
+      if (providerCd && !isPrimary) {
         console.warn(`Skipping ${attemptModel} — provider ${modelProvider} on cooldown: ${providerCd.reason}`);
         continue;
+      }
+      if (providerCd && isPrimary) {
+        console.warn(`Provider ${modelProvider} on cooldown but attempting primary model ${attemptModel} anyway`);
       }
     }
 
@@ -585,9 +604,12 @@ export async function executeOpenRouterFallback(
     const modelProvider = getBestDirectProvider(attemptModel, tierProviderHint);
     if (modelProvider && modelProvider !== 'openrouter') {
       const providerCd = getProviderCooldownStatus(modelProvider);
-      if (providerCd) {
+      if (providerCd && !isPrimary) {
         console.warn(`Skipping ${attemptModel} even in last resort — provider ${modelProvider} still on cooldown: ${providerCd.reason}`);
         continue;
+      }
+      if (providerCd && isPrimary) {
+        console.warn(`Provider ${modelProvider} still on cooldown but retrying primary model ${attemptModel} anyway`);
       }
     }
 
@@ -652,7 +674,6 @@ export function applyFailureCooldown(model: string, errorMessage: string): void 
     || message.includes('provider not found')
     || message.includes('not found')
     || message.includes('nicht gefunden')
-    || message.includes('enotfound')
   ) {
     cooldownMs = 30 * 60 * 1000;
     reason = 'model not found';
@@ -663,6 +684,7 @@ export function applyFailureCooldown(model: string, errorMessage: string): void 
     message.includes('timed out')
     || message.includes('fetch failed')
     || message.includes('econnrefused')
+    || message.includes('enotfound')
     || message.includes('provider error')
     || message.includes('socket hang up')
   ) {

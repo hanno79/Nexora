@@ -305,8 +305,9 @@ export async function expandFeature(
 
   let retried = false;
 
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    console.log(`  🔧 Expanding ${featureId}: "${featureName}" (attempt ${attempt}/2)`);
+  const lastAttempt = 2;
+  for (let attempt = 1; attempt <= lastAttempt; attempt++) {
+    console.log(`  🔧 Expanding ${featureId}: "${featureName}" (attempt ${attempt}/${lastAttempt})`);
 
     const result = await client.callWithFallback(
       'generator',
@@ -337,13 +338,29 @@ export async function expandFeature(
 
     if (validContent) {
       // Feature drift detection: verify generated content matches the feature title.
-      // On drift at attempt 1, rotate model and retry.
-      if (attempt === 1 && hasFeatureContentDrift(featureId, featureName, validContent)) {
+      const driftDetected = hasFeatureContentDrift(featureId, featureName, validContent);
+      if (driftDetected) {
         console.warn(`  ⚠️ ${featureId} content drift detected — "${featureName}" content does not match title`);
         setGlobalCooldown(result.model, 60 * 1000, 'feature content drift');
-        console.log(`  🔄 Retrying ${featureId} due to content drift...`);
-        retried = true;
-        continue;
+        if (attempt < lastAttempt) {
+          console.log(`  🔄 Retrying ${featureId} due to content drift...`);
+          retried = true;
+          continue;
+        }
+        console.warn(`  ⚠️ ${featureId} drift persisted on final attempt — using deterministic fallback`);
+        const fallback = buildDeterministicFeatureFallback(featureId, featureName, shortDescription, resolvedLanguage);
+        return {
+          featureId,
+          featureName,
+          ...(parentTaskName ? { parentTaskName } : {}),
+          ...(parentTaskDescription ? { parentTaskDescription } : {}),
+          content: fallback,
+          model: `${result.model}:deterministic-fallback`,
+          usage: result.usage,
+          retried: true,
+          valid: true,
+          compiled: true,
+        };
       }
 
       console.log(`  ✅ ${featureId} expanded successfully (attempt ${attempt})`);

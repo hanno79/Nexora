@@ -7,6 +7,7 @@ Beschreibung: Persistenz- und Usage-Helfer fuer Guided-Routen.
 
 import { users } from '@shared/schema';
 import { eq } from 'drizzle-orm';
+import type { TokenUsage } from '@shared/schema';
 import type { PRDStructure } from './prdStructure';
 import { logAiUsage } from './aiUsageLogger';
 import { db } from './db';
@@ -20,10 +21,26 @@ import {
 } from './prdRunQuality';
 import { storage } from './storage';
 
+export function sumGuidedStageUsage(
+  ...stages: Array<{ usage?: Partial<TokenUsage> | null } | null | undefined>
+): { promptTokens: number; completionTokens: number } {
+  return stages.reduce(
+    (acc, stage) => ({
+      promptTokens: acc.promptTokens + (stage?.usage?.prompt_tokens || 0),
+      completionTokens: acc.completionTokens + (stage?.usage?.completion_tokens || 0),
+    }),
+    { promptTokens: 0, completionTokens: 0 },
+  );
+}
+
+/**
+ * Logs Guided generation usage using explicit prompt/completion token counts when available.
+ */
 export async function logGuidedGenerationUsage(
   userId: string,
   modelsUsed: string[],
-  tokensUsed: number | undefined,
+  promptTokens: number | undefined,
+  completionTokens: number | undefined,
   prdId?: string | null,
 ): Promise<void> {
   if (!modelsUsed.length) {
@@ -37,6 +54,8 @@ export async function logGuidedGenerationUsage(
     .limit(1);
 
   const userTier = resolveModelTier((userRow?.aiPreferences as any)?.tier);
+  const normalizedPromptTokens = promptTokens || 0;
+  const normalizedCompletionTokens = completionTokens || 0;
 
   await logAiUsage(
     userId,
@@ -44,9 +63,9 @@ export async function logGuidedGenerationUsage(
     modelsUsed[0],
     userTier,
     {
-      prompt_tokens: 0,
-      completion_tokens: tokensUsed || 0,
-      total_tokens: tokensUsed || 0,
+      prompt_tokens: normalizedPromptTokens,
+      completion_tokens: normalizedCompletionTokens,
+      total_tokens: normalizedPromptTokens + normalizedCompletionTokens,
     },
     prdId || undefined,
   );
@@ -73,13 +92,15 @@ export async function persistGuidedPrdFinalizationBestEffort(params: {
     }
 
     const baseIterationLog = params.sourceIterationLog ?? existingPrd.iterationLog;
-    const iterationLog = params.qualityStatus === 'passed'
-      ? (baseIterationLog || null)
-      : mergeDiagnosticsIntoIterationLog(
-          baseIterationLog,
-          params.qualityStatus,
-          params.compilerDiagnostics || buildCompilerRunDiagnostics({ quality: null, repairAttempts: 0 }),
-        );
+    // ÄNDERUNG 15.03.2026: Diagnostics werden IMMER in den Iteration-Log gemergt,
+    // auch bei qualityStatus === 'passed'. Ohne den Marker verschwindet der
+    // Diagnose-Tab im Editor nach Navigation, weil extractLatestCompilerRunRecord()
+    // keinen <!-- compiler-run:{...} --> Kommentar findet.
+    const iterationLog = mergeDiagnosticsIntoIterationLog(
+      baseIterationLog,
+      params.qualityStatus,
+      params.compilerDiagnostics || buildCompilerRunDiagnostics({ quality: null, repairAttempts: 0 }),
+    );
 
     await storage.persistPrdRunFinalization({
       prdId: params.editablePrdId,

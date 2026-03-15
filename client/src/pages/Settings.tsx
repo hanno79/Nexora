@@ -28,6 +28,7 @@ import {
   ProviderFilterSection,
   AiUsageSection,
   CompilerRunMetricsSection,
+  ModelAnalyticsSection,
 } from "@/components/settings";
 
 export default function Settings() {
@@ -126,6 +127,9 @@ export default function Settings() {
 
           {/* Compiler-Run-Metriken */}
           <CompilerRunMetricsSection />
+
+          {/* Modell-Analytik */}
+          <ModelAnalyticsSection />
 
           {/* Linear-Integration */}
           <Card>

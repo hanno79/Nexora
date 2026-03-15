@@ -57,7 +57,8 @@ export async function getGuidedSessionContextOrThrow(
   sessionId: string,
   userId: string,
 ): Promise<ConversationContext> {
-  const session = await store.get(sessionId, userId);
+  const authenticatedUserId = requireAuthenticatedUserId(userId);
+  const session = await store.get(sessionId, authenticatedUserId);
   if (session.status !== 'ok' || !session.context) {
     throw new Error(SESSION_NOT_AVAILABLE_MESSAGE);
   }
@@ -69,7 +70,8 @@ export async function consumeGuidedSessionContextOrThrow(
   sessionId: string,
   userId: string,
 ): Promise<ConversationContext> {
-  const session = await store.consume(sessionId, userId);
+  const authenticatedUserId = requireAuthenticatedUserId(userId);
+  const session = await store.consume(sessionId, authenticatedUserId);
   if (session.status !== 'ok' || !session.context) {
     throw new Error(SESSION_NOT_AVAILABLE_MESSAGE);
   }

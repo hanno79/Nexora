@@ -84,7 +84,7 @@ describe('registerPrdMaintenanceRoutes', () => {
 
     const response = await invokeRoute(findRoute(routes, 'post', '/api/prds/:id/export'), { format: 'xlsx' }, { id: 'prd-1' });
     expect(response.statusCode).toBe(400);
-    expect(response.payload).toEqual({ message: 'Unsupported export format' });
+    expect(response.payload).toEqual({ message: 'format must be one of markdown, claudemd, pdf, or word' });
   });
 
   it('stellt beim Restore Inhalt, Struktur und Status aus der Version wieder her', async () => {

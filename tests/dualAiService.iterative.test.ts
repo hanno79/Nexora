@@ -109,6 +109,8 @@ describe('DualAiService iterative reviewer-first flow', () => {
       tier: 'development',
       usedFallback: false,
     });
+    mockClient.getFallbackChain.mockReset();
+    mockClient.getFallbackChain.mockReturnValue([]);
     mockClient.getPreferredModel.mockClear();
     mockClient.setPreferredModel.mockClear();
     mockClient.setDefaultExecutionContext.mockClear();

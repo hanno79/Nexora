@@ -150,6 +150,7 @@ interface IterationLoopState {
   allPreservationActions: Map<number, string[]>;
   allIntegrityRestorations: Map<number, IntegrityRestoration[]>;
   allSectionRegens: Map<number, { section: string; feedbackSnippet: string; mode?: 'json' | 'markdown' }>;
+  earlyRepairAttemptedIterations: Set<number>;
 }
 
 /** Return shape for the generator and answerer AI calls. */
@@ -760,6 +761,7 @@ Create an improved version that incorporates the new requirements while keeping 
       allPreservationActions: new Map(),
       allIntegrityRestorations: new Map(),
       allSectionRegens: new Map(),
+      earlyRepairAttemptedIterations: new Set<number>(),
     };
     const featureDiagnostics = state.diagnostics.featureDiagnostics;
     const featureFreezeDiagnostics = state.diagnostics.featureFreezeDiagnostics;
@@ -2013,7 +2015,13 @@ Your task:
             : parsed;
         },
         onStageProgress: (event: {
-          type: 'content_review_start' | 'semantic_verification_start' | 'semantic_repair_start' | 'semantic_repair_done';
+          type:
+            | 'content_review_start'
+            | 'semantic_verification_start'
+            | 'semantic_repair_start'
+            | 'semantic_repair_done'
+            | 'quality_repair_start'
+            | 'quality_repair_done';
           issueCount?: number;
           sectionKeys?: string[];
           applied?: boolean;
@@ -2959,9 +2967,11 @@ Your task:
     let repairedContent = preservedPRD;
     let repairedStructure = candidateStructure;
     let finalEvaluation = initialEvaluation;
+    let earlyRepairAppliedThisIteration = false;
+    const earlyRepairAttemptedThisIteration = state.earlyRepairAttemptedIterations.has(iterationNumber);
 
-    if (!semanticDiagnostics.earlyRepairAttempted) {
-      semanticDiagnostics.earlyRepairAttempted = true;
+    if (!earlyRepairAttemptedThisIteration) {
+      state.earlyRepairAttemptedIterations.add(iterationNumber);
       this.emitIterativeProgress(opts, {
         type: 'early_drift_repair_start',
         iteration: iterationNumber,
@@ -3030,15 +3040,16 @@ Your task:
         true,
         repairResult.refined && finalEvaluation.blockingIssues.length === 0,
       );
+      earlyRepairAppliedThisIteration = repairResult.refined && finalEvaluation.blockingIssues.length === 0;
       this.emitIterativeProgress(opts, {
         type: 'early_drift_repair_done',
         iteration: iterationNumber,
-        applied: repairResult.refined && finalEvaluation.blockingIssues.length === 0,
+        applied: earlyRepairAppliedThisIteration,
         codes: finalEvaluation.blockingIssues.map(issue => issue.code),
         sections: finalEvaluation.blockingIssues.map(issue => issue.sectionKey),
       });
 
-      if (repairResult.refined && finalEvaluation.blockingIssues.length === 0) {
+      if (earlyRepairAppliedThisIteration) {
         return {
           preservedPRD: repairedContent,
           candidateStructure: repairedStructure,
@@ -3058,8 +3069,8 @@ Your task:
         earlyDriftSections: finalEvaluation.blockingIssues.map(issue => issue.sectionKey),
         blockedAddedFeatures: finalEvaluation.blockedAddedFeatures,
         earlySemanticLintCodes: finalEvaluation.semanticLintCodes,
-        earlyRepairAttempted: !!semanticDiagnostics.earlyRepairAttempted,
-        earlyRepairApplied: !!semanticDiagnostics.earlyRepairApplied,
+        earlyRepairAttempted: state.earlyRepairAttemptedIterations.has(iterationNumber),
+        earlyRepairApplied: earlyRepairAppliedThisIteration,
         primaryEarlyDriftReason: finalEvaluation.primaryReason || initialEvaluation.primaryReason,
       }
     );

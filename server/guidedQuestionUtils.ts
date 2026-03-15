@@ -16,11 +16,52 @@ export interface ParsedGuidedQuestionsResponse {
   questions: GuidedQuestion[];
 }
 
+function extractFirstBalancedJsonObject(content: string): string | null {
+  const start = content.indexOf('{');
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaping = false;
+
+  for (let index = start; index < content.length; index++) {
+    const char = content[index];
+
+    if (escaping) {
+      escaping = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escaping = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (char === '{') {
+      depth++;
+    } else if (char === '}') {
+      depth--;
+      if (depth === 0) {
+        return content.slice(start, index + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
 export function parseQuestionsResponse(content: string): ParsedGuidedQuestionsResponse {
   try {
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
+    const jsonObject = extractFirstBalancedJsonObject(content);
+    if (jsonObject) {
+      const parsed = JSON.parse(jsonObject);
       const questions = ensureMinimumOptions(parsed.questions || []);
       return {
         preliminaryPlan: parsed.preliminaryPlan || parsed.summary,
@@ -73,11 +114,9 @@ export function formatAnswerText(answer: GuidedAnswerInput, question?: GuidedQue
 
 function ensureMinimumOptions(questions: GuidedQuestion[]): GuidedQuestion[] {
   return questions.map((question) => {
-    if (!question.options || !Array.isArray(question.options)) {
-      question.options = [];
-    }
+    const options = Array.isArray(question.options) ? [...question.options] : [];
 
-    const meaningfulOptions = question.options.filter((option) => option.id !== 'custom' && option.id !== 'other');
+    const meaningfulOptions = options.filter((option) => option.id !== 'custom' && option.id !== 'other');
     if (meaningfulOptions.length < 2) {
       logger.warn('Guided question has insufficient options; injecting defaults', {
         meaningfulOptionCount: meaningfulOptions.length,
@@ -101,13 +140,16 @@ function ensureMinimumOptions(questions: GuidedQuestion[]): GuidedQuestion[] {
       return { ...question, options: newOptions };
     }
 
-    if (!question.options.some((option) => option.id === 'custom' || option.id === 'other')) {
+    if (!options.some((option) => option.id === 'custom' || option.id === 'other')) {
       return {
         ...question,
-        options: [...question.options, { id: 'custom', label: 'Other', description: 'Let me explain my preference...' }],
+        options: [...options, { id: 'custom', label: 'Other', description: 'Let me explain my preference...' }],
       };
     }
 
-    return question;
+    return {
+      ...question,
+      options,
+    };
   });
 }

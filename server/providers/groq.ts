@@ -192,7 +192,7 @@ export class GroqProvider extends BaseAIProvider {
   }
 
   async callModel(options: CallOptions): Promise<AIResponse> {
-    const { model, messages, temperature = 0.7, maxTokens, stream, response: expressResponse, abortSignal } = options;
+    const { model, messages, temperature = 0.7, maxTokens, responseFormat, stream, response: expressResponse, abortSignal } = options;
 
     this.logMessage(`Calling Groq model: ${model}`, { temperature, maxTokens, stream });
 
@@ -206,6 +206,9 @@ export class GroqProvider extends BaseAIProvider {
     if (maxTokens) {
       const modelLimit = GROQ_MAX_OUTPUT_TOKENS[normalizeGroqModelId(model)];
       requestBody.max_tokens = modelLimit ? Math.min(maxTokens, modelLimit) : maxTokens;
+    }
+    if (responseFormat) {
+      requestBody.response_format = responseFormat;
     }
 
     const requestBodyJson = JSON.stringify(requestBody);

@@ -46,6 +46,15 @@ export interface PrdVersionRouteDependencies {
   buildPrdVersionSnapshot: BuildPrdVersionSnapshotHandler;
 }
 
+function isVersionConflictError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || '');
+  const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
+  const status = typeof error === 'object' && error !== null ? (error as { status?: unknown }).status : undefined;
+  return code === '23505'
+    || status === 409
+    || /unique|duplicate|conflict/i.test(message);
+}
+
 export function registerPrdVersionRoutes(
   app: RouteRegistrar,
   isAuthenticated: RequestHandler,
@@ -70,11 +79,28 @@ export function registerPrdVersionRoutes(
       return;
     }
 
-    const versions = await deps.storage.getPrdVersions(id);
-    const versionNumber = deps.getNextPrdVersionNumber(versions.length);
-    const version = await deps.storage.createPrdVersion(
-      deps.buildPrdVersionSnapshot(prd, versionNumber, userId),
-    );
+    const MAX_VERSION_CREATE_RETRIES = 3;
+    let version = null;
+
+    for (let attempt = 0; attempt < MAX_VERSION_CREATE_RETRIES; attempt++) {
+      try {
+        const versions = await deps.storage.getPrdVersions(id);
+        const versionNumber = deps.getNextPrdVersionNumber(versions.length);
+        version = await deps.storage.createPrdVersion(
+          deps.buildPrdVersionSnapshot(prd, versionNumber, userId),
+        );
+        break;
+      } catch (error) {
+        if (attempt < MAX_VERSION_CREATE_RETRIES - 1 && isVersionConflictError(error)) {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (!version) {
+      throw new Error('Failed to create PRD version after retrying version conflicts.');
+    }
 
     res.json(version);
   }));

@@ -87,17 +87,19 @@ export interface FinalizeWithCompilerGatesOptions {
   semanticVerifier?: (input: SemanticVerifierInput) => Promise<SemanticVerificationResult>;
   /** Max semantic repair cycles. Default: max(4, affectedFeatureCount * 2), capped at 20. */
   maxSemanticRepairCycles?: number;
-  onStageProgress?: (event: {
-    type: 'content_review_start' | 'semantic_verification_start' | 'semantic_repair_start' | 'semantic_repair_done';
-    issueCount?: number;
-    sectionKeys?: string[];
-    applied?: boolean;
-    truncated?: boolean;
-  }) => void;
+  onStageProgress?: (event: FinalizerStageProgressEvent) => void;
   cancelCheck?: (stage: string) => void;
   /** Enable automatic repair of deterministic quality warnings before semantic verification. Default: false. */
   enableQualityAutoRepair?: boolean;
 }
+
+type FinalizerStageProgressEvent =
+  | { type: 'content_review_start' }
+  | { type: 'semantic_verification_start' }
+  | { type: 'quality_repair_start'; issueCount: number }
+  | { type: 'quality_repair_done'; issueCount?: number; applied?: boolean }
+  | { type: 'semantic_repair_start'; issueCount?: number; sectionKeys?: string[] }
+  | { type: 'semantic_repair_done'; issueCount?: number; sectionKeys?: string[]; applied?: boolean; truncated?: boolean };
 
 export interface FinalizeWithCompilerGatesResult {
   content: string;
@@ -1950,7 +1952,7 @@ export async function finalizeWithCompilerGates(
       compiled = currentEvaluation.compiled;
       bestCurrent = current;
       bestCompiled = compiled;
-      bestScore = Math.max(bestScore, qualityScore(compiled.quality));
+      bestScore = qualityScore(compiled.quality);
       degradedCandidateSource = 'post_targeted_repair';
       featureQualityDiagnostics = currentEvaluation.featureQualityDiagnostics;
       canonicalFeatureIds = compiled.quality.canonicalFeatureIds || canonicalFeatureIds;
@@ -2205,7 +2207,7 @@ export async function finalizeWithCompilerGates(
         };
         currentEvaluation = recompiledEvaluation;
         compiled = currentEvaluation.compiled;
-        bestScore = Math.max(bestScore, qualityScore(compiled.quality));
+        bestScore = qualityScore(compiled.quality);
         featureQualityDiagnostics = currentEvaluation.featureQualityDiagnostics;
         canonicalFeatureIds = compiled.quality.canonicalFeatureIds || canonicalFeatureIds;
         timelineMismatchedFeatureIds = compiled.quality.timelineMismatchedFeatureIds || [];
@@ -2291,7 +2293,7 @@ export async function finalizeWithCompilerGates(
         compiled = currentEvaluation.compiled;
         bestCurrent = current;
         bestCompiled = compiled;
-        bestScore = Math.max(bestScore, qualityScore(compiled.quality));
+        bestScore = qualityScore(compiled.quality);
         timelineRewrittenFromFeatureMap = true;
         timelineRewriteAppliedLines = timelineRewrite.appliedLines;
         featureQualityDiagnostics = currentEvaluation.featureQualityDiagnostics;
@@ -2313,6 +2315,7 @@ export async function finalizeWithCompilerGates(
     'feature_field_truncated',
     'acceptance_criteria_non_measurable',
     'request_fulfillment_gap',
+    'feature_core_semantic_gap',
   ]);
   const qualityRepairReviewer = options.semanticRefineReviewer || options.contentRefineReviewer;
   if (options.enableQualityAutoRepair && qualityRepairReviewer && compiled.quality?.issues?.length) {
@@ -2320,9 +2323,18 @@ export async function finalizeWithCompilerGates(
       (issue) => issue.severity === 'warning' && issue.evidencePath && QUALITY_REPAIR_CODES.has(issue.code)
     );
     if (qualityWarnings.length > 0) {
-      options.onStageProgress?.({ type: 'quality_repair_start' as any, issueCount: qualityWarnings.length });
+      options.onStageProgress?.({ type: 'quality_repair_start', issueCount: qualityWarnings.length });
       let qualityRepairAppliedCount = 0;
       const qualityRepairIssueCodes: string[] = [];
+
+      // ÄNDERUNG 15.03.2026: Spezialisierte Target-Fields pro Issue-Code,
+      // damit der Repair-Prompt gezielt die relevanten Feature-Felder adressiert.
+      const QUALITY_REPAIR_TARGET_FIELDS: Record<string, string[]> = {
+        feature_core_semantic_gap: ['preconditions', 'postconditions', 'dataImpact'],
+        acceptance_criteria_non_measurable: ['acceptanceCriteria'],
+        acceptance_criteria_boilerplate: ['acceptanceCriteria'],
+        feature_field_truncated: ['mainFlow', 'alternateFlows', 'acceptanceCriteria'],
+      };
 
       for (const warning of qualityWarnings.slice(0, 5)) {
         runCancelCheck('quality_repair');
@@ -2330,12 +2342,16 @@ export async function finalizeWithCompilerGates(
           ? warning.evidencePath
           : warning.evidencePath || 'systemVision';
         const isFeature = sectionKey.startsWith('feature:');
+        const targetFields = isFeature
+          ? QUALITY_REPAIR_TARGET_FIELDS[warning.code] as import('./prdFeatureSemantics').FeatureEnrichableField[] | undefined
+          : undefined;
         const contentIssues: ContentIssue[] = [{
           code: warning.code,
           sectionKey,
           message: warning.message,
           severity: 'warning',
           suggestedAction: isFeature ? 'enrich' : 'rewrite',
+          ...(targetFields ? { targetFields } : {}),
         }];
 
         try {
@@ -2351,13 +2367,33 @@ export async function finalizeWithCompilerGates(
 
           if (qualityPatch.refined) {
             const patchEval = evaluateCandidate(qualityPatch.content);
-            if (compareCandidatePreference(patchEval, currentEvaluation) >= 0) {
+            const strictAccepted = compareCandidatePreference(patchEval, currentEvaluation) >= 0;
+
+            // ÄNDERUNG 15.03.2026: Gelockerte Akzeptanz fuer Warning-Repairs —
+            // wenn die strikte Praeferenz-Pruefung fehlschlaegt, pruefen ob die
+            // spezifische Warning behoben wurde und der Quality-Score maximal
+            // 5 Punkte gesunken ist. Damit werden gezielte Fixes nicht abgelehnt
+            // nur weil sie den Gesamtscore minimal beeinflussen.
+            let warningFixAccepted = false;
+            if (!strictAccepted && patchEval.compiled.quality) {
+              const patchScore = qualityScore(patchEval.compiled.quality);
+              const currentScore = qualityScore(compiled.quality);
+              const scoreDrop = currentScore - patchScore;
+              const warningStillPresent = patchEval.compiled.quality.issues?.some(
+                (i) => i.code === warning.code && i.evidencePath === warning.evidencePath,
+              );
+              if (!warningStillPresent && scoreDrop <= 5) {
+                warningFixAccepted = true;
+              }
+            }
+
+            if (strictAccepted || warningFixAccepted) {
               current = { ...current, content: qualityPatch.content };
               currentEvaluation = patchEval;
               compiled = patchEval.compiled;
               bestCurrent = current;
               bestCompiled = compiled;
-              bestScore = Math.max(bestScore, qualityScore(compiled.quality));
+              bestScore = qualityScore(compiled.quality);
               qualityRepairAppliedCount++;
               qualityRepairIssueCodes.push(warning.code);
               reviewerAttempts.push(...qualityPatch.reviewerAttempts);
@@ -2370,7 +2406,7 @@ export async function finalizeWithCompilerGates(
       }
 
       options.onStageProgress?.({
-        type: 'quality_repair_done' as any,
+        type: 'quality_repair_done',
         issueCount: qualityWarnings.length,
         applied: qualityRepairAppliedCount > 0,
       });
@@ -2533,11 +2569,6 @@ export async function finalizeWithCompilerGates(
       }
       reviewerAttempts.push(...semanticRepair.reviewerAttempts);
       semanticRepairTruncated = semanticRepairTruncated || semanticRepair.truncated;
-      semanticRepairChangedSections = Array.from(new Set([
-        ...semanticRepairChangedSections,
-        ...(semanticRepair.changedSections || []),
-      ]));
-      semanticRepairStructuralChange = semanticRepairStructuralChange || !!semanticRepair.structuralChange;
       options.onStageProgress?.({
         type: 'semantic_repair_done',
         issueCount: targetIssues.length,
@@ -2594,12 +2625,6 @@ export async function finalizeWithCompilerGates(
       };
       currentEvaluation = recompiledEvaluation;
       compiled = currentEvaluation.compiled;
-      bestScore = Math.max(bestScore, qualityScore(compiled.quality));
-      featureQualityDiagnostics = currentEvaluation.featureQualityDiagnostics;
-      canonicalFeatureIds = compiled.quality.canonicalFeatureIds || canonicalFeatureIds;
-      timelineMismatchedFeatureIds = compiled.quality.timelineMismatchedFeatureIds || [];
-      semanticRepairApplied = true;
-      maybePromoteBestSubstantive(current, currentEvaluation, degradedCandidateSource);
 
       // 10. Re-verify
       runCancelCheck(`semantic_reverification_cycle_${repairCycleCount}`);
@@ -2608,8 +2633,22 @@ export async function finalizeWithCompilerGates(
       if (repairCycleCount === 1) {
         postRepairSemanticBlockingIssues = cloneSemanticBlockingIssues(verification.blockingIssues);
       }
+      const finalizeAcceptedSemanticRepair = () => {
+        bestScore = qualityScore(compiled.quality);
+        featureQualityDiagnostics = currentEvaluation.featureQualityDiagnostics;
+        canonicalFeatureIds = compiled.quality.canonicalFeatureIds || canonicalFeatureIds;
+        timelineMismatchedFeatureIds = compiled.quality.timelineMismatchedFeatureIds || [];
+        semanticRepairApplied = true;
+        semanticRepairChangedSections = Array.from(new Set([
+          ...semanticRepairChangedSections,
+          ...(semanticRepair.changedSections || []),
+        ]));
+        semanticRepairStructuralChange = semanticRepairStructuralChange || !!semanticRepair.structuralChange;
+        maybePromoteBestSubstantive(current, currentEvaluation, degradedCandidateSource);
+      };
 
       if (verification.verdict === 'pass' || verification.blockingIssues.length === 0) {
+        finalizeAcceptedSemanticRepair();
         repairGapReason = undefined;
         break;
       }
@@ -2618,6 +2657,7 @@ export async function finalizeWithCompilerGates(
       // Hinweis: isNonFeatureSchemaMismatch zaehlt hier NICHT — der Loop darf diese weiter versuchen.
       const hasRepairableIssues = verification.blockingIssues.some(i => !isUnrepairableIssue(i));
       if (!hasRepairableIssues) {
+        finalizeAcceptedSemanticRepair();
         repairGapReason = undefined;
         break;
       }
@@ -2642,6 +2682,7 @@ export async function finalizeWithCompilerGates(
       }
 
       // 12. Feature locking: if repaired target now passes, freeze it
+      finalizeAcceptedSemanticRepair();
       const targetStillFailing = verification.blockingIssues.some(i => i.sectionKey === targetKey);
       if (!targetStillFailing) {
         const featureKey = extractFeatureKey(targetKey);
@@ -2682,7 +2723,7 @@ export async function finalizeWithCompilerGates(
             message: `Verifier reported only soft-blocking issues (${softBlocking.map(i => `${i.sectionKey}:${i.code}`).join(', ')}). Accepting as degraded.`,
             severity: 'warning',
           }),
-          qualityScore: bestScore,
+          qualityScore: qualityScore(displayedDegraded.evaluation.compiled.quality),
           repairAttempts,
           reviewerAttempts,
           contentReview,
@@ -2744,7 +2785,7 @@ export async function finalizeWithCompilerGates(
               + `Accepting as degraded.`,
             severity: 'warning',
           }),
-          qualityScore: bestScore,
+          qualityScore: qualityScore(displayedExhausted.evaluation.compiled.quality),
           repairAttempts,
           reviewerAttempts,
           contentReview,
@@ -2840,7 +2881,7 @@ export async function finalizeWithCompilerGates(
     content: compiled.content,
     structure: compiled.structure,
     quality: compiled.quality,
-    qualityScore: bestScore,
+    qualityScore: qualityScore(compiled.quality),
     repairAttempts,
     reviewerAttempts,
     contentReview,

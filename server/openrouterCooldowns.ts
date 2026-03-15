@@ -42,6 +42,13 @@ export function getAllActiveCooldowns(): Record<string, CooldownEntry> {
       globaleModellCooldowns.delete(model);
     }
   }
+  for (const [provider, eintrag] of globaleProviderCooldowns) {
+    if (jetzt < eintrag.until) {
+      ergebnis[`provider:${provider}`] = eintrag;
+    } else {
+      globaleProviderCooldowns.delete(provider);
+    }
+  }
   return ergebnis;
 }
 

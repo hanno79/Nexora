@@ -26,6 +26,7 @@ import {
 import {
   logGuidedGenerationUsage,
   persistGuidedPrdFinalizationBestEffort,
+  sumGuidedStageUsage,
 } from './guidedRoutePersistence';
 import {
   AuthenticatedRequest,
@@ -51,6 +52,7 @@ export function registerGuidedFinalizeStreamRoute(
     let sseCompleted = false;
     let timeoutId: NodeJS.Timeout | null = null;
     let cleanupSseListeners = () => {};
+    const controller = new AbortController();
 
     const cleanupTimeout = () => {
       if (timeoutId) {
@@ -103,6 +105,7 @@ export function registerGuidedFinalizeStreamRoute(
           return;
         }
         sseClosed = true;
+        controller.abort();
         cleanupTimeout();
         if (!sseCompleted) {
           logger.warn('Guided finalize SSE client disconnected', { hasPrdId: !!editablePrdId });
@@ -131,12 +134,17 @@ export function registerGuidedFinalizeStreamRoute(
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
           logger.warn('Guided finalize timeout reached', { hasPrdId: !!editablePrdId });
+          controller.abort();
           reject(new Error('Guided finalize aborted due to timeout'));
         }, guidedFinalizeTimeoutMs);
       });
 
       const result = await Promise.race([
-        getGuidedAiService().finalizePRD(sessionId, userId, { aiPreferenceUserId, templateCategory }),
+        getGuidedAiService().finalizePRD(sessionId, userId, {
+          aiPreferenceUserId,
+          templateCategory,
+          signal: controller.signal,
+        }),
         timeoutPromise,
       ]);
 
@@ -153,7 +161,21 @@ export function registerGuidedFinalizeStreamRoute(
         baseDiagnostics: result.diagnostics,
       });
 
-      await logGuidedGenerationUsage(userId, result.modelsUsed, result.tokensUsed, prdId);
+      const streamUsage = sumGuidedStageUsage(result.analysisStage, result.generationStage);
+      try {
+        await logGuidedGenerationUsage(
+          userId,
+          result.modelsUsed,
+          streamUsage.promptTokens,
+          streamUsage.completionTokens,
+          prdId,
+        );
+      } catch (usageError) {
+        logger.error('Guided finalize usage logging failed', {
+          error: usageError,
+          hasPrdId: !!editablePrdId,
+        });
+      }
 
       const payload = {
         finalContent: result.prdContent,

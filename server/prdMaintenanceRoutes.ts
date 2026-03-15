@@ -82,7 +82,10 @@ export function registerPrdMaintenanceRoutes(
   deps: PrdMaintenanceRouteDependencies,
 ): void {
   app.post('/api/prds/:id/export', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
-    const { format } = req.body;
+    const format = typeof req.body?.format === 'string' ? req.body.format : '';
+    if (!['markdown', 'claudemd', 'pdf', 'word'].includes(format)) {
+      return res.status(400).json({ message: 'format must be one of markdown, claudemd, pdf, or word' });
+    }
     const { id } = req.params;
     const prd = await deps.requirePrdAccess(deps.storage, req, res, id, 'view');
     if (!prd) {

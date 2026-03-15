@@ -13,6 +13,13 @@ import {
 export type PrdQualityStatus = 'passed' | 'degraded' | 'failed_quality' | 'failed_runtime' | 'cancelled';
 export type PrdFinalizationStage = 'intermediate' | 'final';
 
+export interface FallbackEventDiagnostic {
+  model: string;
+  error: string;
+  category: string;
+  timestamp: string;
+}
+
 export interface CompilerRunDiagnostics extends CompilerDiagnostics {
   errorCount: number;
   warningCount: number;
@@ -82,6 +89,8 @@ export interface CompilerRunDiagnostics extends CompilerDiagnostics {
   providerFailureCounts?: ProviderFailureCounts;
   providerFailedModels?: string[];
   providerFailureStage?: ProviderFailureStage;
+  /** Records each failed model attempt during fallback so the UI can explain why a fallback model was used. */
+  fallbackEvents?: FallbackEventDiagnostic[];
 }
 
 function uniqueStrings(values: Array<string | null | undefined>): string[] {
@@ -270,15 +279,6 @@ export function topRootCauseCodes(
   limit = 3,
   options?: { featureQualityFloorFailed?: boolean }
 ): string[] {
-  const ranked = issues
-    .filter(issue => issue.severity === 'error')
-    .map(issue => issue.code)
-    .filter(Boolean);
-  const uniqueRanked = Array.from(new Set(ranked));
-  if (!options?.featureQualityFloorFailed) {
-    return uniqueRanked.slice(0, Math.max(1, limit));
-  }
-
   const featureQualityPriority = [
     'feature_quality_floor_failed',
     'feature_specs_incomplete',
@@ -288,6 +288,22 @@ export function topRootCauseCodes(
     'boilerplate_repetition_detected',
     'feature_near_duplicates_unmerged',
   ];
+  const ranked = issues
+    .filter(issue =>
+      issue.severity === 'error'
+      || (
+        options?.featureQualityFloorFailed
+        && issue.severity === 'warning'
+        && featureQualityPriority.includes(issue.code)
+      )
+    )
+    .map(issue => issue.code)
+    .filter(Boolean);
+  const uniqueRanked = Array.from(new Set(ranked));
+  if (!options?.featureQualityFloorFailed) {
+    return uniqueRanked.slice(0, Math.max(1, limit));
+  }
+
   const deferredSecondary = new Set([
     'timeline_feature_reference_mismatch',
     'out_of_scope_reintroduced',
@@ -367,6 +383,7 @@ export function buildCompilerRunDiagnostics(params: {
   providerFailureCounts?: ProviderFailureCounts;
   providerFailedModels?: string[];
   providerFailureStage?: ProviderFailureStage;
+  fallbackEvents?: FallbackEventDiagnostic[];
 }): CompilerRunDiagnostics {
   const quality = params.quality || null;
   const issues = quality?.issues || [];
@@ -629,6 +646,9 @@ export function buildCompilerRunDiagnostics(params: {
     activePhase: params.base?.activePhase,
     lastProgressEvent: params.base?.lastProgressEvent,
     lastModelAttempt: params.base?.lastModelAttempt,
+    fallbackEvents: params.fallbackEvents?.length
+      ? params.fallbackEvents
+      : params.base?.fallbackEvents,
   };
 
   return diagnostics;
@@ -699,7 +719,7 @@ export function classifyRunFailure(
               baseTotalFeatureCount ?? 0,
               error.quality.featureCount || 0,
               compiledFeatureCount ?? 0,
-            ) || undefined,
+            ),
           repairModelIds: error.repairAttempts.map(attempt => attempt.model).filter(Boolean),
           reviewerModelIds: error.reviewerAttempts.map(attempt => attempt.model).filter(Boolean),
           verifierModelIds: error.semanticVerification?.model ? [error.semanticVerification.model] : [],

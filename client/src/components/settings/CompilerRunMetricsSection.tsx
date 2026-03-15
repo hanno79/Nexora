@@ -150,11 +150,11 @@ export function CompilerRunMetricsSection() {
   });
 
   const alerts = data?.alerts || [];
-  const topRootCauses = data?.quality.topRootCauses || [];
-  const totalRuns = data?.counts.totalRuns || 0;
-  const totalLatencyP95 = data?.latency.stages.totalDurationMs?.p95 || 0;
-  const routeLatencyP95 = data?.latency.stages.routeDurationMs?.p95 || 0;
-  const finalizerLatencyP95 = data?.latency.stages.compilerFinalizationDurationMs?.p95 || 0;
+  const topRootCauses = data?.quality?.topRootCauses || [];
+  const totalRuns = data?.counts?.totalRuns || 0;
+  const totalLatencyP95 = data?.latency?.stages?.totalDurationMs?.p95 || 0;
+  const routeLatencyP95 = data?.latency?.stages?.routeDurationMs?.p95 || 0;
+  const finalizerLatencyP95 = data?.latency?.stages?.compilerFinalizationDurationMs?.p95 || 0;
 
   const healthLabel = data?.healthState === "critical"
     ? t.settings.compilerMetricsHealthCritical

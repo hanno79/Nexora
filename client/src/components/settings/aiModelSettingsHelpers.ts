@@ -92,6 +92,11 @@ export function buildAiModelSettingsKey(params: {
   semanticRepairModel: string;
   fallbackChain: string[];
   aiTier: AiTier;
+  iterativeMode: boolean;
+  iterationCount: number;
+  iterativeTimeoutMinutes: number;
+  useFinalReview: boolean;
+  guidedQuestionRounds: number;
 }): string {
   return JSON.stringify(params);
 }
@@ -155,13 +160,23 @@ export function resolveTierModelSelection(params: {
   fallbackChain: string[];
 } {
   const saved = params.savedTierModels[params.tier];
-  if (saved?.generatorModel || saved?.reviewerModel || saved?.verifierModel || saved?.fallbackChain) {
+  if (
+    saved?.generatorModel
+    || saved?.reviewerModel
+    || saved?.verifierModel
+    || saved?.semanticRepairModel
+    || saved?.fallbackChain
+    || saved?.fallbackModel
+  ) {
     return {
       generatorModel: saved.generatorModel,
       reviewerModel: saved.reviewerModel,
       verifierModel: saved.verifierModel,
       semanticRepairModel: saved.semanticRepairModel,
-      fallbackChain: saved.fallbackChain ? [...saved.fallbackChain] : [...DEFAULT_FALLBACK_CHAIN],
+      fallbackChain:
+        Array.isArray(saved.fallbackChain) && saved.fallbackChain.length > 0
+          ? [...saved.fallbackChain]
+          : (saved.fallbackModel ? [saved.fallbackModel] : [...DEFAULT_FALLBACK_CHAIN]),
     };
   }
 

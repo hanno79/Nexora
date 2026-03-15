@@ -1,5 +1,6 @@
 import os
 import pathlib
+import shutil
 
 
 def resolve_repo_root() -> pathlib.Path:
@@ -55,7 +56,12 @@ replacement = read_required_text(replacement_path, "Replacement file")
 
 new_content = content[:start_idx] + replacement + content[end_idx:]
 backup_path = fp.with_suffix('.ts.bak')
-fp.rename(backup_path)
+try:
+    if backup_path.exists():
+        backup_path.unlink()
+    shutil.move(fp, backup_path)
+except OSError as exc:
+    raise OSError(f"Failed to create backup from {fp} to {backup_path}: {exc}") from exc
 print(f'Backup created: {backup_path}')
 fp.write_text(new_content, encoding="utf-8")
 print(f"Done. New file has {len(new_content.splitlines())} lines")

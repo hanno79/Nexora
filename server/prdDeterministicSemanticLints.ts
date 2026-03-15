@@ -871,7 +871,7 @@ function rewriteTimelineReferenceLine(
   // Build a map of F-XX to ref replacements
   const refMap = new Map<string, string>();
   for (const match of matches) {
-    const refEntry = refs.find(r => r.startsWith(match));
+    const refEntry = refs.find(r => r.toLowerCase().startsWith(match.toLowerCase()));
     if (refEntry) {
       refMap.set(match, refEntry);
     }
@@ -880,7 +880,8 @@ function rewriteTimelineReferenceLine(
   // Replace each F-XX token in-place with its replacement
   let result = line;
   for (const [match, replacement] of refMap) {
-    result = result.replace(new RegExp(`\\b${match}\\b`, 'i'), replacement);
+    const escapedMatch = match.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    result = result.replace(new RegExp(`\\b${escapedMatch}\\b`, 'gi'), replacement);
   }
 
   return result.trimEnd();
@@ -948,7 +949,7 @@ function collectVisionFirstCoverageIssues(
       message: isTrulyMissing
         ? 'Primary product capabilities from the vision are not represented clearly enough in the leading feature set.'
         : `Primary product capabilities from the vision (${coreFeatureIds.join(', ')}) exist but are not positioned in the leading feature set.`,
-      severity: 'warning',
+      severity: isTrulyMissing ? 'error' : 'warning',
       evidencePath: featurePriorityWindow[0] ? `feature:${featurePriorityWindow[0]}` : 'systemVision',
       evidenceSnippet: uniqueStrings([
         structure.systemVision,
@@ -1790,10 +1791,10 @@ function collectDegenerateSectionIssues(
 // Repair das Feld VORHER auffuellen, bevor der Semantic Verifier es als
 // feature_section_semantic_mismatch meldet.
 const UI_INDICATOR_PATTERNS = [
-  /(?:ui|interface|screen|button|display|anzeige|men[uü]e?|dashboard|widget|ansicht|darstellung|visual|overlay|hud|profil|view|panel|modal|dialog|fenster|seite|page)/i,
+  /\b(?:ui|interface|screen|button|display|anzeige|men[uü]e?|dashboard|widget|ansicht|darstellung|visual|overlay|hud|profil|view|panel|modal|dialog|fenster|seite|page)\b/i,
 ];
 const DATA_INDICATOR_PATTERNS = [
-  /(?:persist|speicher|storage|daten(?:bank)?|data(?:base)?|save|load|synchron|cache|migration|backup|export|import)/i,
+  /\b(?:persist|speicher|storage|daten(?:bank)?|data(?:base)?|save|load|synchron|cache|migration|backup|export|import)\b/i,
 ];
 const ENRICHMENT_FIELD_MIN_LENGTH = 30;
 

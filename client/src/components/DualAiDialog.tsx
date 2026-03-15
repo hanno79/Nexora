@@ -239,6 +239,17 @@ export function DualAiDialog({
     }
   }, [applyRunPayload, closeDialogAfter, onContentGenerated]);
 
+  const cleanupGuidedSessionState = useCallback(() => {
+    try {
+      localStorage.removeItem('nexora_guided_session_v2');
+    } catch (error) {
+      console.warn('Failed to clear guided session state:', error);
+    }
+    setGuidedSessionId(null);
+    setGuidedSessionInfo(null);
+    setIsFinalizing(false);
+  }, []);
+
   const handleFailedRunPayload = useCallback((payload: any, closeDelayMs: number) => {
     const runRecord = applyRunPayload(payload);
     const finalContent = extractAiRunFinalContent(payload);
@@ -250,6 +261,7 @@ export function DualAiDialog({
       degradedResult: true,
     };
 
+    cleanupGuidedSessionState();
     setIsGenerating(false);
 
     if (finalContent.trim()) {
@@ -269,7 +281,7 @@ export function DualAiDialog({
     setCurrentStep('idle');
     setError(runRecord.message || payload?.message || t.dualAi.qualityGateFailed);
     return true;
-  }, [applyRunPayload, closeDialogAfter, onContentGenerated, onGenerationFailed, t.dualAi.qualityGateFailed]);
+  }, [applyRunPayload, cleanupGuidedSessionState, closeDialogAfter, onContentGenerated, onGenerationFailed, t.dualAi.qualityGateFailed]);
 
   // ÄNDERUNG 02.03.2026: Mit useCallback memoisiert für korrekte Dependencies
   // ÄNDERUNG 02.03.2026: AbortController-Support für Cleanup hinzugefügt
@@ -342,10 +354,7 @@ export function DualAiDialog({
         }
         finalizeRun(data, 2000);
 
-        // Session aus localStorage entfernen
-        localStorage.removeItem('nexora_guided_session_v2');
-        setGuidedSessionId(null);
-        setGuidedSessionInfo(null);
+        cleanupGuidedSessionState();
       } else {
         // Fallback: klassische JSON-Antwort
         const data = await response.json();
@@ -355,9 +364,7 @@ export function DualAiDialog({
         }
         finalizeRun(data, 2000);
 
-        localStorage.removeItem('nexora_guided_session_v2');
-        setGuidedSessionId(null);
-        setGuidedSessionInfo(null);
+        cleanupGuidedSessionState();
       }
     } catch (err: any) {
       if ((err instanceof SsePayloadError || err?.payload) && isFailedAiRun(err.payload)) {
@@ -371,9 +378,7 @@ export function DualAiDialog({
         setError(err.message || t.errors.generateFailed);
       }
       // ÄNDERUNG 02.03.2026: Session aus localStorage entfernen bei Fehler um Endlosschleife zu verhindern
-      localStorage.removeItem('nexora_guided_session_v2');
-      setGuidedSessionId(null);
-      setGuidedSessionInfo(null);
+      cleanupGuidedSessionState();
       setCurrentStep('idle');
       setIsGenerating(false);
     } finally {
@@ -381,7 +386,7 @@ export function DualAiDialog({
       stopElapsedTimer();
     }
     // Dependencies für useCallback - alle verwendeten States und Props
-  }, [t, prdId, onContentGenerated, onOpenChange, startElapsedTimer, stopElapsedTimer, resetState, handleFailedRunPayload, finalizeRun]);
+  }, [t, prdId, onContentGenerated, onOpenChange, startElapsedTimer, stopElapsedTimer, resetState, handleFailedRunPayload, finalizeRun, cleanupGuidedSessionState]);
 
   // ÄNDERUNG 02.03.2026: Lade Guided Session aus localStorage beim Öffnen
   // ÄNDERUNG 02.03.2026: Race Condition behoben - setTimeout mit Closure entfernt

@@ -111,7 +111,7 @@ export class CerebrasProvider extends BaseAIProvider {
   }
 
   async callModel(options: CallOptions): Promise<AIResponse> {
-    const { model, messages, temperature = 0.7, maxTokens, stream, response: expressResponse, abortSignal } = options;
+    const { model, messages, temperature = 0.7, maxTokens, responseFormat, stream, response: expressResponse, abortSignal } = options;
 
     this.logMessage(`Calling Cerebras model: ${model}`, { temperature, maxTokens, stream });
 
@@ -124,6 +124,9 @@ export class CerebrasProvider extends BaseAIProvider {
 
     if (maxTokens) {
       requestBody.max_tokens = maxTokens;
+    }
+    if (responseFormat) {
+      requestBody.response_format = responseFormat;
     }
 
     try {

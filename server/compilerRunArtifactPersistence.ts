@@ -33,6 +33,8 @@ export interface CompilerRunArtifactWriteResult {
   reportDir: string;
   timestampedArtifactPath: string;
   latestArtifactPath: string;
+  timestampedWritten: boolean;
+  latestWritten: boolean;
 }
 
 function sanitizeKey(value: string): string {
@@ -107,9 +109,16 @@ export async function persistCompilerRunArtifact(
     }
   }
 
+  let timestampedWritten = false;
+  let latestWritten = false;
+  let timestampedWriteError: unknown = null;
+  let latestWriteError: unknown = null;
+
   try {
     await fs.promises.writeFile(timestampedArtifactPath, serialized, 'utf8');
+    timestampedWritten = true;
   } catch (writeError) {
+    timestampedWriteError = writeError;
     logger.error('Compiler run artifact timestamped write failed', {
       path: timestampedArtifactPath,
       error: writeError,
@@ -117,16 +126,27 @@ export async function persistCompilerRunArtifact(
   }
   try {
     await fs.promises.writeFile(latestArtifactPath, serialized, 'utf8');
+    latestWritten = true;
   } catch (writeError) {
+    latestWriteError = writeError;
     logger.error('Compiler run artifact latest write failed', {
       path: latestArtifactPath,
       error: writeError,
     });
   }
 
+  if (!timestampedWritten && !latestWritten) {
+    throw new Error(
+      `Failed to persist compiler run artifact at ${timestampedArtifactPath} and ${latestArtifactPath}: `
+      + `timestamped=${String(timestampedWriteError)}, latest=${String(latestWriteError)}`
+    );
+  }
+
   return {
     reportDir,
     timestampedArtifactPath,
     latestArtifactPath,
+    timestampedWritten,
+    latestWritten,
   };
 }

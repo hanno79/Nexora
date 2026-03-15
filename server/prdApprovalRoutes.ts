@@ -9,6 +9,7 @@ Beschreibung: Registriert PRD-Approval-Routen als kleines Modul.
 // um die Hauptdatei konservativ weiter zu verkleinern.
 
 import type { Request, RequestHandler } from 'express';
+import { ZodError } from 'zod';
 import { validateApprovalReviewers } from './approvalReviewers';
 import { asyncHandler } from './asyncHandler';
 import { requirePrdAccess } from './prdAccess';
@@ -89,7 +90,15 @@ export function registerPrdApprovalRoutes(
     }
 
     const userId = req.user.claims.sub;
-    const { reviewers } = requestApprovalSchema.parse(req.body);
+    let reviewers: string[];
+    try {
+      ({ reviewers } = requestApprovalSchema.parse(req.body));
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({ message: error.issues[0]?.message || 'Validation error' });
+      }
+      throw error;
+    }
     const existingApproval = await deps.storage.getApproval(id);
     if (existingApproval && existingApproval.status === 'pending') {
       return res.status(400).json({ message: 'There is already a pending approval request' });
@@ -129,7 +138,11 @@ export function registerPrdApprovalRoutes(
   app.post('/api/prds/:id/approval/respond', isAuthenticated, asyncHandler(async (req: AuthenticatedRequest, res) => {
     const { id } = req.params;
     const userId = req.user.claims.sub;
-    const { approved } = respondApprovalSchema.parse(req.body);
+    const result = respondApprovalSchema.safeParse(req.body);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error.flatten() });
+    }
+    const { approved } = result.data;
     const prd = await deps.requirePrdAccess(deps.storage, req, res, id, 'view');
     if (!prd) {
       return;

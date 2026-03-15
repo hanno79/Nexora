@@ -222,7 +222,7 @@ export class NvidiaProvider extends BaseAIProvider {
   }
 
   async callModel(options: CallOptions): Promise<AIResponse> {
-    const { model, messages, temperature = 0.7, maxTokens, stream, response: expressResponse, abortSignal } = options;
+    const { model, messages, temperature = 0.7, maxTokens, responseFormat, stream, response: expressResponse, abortSignal } = options;
 
     // Grosse Modelle (>=200B) brauchen deutlich laenger - Timeout anpassen
     // Dynamisch aus Model-ID parsen statt hardcoded Strings (z.B. 397b, 675b, 405b, 480b)
@@ -245,6 +245,9 @@ export class NvidiaProvider extends BaseAIProvider {
 
     if (maxTokens) {
       requestBody.max_tokens = maxTokens;
+    }
+    if (responseFormat) {
+      requestBody.response_format = responseFormat;
     }
 
     try {

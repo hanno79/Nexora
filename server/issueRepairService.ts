@@ -24,6 +24,21 @@ import { logger } from './logger';
 import type { TokenUsage } from '@shared/schema';
 import type { SupportedLanguage } from './prdTemplateIntent';
 
+// Deterministic lint codes that are NOT emitted by the semantic verifier.
+// For these codes the UI fix-button must verify success via re-compilation
+// instead of relying on the semantic verifier output.
+const DETERMINISTIC_LINT_CODES = new Set([
+  'feature_core_semantic_gap',
+  'feature_duplicate_flow',
+  'feature_enrichment_field_empty',
+  'feature_field_truncated',
+  'acceptance_criteria_boilerplate',
+  'acceptance_criteria_non_measurable',
+  'deployment_stack_mismatch',
+  'nfr_architecture_mismatch',
+  'request_fulfillment_gap',
+]);
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -84,7 +99,7 @@ export async function repairSingleIssue(options: IssueRepairOptions): Promise<Is
     'business_rule_constraint_conflict',
   ]);
   const relatedIssues = (allIssues ?? []).filter(other => {
-    if (other.code === issue.code && other.sectionKey === issue.sectionKey) return false; // skip self
+    if (other === issue) return false; // skip self
     return (
       (CROSS_SECTION_CODES.has(issue.code) && other.code === issue.code) ||
       (other.sectionKey === issue.sectionKey && other.code !== issue.code)
@@ -171,6 +186,19 @@ export async function repairSingleIssue(options: IssueRepairOptions): Promise<Is
     );
 
     if (!matchingIssue) {
+      // For deterministic lint codes the semantic verifier never emits them,
+      // so absence in blockingIssues is expected. Re-compile and check the
+      // deterministic quality issues to confirm actual resolution.
+      if (DETERMINISTIC_LINT_CODES.has(issue.code)) {
+        const recheck = compilePrdDocument(currentContent, { mode: 'generate', language, templateCategory });
+        const stillPresent = recheck.quality?.issues?.some(
+          qi => qi.code === issue.code && qi.evidencePath === issue.sectionKey,
+        );
+        if (stillPresent) {
+          // Issue persists in deterministic lints — retry
+          continue;
+        }
+      }
       // Issue resolved — return repaired content
       return buildResult(
         currentContent,

@@ -2001,8 +2001,13 @@ export async function reviewAndRefineContent(options: {
     reviewer,
   });
 
+  const refreshedReviewResult = analyzeContentQuality(refineResult.structure, {
+    templateCategory,
+    fallbackSections,
+  });
+
   if (!refineResult.refined && reviewResult.issues.some(issue => isFeatureTargeted(issue))) {
-    reviewResult.issues.push({
+    refreshedReviewResult.issues.push({
       code: 'feature_enrichment_failed',
       sectionKey: 'features',
       message: 'Reviewer-based feature repair produced no safe targeted update.',
@@ -2014,7 +2019,7 @@ export async function reviewAndRefineContent(options: {
   return {
     content: refineResult.content,
     structure: refineResult.structure,
-    reviewResult,
+    reviewResult: refreshedReviewResult,
     refined: refineResult.refined,
     enrichedFeatureCount: refineResult.enrichedFeatureCount,
     reviewerAttempts: refineResult.reviewerAttempts,

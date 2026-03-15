@@ -116,7 +116,7 @@ export function extractFieldHintsFromRaw(rawContent: string): {
   // Fuer Rollen- und Trigger-Heuristiken nur den Freitext vor dem ersten
   // strukturierten Unterabschnitt verwenden, damit Compile-Parse-Compile-Laeufe
   // stabil bleiben und vorhandenes Scaffold nicht erneut als Hint zaehlt.
-  const firstStructuredMarker = rawContent.search(/\*\*\d{1,2}\.\s+/);
+  const firstStructuredMarker = rawContent.search(/(\*\*\d{1,2}\.\s+|(?:^|\n)\s*\d{1,2}\.\s+)/);
   const proseSource = firstStructuredMarker > 0
     ? rawContent.substring(0, firstStructuredMarker).trim()
     : rawContent;

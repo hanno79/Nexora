@@ -14,3 +14,4 @@ export { AiModelSettingsSection } from './AiModelSettingsSection';
 export { ProviderFilterSection } from './ProviderFilterSection';
 export { AiUsageSection } from './AiUsageSection';
 export { CompilerRunMetricsSection } from './CompilerRunMetricsSection';
+export { ModelAnalyticsSection } from './ModelAnalyticsSection';

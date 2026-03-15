@@ -8,7 +8,7 @@ async function installSettingsApiMocks(page: Page) {
       contentType: "application/json",
       body: JSON.stringify({
         id: "user_test",
-        email: "hanno.rahn@gmail.com",
+        email: "test@example.com",
         firstName: "Hanno",
         lastName: "Rahn",
         profileImageUrl: null,

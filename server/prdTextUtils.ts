@@ -36,10 +36,7 @@ export function isCompilerFilledSection(
   for (const section of knownFallbackSections || new Set<string>()) {
     const normalizedFallbackSection = String(section || '').toLowerCase().replace(/[^a-z]/g, '');
     if (!normalizedFallbackSection) continue;
-    if (
-      normalizedFallbackSection.includes(normalizedSectionKey)
-      || normalizedSectionKey.includes(normalizedFallbackSection)
-    ) {
+    if (normalizedFallbackSection === normalizedSectionKey) {
       return true;
     }
   }

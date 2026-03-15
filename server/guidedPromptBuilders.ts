@@ -22,7 +22,7 @@ export function buildGuidedAnalysisInput(params: GuidedPromptBaseParams & {
 }): string {
   const templateInstruction = buildTemplateInstruction(params.templateCategory, params.language);
   return params.workflowMode === 'improve'
-    ? `You are refining an existing PRD.\n\nCHANGE REQUEST:\n${params.projectIdea}\n\nEXISTING PRD BASELINE:\n${params.existingContent || ''}\n\nAnalyze what should be preserved and what should be improved. Focus on concrete user-facing refinements and missing sections.`
+    ? `You are refining an existing PRD.\n\nCHANGE REQUEST:\n${params.projectIdea}\n\nEXISTING PRD BASELINE:\n${params.existingContent || ''}\n\n${templateInstruction}\n\nAnalyze what should be preserved and what should be improved. Focus on concrete user-facing refinements and missing sections.`
     : `Analyze this project idea:\n\n${params.projectIdea}\n\n${templateInstruction}`;
 }
 

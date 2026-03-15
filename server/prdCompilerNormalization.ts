@@ -7,6 +7,7 @@ Beschreibung: Interne Normalisierungs- und Parse-Helfer fuer den PRD-Compiler.
 
 // ÄNDERUNG 08.03.2026: Normalisierungs-/Parse-Helfer aus `server/prdCompiler.ts` als dritter risikoarmer Phase-2-Minimalsplit extrahiert.
 
+import { createHash } from 'crypto';
 import { parsePRDToStructure } from './prdParser';
 import {
   extractFeatureHeadingSamples,
@@ -14,6 +15,7 @@ import {
 } from './prdParserUtils';
 import type { PRDStructure } from './prdStructure';
 import { cloneStructure, hasText } from './prdTextUtils';
+import { logger } from './logger';
 
 type SupportedLanguage = 'de' | 'en';
 
@@ -34,7 +36,15 @@ export function detectLanguage(
 export function safeParseStructure(content: string): PRDStructure {
   try {
     return parsePRDToStructure(content);
-  } catch {
+  } catch (error) {
+    const serializedContent = String(content || '');
+    const contentPreview = serializedContent.slice(0, 200);
+    const contentHash = createHash('sha256').update(serializedContent, 'utf8').digest('hex');
+    logger.error('safeParseStructure failed; returning RawContent fallback', {
+      error: error instanceof Error ? error.message : String(error),
+      contentPreview,
+      contentHash,
+    });
     return {
       features: [],
       otherSections: {

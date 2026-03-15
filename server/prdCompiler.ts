@@ -316,15 +316,24 @@ export function compilePrdDocument(
   });
 
   // Feature count regression guard (improve mode)
+  // Check both the final output count and — when aggregation was applied — the
+  // candidate's post-aggregation distinct count against the baseline. The merge
+  // preserves all base features, so the output count may stay high even when the
+  // AI response contained near-duplicate features that got aggregated. Comparing
+  // the candidate count after subtracting aggregated duplicates catches that.
   if (options.mode === 'improve' && improveBaseStructure) {
     const baselineCount = improveBaseStructure.features.length;
     const outputCount = withFeatureDepth.structure.features.length;
-    if (baselineCount > 0 && outputCount < baselineCount) {
-      const lossRatio = 1 - outputCount / baselineCount;
+    // Only consider candidate-based regression when aggregation actually merged features
+    const effectiveCount = aggregatedFeatureCount > 0
+      ? Math.min(outputCount, candidate.features.length - aggregatedFeatureCount)
+      : outputCount;
+    if (baselineCount > 0 && effectiveCount < baselineCount) {
+      const lossRatio = 1 - effectiveCount / baselineCount;
       const severity: 'error' | 'warning' = lossRatio > 0.2 ? 'error' : 'warning';
       quality.issues.push({
         code: 'feature_count_regression',
-        message: `Feature count dropped from ${baselineCount} to ${outputCount} during improve (${Math.round(lossRatio * 100)}% loss)`,
+        message: `Feature count dropped from ${baselineCount} to ${effectiveCount} during improve (${Math.round(lossRatio * 100)}% loss)`,
         severity,
       });
       if (severity === 'error') {

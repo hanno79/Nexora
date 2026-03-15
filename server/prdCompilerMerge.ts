@@ -135,6 +135,36 @@ function mergeFeatureSpecs(base: FeatureSpec, candidate: FeatureSpec): FeatureSp
   return merged;
 }
 
+function normalizeFeatureIdentityValue(value?: string): string {
+  return normalizeForMatch(String(value || '').trim());
+}
+
+function isSameFeatureIdentity(base: FeatureSpec, candidate: FeatureSpec): boolean {
+  const baseName = normalizeFeatureIdentityValue(base.name);
+  const candidateName = normalizeFeatureIdentityValue(candidate.name);
+  if (baseName && candidateName && baseName !== candidateName) {
+    return false;
+  }
+
+  const baseParentTask = normalizeFeatureIdentityValue(base.parentTaskName);
+  const candidateParentTask = normalizeFeatureIdentityValue(candidate.parentTaskName);
+  if (baseParentTask && candidateParentTask && baseParentTask !== candidateParentTask) {
+    return false;
+  }
+
+  return true;
+}
+
+function createCollisionFeatureId(baseId: string, existingKeys: Set<string>): string {
+  let suffix = 2;
+  let collisionId = `${baseId}__collision_${suffix}`;
+  while (existingKeys.has(collisionId)) {
+    suffix++;
+    collisionId = `${baseId}__collision_${suffix}`;
+  }
+  return collisionId;
+}
+
 function mergeFeatureMaps(
   base: FeatureSpec[],
   candidate: FeatureSpec[]
@@ -154,7 +184,25 @@ function mergeFeatureMaps(
       byId.set(feature.id, { ...feature });
       continue;
     }
-    byId.set(feature.id, mergeFeatureSpecs(existing, feature));
+
+    if (isSameFeatureIdentity(existing, feature)) {
+      byId.set(feature.id, mergeFeatureSpecs(existing, feature));
+      continue;
+    }
+
+    const collisionId = createCollisionFeatureId(feature.id, new Set(byId.keys()));
+    console.warn(`Feature ID collision detected during improve merge; preserving both entries`, {
+      originalId: feature.id,
+      collisionId,
+      existingName: existing.name,
+      candidateName: feature.name,
+      existingParentTaskName: existing.parentTaskName,
+      candidateParentTaskName: feature.parentTaskName,
+    });
+    byId.set(collisionId, {
+      ...feature,
+      id: collisionId,
+    });
   }
 
   return {
@@ -200,6 +248,7 @@ export function mergeStructuresForImproveWithDiagnostics(
     ),
     otherSections: {
       ...(base.otherSections || {}),
+      ...(candidate.otherSections || {}),
     },
   };
 

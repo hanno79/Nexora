@@ -570,12 +570,54 @@ function countDomainModelLanguageMarkers(tokens: string[]): { en: number; de: nu
   return { en, de };
 }
 
+function isCodeIdentifierToken(value: string): boolean {
+  const token = String(value || '').trim();
+  if (!token) return false;
+  return /_/.test(token)
+    || /\d/.test(token)
+    || /\b[A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]+)+\b/.test(token)
+    || /\b[a-z]+(?:[A-Z][A-Za-z0-9]+)+\b/.test(token);
+}
+
 function looksLikeTechnicalDomainModelRemainder(value: string): boolean {
+  const raw = String(value || '').trim();
+  if (!raw) return true;
+
+  const commaSeparatedIdentifiers = raw
+    .split(',')
+    .map(segment => segment.replace(/\([^)]*\)/g, ' ').replace(/[;()[\]{}*_`]/g, ' ').trim())
+    .filter(Boolean);
+  if (
+    commaSeparatedIdentifiers.length >= 2
+    && commaSeparatedIdentifiers.every(segment => /^[A-Za-z_][A-Za-z0-9_]*$/.test(segment))
+  ) {
+    return true;
+  }
+
+  const hasRelationshipNotation = /\b\d+\s*[-–*]+\s*\d*\b|->|<-/i.test(raw);
+  if (hasRelationshipNotation) {
+    const relationTokens = raw
+      .replace(/\([^)]*\)/g, ' ')
+      .replace(/[,:;()[\]{}*_`]/g, ' ')
+      .split(/\s+/)
+      .map(token => token.trim())
+      .filter(Boolean);
+    if (
+      relationTokens.length > 0
+      && relationTokens.every(token =>
+        /^[A-Za-z_][A-Za-z0-9_]*$/.test(token)
+        || /^(?:\d+[-–*]+\d*|->|<-)$/.test(token)
+      )
+    ) {
+      return true;
+    }
+  }
+
   const stripped = String(value || '')
     .replace(/\([^)]*\)/g, ' ')
     .replace(/\b\d+\s*[-–*]+\s*\d*\b/g, ' ')
     .replace(/[,:;()[\]{}*_`]/g, ' ')
-    .replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, ' ')
+    .replace(/\b(?:[A-Za-z_]*\d[A-Za-z0-9_]*|[A-Za-z0-9]*_[A-Za-z0-9_]*|[A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]+)+|[a-z]+(?:[A-Z][A-Za-z0-9]+)+)\b/g, ' ')
     .replace(/\s+/g, '');
   return stripped.length === 0;
 }
@@ -662,7 +704,9 @@ function isDomainModelLanguageMismatch(
   const normalized = normalizeText(normalizedValue);
   if (!normalized) return false;
 
-  const tokens = tokenize(normalized).filter(token => !TECH_ALLOWLIST.has(token));
+  const tokens = tokenize(normalized).filter(
+    token => !TECH_ALLOWLIST.has(token) && !isCodeIdentifierToken(token)
+  );
   if (tokens.length < 3) return false;
 
   const hasGermanUmlaut = /[äöüß]/i.test(normalizedValue);
