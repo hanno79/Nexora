@@ -8,3 +8,4 @@ Run#	Timestamp	Hypothese	Geänderte_Datei	Score_vorher	Score_nachher	Delta	Kept	
 6	2026-03-15T19:39:41.899Z	System-Prompt mit expliziten Qualitaetsregeln fuer OutOfScope, AcceptanceCriteria und Feature-Completeness	autoresearch/run_experiment.ts	86	224	138	✗	2	44	5	37	565226	1463990	—	—	1	—	224	0
 7	2026-03-15T19:52:16.715Z	Generator-Modell: gpt-4.1-mini statt gemini-2.5-flash fuer bessere Out-of-Scope Qualitaet	autoresearch/run_experiment.ts	86	93	7	✗	2	13	0	20	177113	1508039	—	—	1	—	93	1
 8	2026-03-15T20:03:48.509Z	Reviewer/Repair-Modell: deepseek-v3 statt gemini fuer frische Perspektive bei OutOfScope Repairs	autoresearch/run_experiment.ts	86	48.5	-37.5	✓	1	11	0	26	319522	1473421	48.5	33.6	4	75%	51,96,46,1	4
+9	2026-03-15T20:47:26.858Z	Semantic-Repair auch auf deepseek-v3: konsistentere Repairs ueber alle Phasen	autoresearch/run_experiment.ts	49	3	-46	✗	0	3	0	7	86611	1516335	—	—	1	—	3	2
